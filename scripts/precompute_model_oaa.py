@@ -1,12 +1,18 @@
 """
-計算 2025 年各外野手在我方模型下的 OAA 與星級分布（全量守備機會）。
-使用合併外野手模型 models/2025/OF/，LF+CF+RF 共用同一 scaler 與群體層參數。
+計算指定年度各外野手在我方模型下的 OAA 與星級分布（全量守備機會）。
+
+Usage:
+    python precompute_model_oaa.py [target_year]   # default 2025
+    python precompute_model_oaa.py 2024
+
+使用合併外野手模型 models/{target_year}/OF/，LF+CF+RF 共用同一 scaler 與群體層參數。
 API 端以跨位置統一中心化（avg_oaa_per_ball = LF+CF+RF 合計）。
 輸出：
-  data/precomputed/model_oaa_2025.csv — name_fielder, position, model_oaa, n_opp
+  data/precomputed/model_oaa_{target_year}.csv
   PostgreSQL: model_oaa, model_star_stats
 """
 import sys
+import argparse
 from pathlib import Path
 
 import joblib
@@ -16,8 +22,13 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.defender_features import get_defender_opportunities, mark_official
 
-MODELS_DIR   = Path(__file__).resolve().parent.parent / "models" / "2025"
-OUT_PATH     = Path(__file__).resolve().parent.parent / "data" / "precomputed" / "model_oaa_2025.csv"
+_parser = argparse.ArgumentParser()
+_parser.add_argument("target_year", type=int, nargs="?", default=2025)
+_args = _parser.parse_args()
+
+TARGET_YEAR  = _args.target_year
+MODELS_DIR   = Path(__file__).resolve().parent.parent / "models" / str(TARGET_YEAR)
+OUT_PATH     = Path(__file__).resolve().parent.parent / "data" / "precomputed" / f"model_oaa_{TARGET_YEAR}.csv"
 POSITIONS    = ["LF", "CF", "RF"]
 FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 
@@ -44,9 +55,10 @@ sc_scale = scaler.scale_
 
 rows = []
 all_balls = []  # 全位置合併，用於算星級
+print(f"目標年份: {TARGET_YEAR}，模型路徑: {MODELS_DIR}")
 for pos in POSITIONS:
     print(f"Computing {pos}...", flush=True)
-    df = get_defender_opportunities(pos, 2025)
+    df = get_defender_opportunities(pos, TARGET_YEAR)
     df = df.rename(columns={"required_speed": "speed"})
     df = df.dropna(subset=FEATURE_COLS + ["caught", "name_fielder"])
     df = mark_official(df)
@@ -82,11 +94,11 @@ import psycopg2
 DSN = "host=localhost dbname=baseball user=postgres password=postgres"
 with psycopg2.connect(DSN) as conn:
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM model_oaa WHERE year = 2025")
+        cur.execute("DELETE FROM model_oaa WHERE year = %s", (TARGET_YEAR,))
         for _, row in result.iterrows():
             cur.execute(
                 "INSERT INTO model_oaa (name_fielder, position, year, model_oaa, n_opp) VALUES (%s,%s,%s,%s,%s)",
-                (row["name_fielder"], row["position"], 2025, float(row["model_oaa"]), int(row["n_opp"]))
+                (row["name_fielder"], row["position"], TARGET_YEAR, float(row["model_oaa"]), int(row["n_opp"]))
             )
     conn.commit()
 print(f"Upserted {len(result)} rows into model_oaa")
@@ -95,7 +107,7 @@ print(f"Upserted {len(result)} rows into model_oaa")
 balls_all = pd.concat(all_balls, ignore_index=True)
 star_rows = []
 for name, grp in balls_all.groupby("name_fielder"):
-    rec = {"name_fielder": name, "year": 2025}
+    rec = {"name_fielder": name, "year": TARGET_YEAR}
     for s in range(6):
         sub = grp[grp["star"] == s]
         rec[f"n_opp_{s}stars"]      = len(sub)
@@ -105,7 +117,7 @@ star_df = pd.DataFrame(star_rows)
 
 with psycopg2.connect(DSN) as conn:
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM model_star_stats WHERE year = 2025")
+        cur.execute("DELETE FROM model_star_stats WHERE year = %s", (TARGET_YEAR,))
         for _, r in star_df.iterrows():
             cur.execute("""
                 INSERT INTO model_star_stats

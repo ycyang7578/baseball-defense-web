@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { fetchFielders, fetchStarStats } from '../api'
+import { fetchYears, fetchFielders, fetchStarStats } from '../api'
 
 const POSITIONS = ['LF', 'CF', 'RF']
 const TABS = ['ALL', 'LF', 'CF', 'RF']
@@ -68,20 +68,29 @@ function PlayerAvatar({ playerId, name }) {
 }
 
 export default function Rankings() {
-  const [pos, setPos]           = useState('CF')
-  const [minOpp, setMinOpp]     = useState(100)
-  const [fielders, setFielders] = useState({})
-  const [starData, setStarData] = useState({})
-  const [loading, setLoading]   = useState(true)
-  const [sortKey, setSortKey]   = useState('rate')
-  const [sortDir, setSortDir]   = useState('desc')
+  const [pos, setPos]             = useState('CF')
+  const [minOpp, setMinOpp]       = useState(100)
+  const [fielders, setFielders]   = useState({})
+  const [starData, setStarData]   = useState({})
+  const [loading, setLoading]     = useState(true)
+  const [sortKey, setSortKey]     = useState('rate')
+  const [sortDir, setSortDir]     = useState('desc')
+  const [availYears, setAvailYears] = useState([2025])
+  const [year, setYear]           = useState(2025)
+
+  useEffect(() => {
+    fetchYears().then(ys => {
+      setAvailYears(ys)
+      setYear(ys[ys.length - 1])   // 預設最新年份
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchFielders(minOpp), fetchStarStats()])
+    Promise.all([fetchFielders(minOpp, year), fetchStarStats(year)])
       .then(([f, s]) => { setFielders(f); setStarData(s); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [minOpp])
+  }, [minOpp, year])
 
   function handleSort(key) {
     if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
@@ -151,7 +160,17 @@ export default function Rankings() {
   return (
     <div style={s.page}>
       <div style={s.header}>
-        <h1 style={s.title}>外野手守備排名 2025</h1>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+          <h1 style={s.title}>外野手守備排名</h1>
+          <div style={s.yearTabs}>
+            {availYears.map(y => (
+              <button key={y} onClick={() => setYear(y)}
+                style={{ ...s.yearTab, ...(year === y ? s.yearTabActive : {}) }}>
+                {y}
+              </button>
+            ))}
+          </div>
+        </div>
         <span style={s.subtitle}>OAA 與星級均由本模型以全量守備機會計算，基於賽季平均站位，非 Statcast 官方數值</span>
       </div>
 
@@ -299,6 +318,12 @@ const s = {
     background: 'white', color: '#6b7280', cursor: 'pointer', fontSize: 14, fontWeight: 600,
   },
   tabActive: { background: '#2563eb', color: '#fff', border: '1px solid #2563eb' },
+  yearTabs: { display: 'flex', gap: 4 },
+  yearTab: {
+    padding: '3px 10px', border: '1px solid #d1d5db', borderRadius: 5,
+    background: 'white', color: '#6b7280', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+  },
+  yearTabActive: { background: '#1e40af', color: '#fff', border: '1px solid #1e40af' },
   oppRow:   { display: 'flex', alignItems: 'center', gap: 8 },
   oppLabel: { fontSize: 12, color: '#6b7280' },
   oppVal:   { fontSize: 13, color: '#1e293b', minWidth: 30 },

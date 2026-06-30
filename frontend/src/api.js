@@ -12,8 +12,14 @@ export async function fetchTeams() {
   return res.json()
 }
 
-export async function fetchFielders(minOpp = 100) {
-  const res = await fetch(`${BASE}/fielders?min_opp=${minOpp}`)
+export async function fetchYears() {
+  const res = await fetch(`${BASE}/years`)
+  if (!res.ok) throw new Error('Failed to fetch available years')
+  return res.json()
+}
+
+export async function fetchFielders(minOpp = 100, year = 2025) {
+  const res = await fetch(`${BASE}/fielders?min_opp=${minOpp}&year=${year}`)
   if (!res.ok) throw new Error('Failed to fetch fielders')
   return res.json()
 }

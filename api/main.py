@@ -34,17 +34,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BASE       = Path(__file__).parent.parent
-MODELS_DIR = BASE / "models" / "2025"
+MODELS_DIR = BASE / "models" / "2025"   # optimizer 固定用 2025
 PRE_DIR    = BASE / "data" / "precomputed"
-YEAR       = 2025
+YEAR       = 2025                        # optimizer 固定用 2025
 TRAIN_YEARS = [2021, 2022, 2023, 2024]
 DSN        = "host=localhost dbname=baseball user=postgres password=postgres"
 _MIN_BALLS = 30
 
+# 掃描哪些年份有模型 summary（Rankings 用）
+_AVAILABLE_YEARS: list[int] = sorted(
+    y for y in range(2020, 2030)
+    if (BASE / "models" / str(y) / "OF" / "OF_summary_players.csv").exists()
+)
+
 # ── 啟動快取 ──────────────────────────────────────────────────────
 _batters_cache:  list[dict]   = []
 _name_map:       dict[int, str] = {}
-_fielders_cache: dict[str, list[dict]] = {}
 _delta_re      = None
 _hit_bundle    = None
 _scalers       = {}
@@ -53,26 +58,30 @@ _mus           = {}
 # ── 打者資料快取（同打者換壘況時跳過 DB 查詢與 KDE）───────────────
 _batter_balls_cache:    dict[int, object] = {}   # batter_id → DataFrame
 _batter_hitprobs_cache: dict[int, object] = {}   # batter_id → ndarray (N,3)
-_model_names:           dict[str, set]    = {}   # pos → set of player names with model params
-_team_map:              dict[int, int]    = {}   # player_id → MLB team_id
+
+# ── Rankings 多年份快取（year → ...）────────────────────────────
+_fielders_cache: dict[int, dict[str, list[dict]]] = {}  # year → pos → list
+_model_names:    dict[int, dict[str, set]]        = {}  # year → pos → name set
+_team_map:       dict[int, dict[int, int]]        = {}  # year → player_id → team_id
 
 
-def _load_fielders() -> dict[str, list[dict]]:
-    """每位置：清單來源為「合併 OF 模型有 player-level 參數的球員」。
-    LF/CF/RF 共用同一組 OF 球員集合（574 人），再依 model_oaa 位置欄分類顯示。"""
+def _load_fielders(year: int) -> dict[str, list[dict]]:
+    """指定年度每位置外野手清單（需要該年 models/{year}/OF/OF_summary_players.csv）。"""
     import re
     import pandas as pd
 
-    # 從合併 OF 模型讀出全部有球員層參數的球員名稱集合，三個位置共用
-    global _model_names
-    players_csv = MODELS_DIR / "OF" / "OF_summary_players.csv"
-    df_players  = pd.read_csv(players_csv, index_col=0, encoding="utf-8-sig")
+    models_dir  = BASE / "models" / str(year) / "OF"
+    players_csv = models_dir / "OF_summary_players.csv"
+    if not players_csv.exists():
+        logger.warning(f"No model summary for {year}, skipping")
+        return {pos: [] for pos in POSITIONS}
+
+    df_players = pd.read_csv(players_csv, index_col=0, encoding="utf-8-sig")
     of_names = {
         re.match(r"alpha\[(.+)\]", str(i)).group(1)
         for i in df_players.index if str(i).startswith("alpha[")
     }
-    for pos in POSITIONS:
-        _model_names[pos] = of_names
+    _model_names[year] = {pos: of_names for pos in POSITIONS}
 
     _SQL = """
         SELECT m.name_fielder, m.model_oaa, m.n_opp, MAX(o.player_id) AS player_id
@@ -89,12 +98,12 @@ def _load_fielders() -> dict[str, list[dict]]:
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             for pos in POSITIONS:
-                cur.execute(_SQL, {"year": YEAR, "pos": pos})
+                cur.execute(_SQL, {"year": year, "pos": pos})
                 rows = cur.fetchall()
                 out[pos] = [
                     {"name": name, "oaa": float(oaa), "n_opp": n_opp, "player_id": pid}
                     for name, oaa, n_opp, pid in rows
-                    if name in _model_names[pos]
+                    if name in _model_names[year][pos]
                 ]
     return out
 
@@ -105,8 +114,8 @@ _MLB_TEAM_IDS = {
     139, 140, 141, 142, 143, 144, 145, 146, 147, 158,
 }
 
-def _load_team_info(player_ids: list[int]) -> dict[int, int]:
-    """MLB Stats API 批次查 2025 守備成績 splits 取 MLB 球隊（player_id → team_id）。
+def _load_team_info(player_ids: list[int], season: int) -> dict[int, int]:
+    """MLB Stats API 批次查指定賽季守備 splits 取 MLB 球隊（player_id → team_id）。
     traded players 取出賽數最多的 MLB 球隊。失敗不中斷啟動。"""
     import requests
     result: dict[int, int] = {}
@@ -117,7 +126,7 @@ def _load_team_info(player_ids: list[int]) -> dict[int, int]:
                 "https://statsapi.mlb.com/api/v1/people",
                 params={
                     "personIds": ",".join(str(p) for p in chunk),
-                    "hydrate": "stats(group=fielding,type=season,season=2025)",
+                    "hydrate": f"stats(group=fielding,type=season,season={season})",
                 },
                 timeout=20,
             )
@@ -135,7 +144,7 @@ def _load_team_info(player_ids: list[int]) -> dict[int, int]:
                 if best_tid:
                     result[person["id"]] = best_tid
         except Exception as e:
-            logger.warning(f"MLB Stats API team lookup failed: {e}")
+            logger.warning(f"MLB Stats API team lookup failed (season={season}): {e}")
     return result
 
 
@@ -192,15 +201,15 @@ async def lifespan(app: FastAPI):
         _mus[pos]     = of_mus
     logger.info("Preloaded RE24, KDE, model params (unified OF model)")
 
-    # 各位置可選外野手清單（同時建立 _model_names 供動態查詢用）
-    _fielders_cache.update(_load_fielders())
-    logger.info("Loaded fielders: " + ", ".join(f"{p}={len(_fielders_cache[p])}" for p in POSITIONS))
-
-    # MLB Stats API：查各 player 所屬球隊（currentTeam）
-    all_pids = list({f["player_id"] for pos_list in _fielders_cache.values()
-                     for f in pos_list if f.get("player_id")})
-    _team_map.update(_load_team_info(all_pids))
-    logger.info(f"Loaded team info for {len(_team_map)} players")
+    # 各年度外野手清單（同時建立 _model_names 供動態查詢用）
+    logger.info(f"Available ranking years: {_AVAILABLE_YEARS}")
+    for yr in _AVAILABLE_YEARS:
+        _fielders_cache[yr] = _load_fielders(yr)
+        logger.info(f"  {yr}: " + ", ".join(f"{p}={len(_fielders_cache[yr][p])}" for p in POSITIONS))
+        all_pids = list({f["player_id"] for pos_list in _fielders_cache[yr].values()
+                         for f in pos_list if f.get("player_id")})
+        _team_map[yr] = _load_team_info(all_pids, season=yr)
+        logger.info(f"  {yr}: team info for {len(_team_map[yr])} players")
 
     yield
 
@@ -221,8 +230,19 @@ def get_teams():
     return SUPPORTED_TEAMS
 
 
+@app.get("/api/years")
+def get_years():
+    return sorted(_AVAILABLE_YEARS)
+
+
 @app.get("/api/fielders", response_model=dict[str, list[FielderInfo]])
-def get_fielders(min_opp: int = 100):
+def get_fielders(year: int = 2025, min_opp: int = 100):
+    if year not in _fielders_cache:
+        raise HTTPException(404, f"No ranking data for year {year}. Available: {sorted(_AVAILABLE_YEARS)}")
+
+    yr_model_names = _model_names.get(year, {})
+    yr_team_map    = _team_map.get(year, {})
+
     # 跨 LF+CF+RF 統一中心化：avg_oaa_per_ball 從有 OF 模型參數的球員計算
     _SQL_ALL = """
         SELECT m.name_fielder, m.position, m.model_oaa, m.n_opp,
@@ -235,12 +255,12 @@ def get_fielders(min_opp: int = 100):
     """
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
-            cur.execute(_SQL_ALL, {"year": YEAR})
+            cur.execute(_SQL_ALL, {"year": year})
             all_rows = cur.fetchall()
 
     visible = [(float(oaa), int(n))
                for name, pos, oaa, n, pid in all_rows
-               if name in _model_names.get(pos, set())]
+               if name in yr_model_names.get(pos, set())]
     total_oaa = sum(r[0] for r in visible)
     total_opp = sum(r[1] for r in visible)
     avg_oaa_per_ball = total_oaa / total_opp if total_opp else 0.0
@@ -250,13 +270,13 @@ def get_fielders(min_opp: int = 100):
         rows_pos = [
             (name, float(oaa) - avg_oaa_per_ball * int(n), int(n), pid)
             for name, p, oaa, n, pid in all_rows
-            if p == pos and name in _model_names.get(pos, set())
+            if p == pos and name in yr_model_names.get(pos, set())
         ]
         filtered = [(name, c, n, pid) for name, c, n, pid in rows_pos if n >= min_opp]
         filtered.sort(key=lambda x: x[1] / x[2] if x[2] else 0, reverse=True)
         result[pos] = [{"name": name, "oaa": round(c, 2), "n_opp": n,
                         "player_id": pid,
-                        "team_id": _team_map.get(pid) if pid else None}
+                        "team_id": yr_team_map.get(pid) if pid else None}
                        for name, c, n, pid in filtered]
     return result
 

@@ -1,7 +1,10 @@
-"""Train unified outfield model (LF+CF+RF combined) → models/2025/OF/
+"""Train unified outfield model (LF+CF+RF combined).
 
-訓練資料：2021-2024 全量球（LF+CF+RF，無 is_official 過濾）。
-評分（precompute）同樣使用全量 2025 球，API 以跨位置統一中心化。
+Usage:
+    python train_of.py [target_year]   # default 2025
+    python train_of.py 2024            # trains on 2020-2023, saves to models/2024/OF/
+
+訓練資料：target_year 前 4 年全量球（LF+CF+RF，無 is_official 過濾）。
 """
 import os
 os.environ.setdefault("PYTENSOR_FLAGS", "optimizer_excluding=constant_folding")
@@ -19,10 +22,16 @@ from sklearn.preprocessing import StandardScaler
 
 from src.defender_features import get_defender_opportunities
 
+import argparse
+_parser = argparse.ArgumentParser()
+_parser.add_argument("target_year", type=int, nargs="?", default=2025)
+_args = _parser.parse_args()
+
+TARGET_YEAR = _args.target_year
 POSITIONS   = ["LF", "CF", "RF"]
-YEARS       = [2021, 2022, 2023, 2024]
+YEARS       = [TARGET_YEAR - 4, TARGET_YEAR - 3, TARGET_YEAR - 2, TARGET_YEAR - 1]
 FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
-OUTPUT_DIR  = Path(__file__).resolve().parent.parent / "models" / "2025" / "OF"
+OUTPUT_DIR  = Path(__file__).resolve().parent.parent / "models" / str(TARGET_YEAR) / "OF"
 
 MCMC_KWARGS = dict(draws=2000, tune=2000, chains=4, cores=4,
                    target_accept=0.95, nuts_sampler="pymc", random_seed=42)
@@ -93,6 +102,7 @@ def build_model(df: pd.DataFrame, scaler: StandardScaler) -> pm.Model:
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    print(f"目標年份: {TARGET_YEAR}，訓練資料: {YEARS}")
     print(f"載入 {YEARS} 年 LF+CF+RF 合併資料...")
     df = load_training_data(YEARS)
     print(f"訓練資料: {len(df):,} 筆，球員數: {df['name_fielder'].nunique()}")
