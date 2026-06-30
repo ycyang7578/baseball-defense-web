@@ -1,0 +1,21 @@
+# 大型資料檔
+data/raw/statcast/
+data/raw/savant_fielding/
+data/raw/positioning/
+
+# PyMC 後驗樣本（大型 .nc）
+models/**/*.nc
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# 暫存與日誌
+logs/
+*.log
