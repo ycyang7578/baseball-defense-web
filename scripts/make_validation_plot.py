@@ -1,9 +1,13 @@
 """
-Generate Model OAA vs Official OAA validation scatter plot (web model, 2025 out-of-sample).
-Output: data/validation_scatter.png
+Generate Model OAA vs Official OAA validation scatter plot.
+
+Usage:
+    python make_validation_plot.py [year]   # default 2025
+    python make_validation_plot.py 2024
 """
 import sys
 import re
+import argparse
 import unicodedata
 from pathlib import Path
 
@@ -19,9 +23,14 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.defender_features import get_defender_opportunities, mark_official
 
+_parser = argparse.ArgumentParser()
+_parser.add_argument("year", type=int, nargs="?", default=2025)
+_args = _parser.parse_args()
+TARGET_YEAR = _args.year
 
-MODELS_DIR   = Path(__file__).resolve().parent.parent / "models" / "2025"
-OUT_PATH     = Path(__file__).resolve().parent.parent / "figures" / "validation_scatter.png"
+BASE         = Path(__file__).resolve().parent.parent
+MODELS_DIR   = BASE / "models" / str(TARGET_YEAR)
+OUT_PATH     = BASE / "figures" / f"validation_scatter_{TARGET_YEAR}.png"
 POSITIONS    = ["LF", "CF", "RF"]
 FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 DSN          = "host=localhost dbname=baseball user=postgres password=postgres"
@@ -42,7 +51,7 @@ def sigmoid(x):
 
 
 def compute_model_oaa(pos: str) -> pd.DataFrame:
-    df = get_defender_opportunities(pos, 2025)
+    df = get_defender_opportunities(pos, TARGET_YEAR)
     df = df.rename(columns={"required_speed": "speed"})
     df = df.dropna(subset=FEATURE_COLS + ["caught", "name_fielder"])
     df = mark_official(df)
@@ -70,7 +79,7 @@ def main():
     # ── 官方 OAA（is_qualified=True，跨位置加總）────────────────
     with psycopg2.connect(DSN) as conn:
         raw_off = pd.read_sql(
-            "SELECT player_name, oaa FROM oaa_leaderboard WHERE year=2025 AND is_qualified=TRUE",
+            f"SELECT player_name, oaa FROM oaa_leaderboard WHERE year={TARGET_YEAR} AND is_qualified=TRUE",
             conn,
         )
     # 同一球員可能在多個位置達到 qualified，加總後視為整體外野 OAA
@@ -128,10 +137,10 @@ def main():
     ax.axvline(0, color="#888888", linewidth=0.8, zorder=1)
 
     ax.set_xlabel("Model OAA", fontsize=12)
-    ax.set_ylabel("Official OAA (2025)", fontsize=12)
+    ax.set_ylabel(f"Official OAA ({TARGET_YEAR})", fontsize=12)
     ax.set_title(
         f"Model OAA vs. Baseball Savant Official OAA\n"
-        f"2025 Out-of-Sample  (n={n},  r={r:.3f})",
+        f"{TARGET_YEAR} Out-of-Sample  (n={n},  r={r:.3f})",
         fontsize=13, fontweight="bold",
     )
     ax.legend(loc="lower right", fontsize=10, framealpha=0.9)
