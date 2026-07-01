@@ -390,6 +390,8 @@ def optimize_plot(req: OptimizeRequest):
         "situation": resp.situation,
         "positions": {k: v.model_dump() for k, v in resp.positions.items()},
         "stats": resp.stats.model_dump(),
+        "balls": [b.model_dump() for b in resp.balls],
+        "park_boundary": [c.model_dump() for c in resp.park_boundary] if resp.park_boundary else None,
     }
 
 

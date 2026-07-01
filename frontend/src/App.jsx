@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchBatters, fetchTeams, fetchFielders, fetchYears, optimizePlot } from './api'
 import GameStateForm from './components/GameStateForm'
 import SearchSelect from './components/SearchSelect'
+import SprayChart from './components/SprayChart'
 
 const POSITIONS = ['LF', 'CF', 'RF']
 
@@ -55,8 +56,9 @@ export default function App() {
   const [imgUrlB, setImgUrlB]           = useState(null)
   const [plotDataB, setPlotDataB]       = useState(null)
 
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState(null)
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState(null)
+  const [showSpray, setShowSpray] = useState(false)
 
   useEffect(() => {
     fetchYears().then(ys => { setAvailYears(ys); setYear(ys[ys.length - 1]) }).catch(console.error)
@@ -73,12 +75,14 @@ export default function App() {
     setHomeTeamB('')
     setImgUrlB(null)
     setPlotDataB(null)
+    setShowSpray(false)
   }
 
   async function handleOptimize() {
     if (!batterId) return
     setLoading(true)
     setError(null)
+    setShowSpray(false)
     try {
       const base = {
         batterId: Number(batterId),
@@ -264,27 +268,58 @@ export default function App() {
             </div>
           ) : (
             <div style={{ width: '100%', maxWidth: 700 }}>
-              <div style={{ position: 'relative' }}>
-                {imgUrl ? (
-                  <>
-                    <img src={imgUrl} alt="defense plot"
-                      style={{ width: '100%', display: 'block',
-                               borderRadius: plotData ? '8px 8px 0 0' : 8,
-                               boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }} />
+              {/* ── 圖區標題列 ── */}
+              {imgUrl && !loading && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              marginBottom: 8 }}>
+                  {/* 圖模式切換 */}
+                  <div style={{ display: 'flex', background: '#e2e8f0', borderRadius: 7, padding: 3, gap: 2 }}>
+                    {[{ key: false, label: '論文圖' }, { key: true, label: '互動圖' }].map(({ key, label }) => (
+                      <button key={String(key)} onClick={() => setShowSpray(key)} style={{
+                        padding: '4px 14px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                        border: 'none', borderRadius: 5,
+                        background: showSpray === key ? 'white' : 'transparent',
+                        color:      showSpray === key ? '#1e293b' : '#64748b',
+                        boxShadow:  showSpray === key ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
+                      }}>{label}</button>
+                    ))}
+                  </div>
+                  {/* 下載按鈕（論文圖才顯示） */}
+                  {!showSpray && (
                     <a href={imgUrl} download={`defense_${batterId}_${year}.png`}
-                      style={{ position: 'absolute', top: 10, right: 10,
-                               background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(4px)',
-                               border: '1px solid #e2e8f0', borderRadius: 6,
+                      style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6,
                                padding: '4px 12px', fontSize: 11, fontWeight: 600,
                                color: '#374151', textDecoration: 'none' }}>
                       ↓ 下載
                     </a>
-                  </>
+                  )}
+                </div>
+              )}
+
+              {/* ── 圖體 ── */}
+              <div style={{ position: 'relative' }}>
+                {imgUrl ? (
+                  showSpray ? (
+                    <div style={{ background: '#1a4a25', borderRadius: plotData ? '8px 8px 0 0' : 8,
+                                  boxShadow: '0 4px 20px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                      <SprayChart
+                        balls={plotData?.balls}
+                        positions={plotData?.positions}
+                        parkBoundary={plotData?.parkBoundary}
+                      />
+                    </div>
+                  ) : (
+                    <img src={imgUrl} alt="defense plot"
+                      style={{ width: '100%', display: 'block',
+                               borderRadius: plotData ? '8px 8px 0 0' : 8,
+                               boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }} />
+                  )
                 ) : (
                   <EmptyState />
                 )}
                 {loading && <Overlay />}
               </div>
+
               {plotData && !loading && <StatsPanel data={plotData} />}
             </div>
           )}

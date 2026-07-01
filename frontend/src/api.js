@@ -83,5 +83,7 @@ export async function optimizePlot(params) {
     stats: data.stats,
     situation: data.situation,
     title: data.title,
+    balls: data.balls || [],
+    parkBoundary: data.park_boundary || null,
   }
 }
