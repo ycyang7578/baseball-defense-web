@@ -1,7 +1,7 @@
 const BASE = '/api'
 
-export async function fetchBatters() {
-  const res = await fetch(`${BASE}/batters`)
+export async function fetchBatters(year = 2025) {
+  const res = await fetch(`${BASE}/batters?year=${year}`)
   if (!res.ok) throw new Error('Failed to fetch batters')
   return res.json()
 }
@@ -30,9 +30,10 @@ export async function fetchStarStats(year = 2025) {
   return res.json()
 }
 
-function _body({ batterId, on1b, on2b, on3b, outs, homeTeam, fielders }) {
+function _body({ batterId, year, on1b, on2b, on3b, outs, homeTeam, fielders }) {
   return JSON.stringify({
     batter_id: batterId,
+    year: year || 2025,
     on_1b: on1b,
     on_2b: on2b,
     on_3b: on3b,

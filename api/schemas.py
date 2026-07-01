@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class OptimizeRequest(BaseModel):
     batter_id: int
+    year: int = 2025
     on_1b: int = Field(0, ge=0, le=1)
     on_2b: int = Field(0, ge=0, le=1)
     on_3b: int = Field(0, ge=0, le=1)

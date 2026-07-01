@@ -33,31 +33,31 @@ from .schemas import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BASE       = Path(__file__).parent.parent
-MODELS_DIR = BASE / "models" / "2025"   # optimizer 固定用 2025
-PRE_DIR    = BASE / "data" / "precomputed"
-YEAR       = 2025                        # optimizer 固定用 2025
-TRAIN_YEARS = [2021, 2022, 2023, 2024]
-DSN        = "host=localhost dbname=baseball user=postgres password=postgres"
+BASE    = Path(__file__).parent.parent
+PRE_DIR = BASE / "data" / "precomputed"
+DSN     = "host=localhost dbname=baseball user=postgres password=postgres"
 _MIN_BALLS = 30
 
-# 掃描哪些年份有模型 summary（Rankings 用）
+# 掃描哪些年份有模型 summary
 _AVAILABLE_YEARS: list[int] = sorted(
     y for y in range(2020, 2030)
     if (BASE / "models" / str(y) / "OF" / "OF_summary_players.csv").exists()
 )
+_DEFAULT_YEAR = _AVAILABLE_YEARS[-1] if _AVAILABLE_YEARS else 2025
 
 # ── 啟動快取 ──────────────────────────────────────────────────────
-_batters_cache:  list[dict]   = []
-_name_map:       dict[int, str] = {}
-_delta_re      = None
-_hit_bundle    = None
-_scalers       = {}
-_mus           = {}
+_name_map:    dict[int, str]  = {}
+_delta_re   = None
+_hit_bundle = None
+
+# year-keyed caches
+_scalers:       dict[int, dict] = {}          # year → pos → scaler
+_mus:           dict[int, dict] = {}          # year → pos → mus
+_batters_cache: dict[int, list[dict]] = {}    # year → list[{batter_id, name, n_balls}]
 
 # ── 打者資料快取（同打者換壘況時跳過 DB 查詢與 KDE）───────────────
-_batter_balls_cache:    dict[int, object] = {}   # batter_id → DataFrame
-_batter_hitprobs_cache: dict[int, object] = {}   # batter_id → ndarray (N,3)
+_batter_balls_cache:    dict[int, dict[int, object]] = {}  # year → batter_id → DataFrame
+_batter_hitprobs_cache: dict[int, dict[int, object]] = {}  # year → batter_id → ndarray
 
 # ── Rankings 多年份快取（year → ...）────────────────────────────
 _fielders_cache: dict[int, dict[str, list[dict]]] = {}  # year → pos → list
@@ -148,7 +148,7 @@ def _load_team_info(player_ids: list[int], season: int) -> dict[int, int]:
     return result
 
 
-def _load_batters() -> list[dict]:
+def _load_batters(year: int) -> list[dict]:
     query = """
         SELECT batter, COUNT(*) AS n_balls
         FROM statcast
@@ -168,14 +168,14 @@ def _load_batters() -> list[dict]:
     """
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, {"year": YEAR, "min_balls": _MIN_BALLS})
+            cur.execute(query, {"year": year, "min_balls": _MIN_BALLS})
             rows = cur.fetchall()
     return [{"batter_id": r[0], "n_balls": r[1]} for r in rows]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _delta_re, _hit_bundle, _scalers, _mus
+    global _delta_re, _hit_bundle
 
     # 名稱快取
     name_path = BASE / "data" / "reference" / "batter_names.json"
@@ -184,22 +184,27 @@ async def lifespan(app: FastAPI):
         _name_map.update({int(k): v for k, v in raw.items()})
     logger.info(f"Loaded {len(_name_map)} batter names")
 
-    # 打者清單
-    rows = _load_batters()
-    for r in rows:
-        bid  = r["batter_id"]
-        name = _name_map.get(bid, f"#{bid}")
-        _batters_cache.append({"batter_id": bid, "name": name, "n_balls": r["n_balls"]})
-    logger.info(f"Loaded {len(_batters_cache)} batters")
-
-    # 預計算資料 + 模型參數（避免每次請求重載）
+    # 預計算資料（RE24 / hit prob KDE — 年份無關）
     _, _delta_re = load_re24(PRE_DIR)
     _hit_bundle  = load_hit_prob(PRE_DIR)
-    of_scaler, of_mus = load_model_params("OF", MODELS_DIR)
-    for pos in POSITIONS:
-        _scalers[pos] = of_scaler
-        _mus[pos]     = of_mus
-    logger.info("Preloaded RE24, KDE, model params (unified OF model)")
+    logger.info("Preloaded RE24, KDE")
+
+    # 各年度：打者清單 + 模型參數
+    for yr in _AVAILABLE_YEARS:
+        rows = _load_batters(yr)
+        _batters_cache[yr] = [
+            {"batter_id": r["batter_id"], "name": _name_map.get(r["batter_id"], f"#{r['batter_id']}"), "n_balls": r["n_balls"]}
+            for r in rows
+        ]
+        logger.info(f"Loaded {len(_batters_cache[yr])} batters for {yr}")
+        models_dir = BASE / "models" / str(yr)
+        try:
+            of_scaler, of_mus = load_model_params("OF", models_dir)
+            _scalers[yr] = {pos: of_scaler for pos in POSITIONS}
+            _mus[yr]     = {pos: of_mus    for pos in POSITIONS}
+            logger.info(f"Loaded model params for {yr}")
+        except Exception as e:
+            logger.warning(f"Could not load model params for {yr}: {e}")
 
     # 各年度外野手清單（同時建立 _model_names 供動態查詢用）
     logger.info(f"Available ranking years: {_AVAILABLE_YEARS}")
@@ -221,8 +226,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @app.get("/api/batters", response_model=list[BatterInfo])
-def get_batters():
-    return _batters_cache
+def get_batters(year: int = _DEFAULT_YEAR):
+    return _batters_cache.get(year, _batters_cache.get(_DEFAULT_YEAR, []))
 
 
 @app.get("/api/teams", response_model=list[str])
@@ -282,7 +287,7 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
 
 
 @app.get("/api/star_stats")
-def get_star_stats(year: int = YEAR):
+def get_star_stats(year: int = _DEFAULT_YEAR):
     # 讀我方模型算出的星級分布（model_star_stats），跨位置已合併
     _SQL = """
         SELECT name_fielder,
@@ -349,25 +354,32 @@ def optimize_plot(req: OptimizeRequest):
 def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     if req.home_team and req.home_team.upper() not in SUPPORTED_TEAMS:
         raise HTTPException(422, f"Unsupported team '{req.home_team}'. Use GET /api/teams.")
+    if req.year not in _AVAILABLE_YEARS:
+        raise HTTPException(422, f"No model for year {req.year}. Available: {_AVAILABLE_YEARS}")
 
+    year      = req.year
+    models_dir = BASE / "models" / str(year)
     home_team = req.home_team.upper() if req.home_team else None
 
-    # ── 準備球資料（快取：同打者跳過 DB 查詢與 KDE）────────────────
+    # ── 準備球資料（快取：同打者同年份跳過 DB 查詢與 KDE）──────────
     import numpy as np
 
-    if req.batter_id not in _batter_balls_cache:
+    yr_balls_cache  = _batter_balls_cache.setdefault(year, {})
+    yr_hprob_cache  = _batter_hitprobs_cache.setdefault(year, {})
+
+    if req.batter_id not in yr_balls_cache:
         try:
-            balls_all = prepare_batter_balls(req.batter_id, [YEAR], DSN)
+            balls_all = prepare_batter_balls(req.batter_id, [year], DSN)
         except Exception as e:
             raise HTTPException(422, str(e))
         if balls_all.empty:
-            raise HTTPException(422, f"Batter {req.batter_id} has no qualifying balls in {YEAR}")
-        _batter_balls_cache[req.batter_id]    = balls_all
-        _batter_hitprobs_cache[req.batter_id] = predict_hit_probs_batch(_hit_bundle, balls_all)
+            raise HTTPException(422, f"Batter {req.batter_id} has no qualifying balls in {year}")
+        yr_balls_cache[req.batter_id]  = balls_all
+        yr_hprob_cache[req.batter_id]  = predict_hit_probs_batch(_hit_bundle, balls_all)
     else:
-        balls_all = _batter_balls_cache[req.batter_id]
+        balls_all = yr_balls_cache[req.batter_id]
 
-    hit_probs_all = _batter_hitprobs_cache[req.batter_id]
+    hit_probs_all = yr_hprob_cache[req.batter_id]
 
     # 打牆球旗標（以目標球場）。打牆球保留在資料中，評估時強制接殺機率 0、
     # 計入 RE24（對齊論文口徑），不再從資料中排除。
@@ -402,18 +414,18 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             nm = req.fielders.get(pos)
             if nm:
                 try:
-                    fm[pos] = load_player_params("OF", nm, MODELS_DIR)
+                    fm[pos] = load_player_params("OF", nm, models_dir)
                 except (KeyError, FileNotFoundError):
                     raise HTTPException(422, f"{pos} 找不到球員 '{nm}' 的模型參數")
         fielder_mus = fm or None
-    mus_eff = dict(_mus)
+    mus_eff = dict(_mus.get(year, {}))
     if fielder_mus:
         mus_eff.update(fielder_mus)
 
     # ── 站位評估：打牆球強制接殺機率 0、計入 RE24（統一口徑）──────
     def eval_positions(pos_dict):
         probs = np.asarray(
-            compute_ball_catch_probs(pos_dict, balls_all, _scalers, mus_eff), dtype=float
+            compute_ball_catch_probs(pos_dict, balls_all, _scalers.get(year, {}), mus_eff), dtype=float
         ).copy()
         probs[wall_flags] = 0.0                       # 打牆球無論站哪都接不到
         re24 = float(np.sum((1.0 - probs[mask]) * w_j[mask]))
@@ -422,7 +434,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
 
     # ── 聯盟平均站位 ─────────────────────────────────────────────
     try:
-        league_avg_pos = get_league_avg_positions(YEAR, DSN)
+        league_avg_pos = get_league_avg_positions(year, DSN)
     except Exception:
         league_avg_pos = {"LF": (-130.0, 250.0), "CF": (0.0, 310.0), "RF": (130.0, 250.0)}
 
@@ -440,7 +452,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         opt_custom = optimize_positions(
             batter_id=req.batter_id,
             on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
-            years=[YEAR], models_dir=MODELS_DIR, re24_dir=PRE_DIR,
+            years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
             home_team=home_team, dsn=DSN, fielder_mus=fielder_mus,
             balls=balls_all, hit_probs=hit_probs_all,
         )
@@ -453,7 +465,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         opt_no_park = optimize_positions(
             batter_id=req.batter_id,
             on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
-            years=[YEAR], models_dir=MODELS_DIR, re24_dir=PRE_DIR,
+            years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
             home_team=None, dsn=DSN,
             balls=balls_all, hit_probs=hit_probs_all,
         )
@@ -469,7 +481,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             opt_with_park_res = optimize_positions(
                 batter_id=req.batter_id,
                 on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
-                years=[YEAR], models_dir=MODELS_DIR, re24_dir=PRE_DIR,
+                years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
                 home_team=home_team, dsn=DSN,
                 balls=balls_all, hit_probs=hit_probs_all,
             )
@@ -498,8 +510,8 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     # ── 標題 ────────────────────────────────────────────────────
     raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
     display_name = raw_name.replace(", ", " ") if ", " in raw_name else raw_name
-    stand = get_batter_stand(req.batter_id, YEAR, DSN)
-    title = f"{display_name} ({YEAR}, {stand}HB)"
+    stand = get_batter_stand(req.batter_id, year, DSN)
+    title = f"{display_name} ({year}, {stand}HB)"
     if home_team:
         title += f" @ {home_team}"
     if fielder_mus:

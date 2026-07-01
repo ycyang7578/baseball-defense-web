@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchBatters, fetchTeams, fetchFielders, optimizePlot } from './api'
+import { fetchBatters, fetchTeams, fetchFielders, fetchYears, optimizePlot } from './api'
 import GameStateForm from './components/GameStateForm'
 import SearchSelect from './components/SearchSelect'
 
@@ -37,6 +37,8 @@ function getMainResult(data) {
 }
 
 export default function App() {
+  const [availYears, setAvailYears]   = useState([2025])
+  const [year, setYear]               = useState(2025)
   const [batters, setBatters]         = useState([])
   const [teams, setTeams]             = useState([])
   const [fielderOpts, setFielderOpts] = useState({ LF: [], CF: [], RF: [] })
@@ -60,13 +62,14 @@ export default function App() {
   const [error, setError]             = useState(null)
 
   useEffect(() => {
-    fetchBatters().then(setBatters).catch(console.error)
+    fetchYears().then(ys => { setAvailYears(ys); setYear(ys[ys.length - 1]) }).catch(console.error)
     fetchTeams().then(setTeams).catch(console.error)
   }, [])
 
   useEffect(() => {
-    fetchFielders(minOpp).then(setFielderOpts).catch(console.error)
-  }, [minOpp])
+    fetchBatters(year).then(data => { setBatters(data); setBatterId('') }).catch(console.error)
+    fetchFielders(minOpp, year).then(setFielderOpts).catch(console.error)
+  }, [year, minOpp])
 
   function toggleCompare() {
     setCompareMode(v => !v)
@@ -87,15 +90,15 @@ export default function App() {
       }
       if (compareMode) {
         const [resA, resB] = await Promise.all([
-          optimizePlot({ ...base, fielders: buildFielders(selFielders) }),
-          optimizePlot({ ...base, fielders: buildFielders(selFieldersB) }),
+          optimizePlot({ ...base, year, fielders: buildFielders(selFielders) }),
+          optimizePlot({ ...base, year, fielders: buildFielders(selFieldersB) }),
         ])
         setImgUrl(prev  => { if (prev)  URL.revokeObjectURL(prev);  return resA.url })
         setImgUrlB(prev => { if (prev)  URL.revokeObjectURL(prev);  return resB.url })
         setPlotData(resA)
         setPlotDataB(resB)
       } else {
-        const res = await optimizePlot({ ...base, fielders: buildFielders(selFielders) })
+        const res = await optimizePlot({ ...base, year, fielders: buildFielders(selFielders) })
         setImgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return res.url })
         setPlotData(res)
         setImgUrlB(null)
@@ -140,6 +143,19 @@ export default function App() {
           <div style={s.panelHeader}>
             <div style={s.panelTitle}>⚾ Outfield Defense Optimizer</div>
           </div>
+
+          <Sec title="年份">
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {availYears.map(y => (
+                <button key={y} onClick={() => setYear(y)} style={{
+                  padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  borderRadius: 4, border: '1px solid #d1d5db',
+                  background: year === y ? '#2563eb' : 'white',
+                  color: year === y ? 'white' : '#374151',
+                }}>{y}</button>
+              ))}
+            </div>
+          </Sec>
 
           <Sec title="打者">
             <SearchSelect
