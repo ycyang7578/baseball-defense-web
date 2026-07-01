@@ -3,10 +3,10 @@ import { NavLink } from 'react-router-dom'
 export default function NavBar() {
   return (
     <nav style={s.nav}>
-      <span style={s.brand}>⚾ Baseball Defense</span>
+      <span style={s.brand}>MLB Lab</span>
       <div style={s.links}>
         <NavLink to="/" end style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          站位最佳化
+          外野手站位最佳化
         </NavLink>
         <NavLink to="/rankings" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
           守備排名

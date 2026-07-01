@@ -143,7 +143,6 @@ export default function App() {
         {/* ── 左側控制面板 ── */}
         <div style={s.panel}>
           <div style={s.panelHeader}>
-            <div style={s.panelTitle}>⚾ Outfield Defense Optimizer</div>
           </div>
 
           <Sec title="年份">
