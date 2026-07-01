@@ -257,72 +257,45 @@ export default function App() {
         {/* ── 右側結果區 ── */}
         <div style={s.chartArea}>
           {compareMode && (imgUrl || imgUrlB) ? (
+            /* ── 比較模式 ── */
             <div style={{ width: '100%', maxWidth: 1400 }}>
+              {!loading && (imgUrl || imgUrlB) && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              marginBottom: 10 }}>
+                  <ChartToggle value={showSpray} onChange={setShowSpray} />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {imgUrl  && <DownloadBtn href={imgUrl}  name={`defense_A_${batterId}_${year}.png`} label="↓ A" />}
+                    {imgUrlB && <DownloadBtn href={imgUrlB} name={`defense_B_${batterId}_${year}.png`} label="↓ B" />}
+                  </div>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <PlotBox imgUrl={imgUrl}  label="組合 A" loading={loading} />
-                <PlotBox imgUrl={imgUrlB} label="組合 B" loading={loading} />
+                <PlotBox imgUrl={imgUrl}  plotData={plotData}  label="組合 A" loading={loading} showSpray={showSpray} />
+                <PlotBox imgUrl={imgUrlB} plotData={plotDataB} label="組合 B" loading={loading} showSpray={showSpray} />
               </div>
               {plotData && plotDataB && !loading && (
                 <CompareStats dataA={plotData} dataB={plotDataB} />
               )}
             </div>
           ) : (
+            /* ── 單張模式 ── */
             <div style={{ width: '100%', maxWidth: 700 }}>
-              {/* ── 圖區標題列 ── */}
               {imgUrl && !loading && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                               marginBottom: 8 }}>
-                  {/* 圖模式切換 */}
-                  <div style={{ display: 'flex', background: '#e2e8f0', borderRadius: 7, padding: 3, gap: 2 }}>
-                    {[{ key: false, label: '論文圖' }, { key: true, label: '互動圖' }].map(({ key, label }) => (
-                      <button key={String(key)} onClick={() => setShowSpray(key)} style={{
-                        padding: '4px 14px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                        border: 'none', borderRadius: 5,
-                        background: showSpray === key ? 'white' : 'transparent',
-                        color:      showSpray === key ? '#1e293b' : '#64748b',
-                        boxShadow:  showSpray === key ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
-                      }}>{label}</button>
-                    ))}
-                  </div>
-                  {/* 下載按鈕（論文圖才顯示） */}
-                  {!showSpray && (
-                    <a href={imgUrl} download={`defense_${batterId}_${year}.png`}
-                      style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6,
-                               padding: '4px 12px', fontSize: 11, fontWeight: 600,
-                               color: '#374151', textDecoration: 'none' }}>
-                      ↓ 下載
-                    </a>
-                  )}
+                  <ChartToggle value={showSpray} onChange={setShowSpray} />
+                  <DownloadBtn href={imgUrl} name={`defense_${batterId}_${year}.png`} label="↓ 下載論文圖" />
                 </div>
               )}
-
-              {/* ── 圖體 ── */}
               <div style={{ position: 'relative' }}>
                 {imgUrl ? (
-                  showSpray ? (
-                    <div style={{ borderRadius: plotData ? '8px 8px 0 0' : 8,
-                                  boxShadow: '0 4px 20px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
-                      <SprayChart
-                        balls={plotData?.balls}
-                        positions={plotData?.positions}
-                        parkBoundary={plotData?.parkBoundary}
-                        title={plotData?.title}
-                        situation={plotData?.situation}
-                        stats={plotData?.stats}
-                      />
-                    </div>
-                  ) : (
-                    <img src={imgUrl} alt="defense plot"
-                      style={{ width: '100%', display: 'block',
-                               borderRadius: plotData ? '8px 8px 0 0' : 8,
-                               boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }} />
-                  )
+                  <FieldChart imgUrl={imgUrl} data={plotData} showSpray={showSpray}
+                    radius={plotData ? '8px 8px 0 0' : '8px'} />
                 ) : (
                   <EmptyState />
                 )}
                 {loading && <Overlay />}
               </div>
-
               {plotData && !loading && <StatsPanel data={plotData} />}
             </div>
           )}
@@ -348,7 +321,49 @@ function EmptyState() {
   )
 }
 
-function PlotBox({ imgUrl, label, loading }) {
+/* ── Shared UI helpers ──────────────────────────────── */
+function ChartToggle({ value, onChange }) {
+  return (
+    <div style={{ display: 'flex', background: '#e2e8f0', borderRadius: 7, padding: 3, gap: 2 }}>
+      {[{ key: false, label: '落點密度圖' }, { key: true, label: '互動圖' }].map(({ key, label }) => (
+        <button key={String(key)} onClick={() => onChange(key)} style={{
+          padding: '4px 14px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          border: 'none', borderRadius: 5,
+          background: value === key ? 'white' : 'transparent',
+          color:      value === key ? '#1e293b' : '#64748b',
+          boxShadow:  value === key ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
+        }}>{label}</button>
+      ))}
+    </div>
+  )
+}
+
+function DownloadBtn({ href, name, label = '↓ 下載論文圖' }) {
+  return (
+    <a href={href} download={name}
+      style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6,
+               padding: '4px 12px', fontSize: 11, fontWeight: 600,
+               color: '#374151', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+      {label}
+    </a>
+  )
+}
+
+function FieldChart({ imgUrl, data, showSpray, radius = '8px' }) {
+  return showSpray ? (
+    <div style={{ borderRadius: radius, boxShadow: '0 4px 20px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+      <SprayChart
+        balls={data?.balls} positions={data?.positions} parkBoundary={data?.parkBoundary}
+        title={data?.title} situation={data?.situation} stats={data?.stats} />
+    </div>
+  ) : (
+    <img src={imgUrl} alt="defense plot"
+      style={{ width: '100%', display: 'block', borderRadius: radius,
+               boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }} />
+  )
+}
+
+function PlotBox({ imgUrl, plotData, label, loading, showSpray }) {
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
@@ -356,9 +371,7 @@ function PlotBox({ imgUrl, label, loading }) {
                     textTransform: 'uppercase' }}>{label}</div>
       <div style={{ position: 'relative' }}>
         {imgUrl
-          ? <img src={imgUrl} alt={label}
-              style={{ width: '100%', display: 'block', borderRadius: 8,
-                       boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }} />
+          ? <FieldChart imgUrl={imgUrl} data={plotData} showSpray={showSpray} />
           : <div style={{ background: 'white', border: '1px solid #e2e8f0',
                           borderRadius: 8, minHeight: 200 }} />}
         {loading && <Overlay />}
