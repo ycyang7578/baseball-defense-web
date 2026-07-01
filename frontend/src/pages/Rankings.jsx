@@ -207,13 +207,6 @@ export default function Rankings() {
           ))}
         </div>
         <div style={s.oppRow}>
-          <span style={s.oppLabel}>最低守備機會（模型）</span>
-          <input type="range" min={0} max={400} step={25} value={minOpp}
-            onChange={e => setMinOpp(Number(e.target.value))}
-            style={{ width: 130, accentColor: '#2563eb' }} />
-          <span style={s.oppVal}>{minOpp}</span>
-        </div>
-        <div style={s.oppRow}>
           <span style={s.oppLabel}>球隊篩選</span>
           <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}
             style={{ fontSize: 13, padding: '3px 6px', borderRadius: 5,
@@ -230,6 +223,13 @@ export default function Rankings() {
               ✕
             </button>
           )}
+        </div>
+        <div style={s.oppRow}>
+          <span style={s.oppLabel}>最低守備機會（模型）</span>
+          <input type="range" min={0} max={400} step={25} value={minOpp}
+            onChange={e => setMinOpp(Number(e.target.value))}
+            style={{ width: 130, accentColor: '#2563eb' }} />
+          <span style={s.oppVal}>{minOpp}</span>
         </div>
       </div>
 
