@@ -36,10 +36,11 @@ class PositionSet(BaseModel):
 
 
 class BallPoint(BaseModel):
-    x:           float
-    y:           float
-    catch_prob:  float
+    x:            float
+    y:            float
+    catch_prob:   float
     is_wall_ball: bool
+    responsible:  str | None = None   # 'LF'/'CF'/'RF'，None = 接殺機率不足 5%
 
 
 class ParkCoord(BaseModel):

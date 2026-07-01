@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 
 // ── Layout (1 SVG unit ≈ 1 ft; same viewport as matplotlib xlim/ylim) ──
 const PL = 52, PT = 62, PW = 560, PH = 460, PR = 88, PB = 44
@@ -8,6 +8,7 @@ const X0 = -280, X1 = 280, Y0 = -10, Y1 = 450
 
 const tx = x => PL + (x - X0) / (X1 - X0) * PW
 const ty = y => PT + (Y1 - y) / (Y1 - Y0) * PH
+
 
 // ── RdYlGn colormap (matching matplotlib) ──────────────
 const RDYLGN = [
@@ -55,14 +56,19 @@ const STYLES = {
   custom:     { color: '#7B2FBE', shape: 'star',    r: 12, dy: +22 },
 }
 
-function PosMarker({ cx, cy, st, code }) {
+const OWNER_COLORS = { LF: '#4472C4', CF: '#27AE60', RF: '#E67E22', null: '#aaa' }
+
+function PosMarker({ cx, cy, st, code, isActive, onClick }) {
   const { color, shape, r, dy } = st
   return (
-    <g>
+    <g onClick={onClick} style={{ cursor: 'pointer' }}>
+      {isActive && (
+        <circle cx={cx} cy={cy} r={r + 10} fill={color} fillOpacity="0.15"
+          stroke={color} strokeWidth="2.5" opacity="0.8" />
+      )}
       {shape === 'diamond' && <polygon points={diamondPts(cx, cy, r)} fill={color} stroke="white" strokeWidth="1.5" />}
       {shape === 'circle'  && <circle  cx={cx} cy={cy} r={r}          fill={color} stroke="white" strokeWidth="1.5" />}
       {shape === 'star'    && <polygon points={starPts(cx, cy, r)}     fill={color} stroke="white" strokeWidth="1.2" />}
-      {/* Label box (round,pad ≈ matplotlib bbox) */}
       <rect x={cx - 12} y={cy + dy - 7} width={24} height={14}
         rx="2.5" fill={color} stroke="white" strokeWidth="0.8" opacity="0.95" />
       <text x={cx} y={cy + dy} textAnchor="middle" dominantBaseline="middle"
@@ -96,6 +102,10 @@ export default function SprayChart({
   title = '', situation = '', stats = null,
 }) {
   const [hovered, setHovered] = useState(null)
+  const [activePos, setActivePos] = useState(null)
+  const [colorMode, setColorMode] = useState('prob')   // 'prob' | 'owner'
+  const [probMin, setProbMin] = useState(0)             // 0–100 integer
+  const [probMax, setProbMax] = useState(100)
 
   const park = stats?.home_team || ''
   const pos  = positions || {}
@@ -104,6 +114,23 @@ export default function SprayChart({
   const drawKeys = 'custom'    in pos ? ['custom']
     : 'with_park' in pos              ? ['with_park']
     : ['league_avg', 'no_park'].filter(k => k in pos)
+
+  // Fallback: compute responsible fielder client-side if backend doesn't provide it
+  const ballOwner = useMemo(() => {
+    if (balls.every(b => b.responsible !== undefined)) return null  // backend has it
+    const key = drawKeys[0]
+    if (!key || !pos[key]) return null
+    const posSet = pos[key]
+    return balls.map(b => {
+      if (b.is_wall_ball || b.catch_prob < 0.05) return null
+      return ['LF', 'CF', 'RF'].reduce((best, code) => {
+        const dx = b.x - posSet[code].x, dy = b.y - posSet[code].y
+        const d = dx * dx + dy * dy
+        return d < best.d ? { code, d } : best
+      }, { code: null, d: Infinity }).code
+    })
+  }, [balls, pos, drawKeys])
+
 
   // Legend
   const legend = []
@@ -131,15 +158,42 @@ export default function SprayChart({
   const legH = legend.length * 18 + 8
 
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', background: 'white' }}>
+      {/* ── Controls ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '16px',
+        padding: '6px 12px', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap',
+      }}>
+        {/* Color mode toggle */}
+        <button onClick={() => setColorMode(m => m === 'prob' ? 'owner' : 'prob')} style={{
+          padding: '3px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
+          border: '1px solid #cbd5e1',
+          background: colorMode === 'owner' ? '#1e40af' : 'white',
+          color: colorMode === 'owner' ? 'white' : '#334155',
+        }}>
+          {colorMode === 'prob' ? '切換：責任歸屬色' : '切換：接殺機率色'}
+        </button>
+
+        {/* Prob range slider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
+          <span>接殺機率</span>
+          <span style={{ minWidth: '28px', textAlign: 'right' }}>{probMin}%</span>
+          <input type="range" min={0} max={100} value={probMin}
+            onChange={e => setProbMin(Math.min(+e.target.value, probMax))}
+            style={{ width: '72px', accentColor: '#4472C4' }} />
+          <span>—</span>
+          <input type="range" min={0} max={100} value={probMax}
+            onChange={e => setProbMax(Math.max(+e.target.value, probMin))}
+            style={{ width: '72px', accentColor: '#4472C4' }} />
+          <span style={{ minWidth: '28px' }}>{probMax}%</span>
+        </div>
+      </div>
+
     <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', display: 'block', background: 'white' }}>
       <defs>
         <clipPath id="sc-clip">
           <rect x={PL} y={PT} width={PW} height={PH} />
         </clipPath>
-        {/* KDE blur (simulates seaborn kdeplot Blues) */}
-        <filter id="sc-kde" x="-40%" y="-40%" width="180%" height="180%">
-          <feGaussianBlur stdDeviation="15" />
-        </filter>
         {/* Colorbar gradient */}
         <linearGradient id="sc-grad" x1="0" y1="1" x2="0" y2="0">
           {RDYLGN.map(([t, [r, g, b]]) => (
@@ -153,15 +207,6 @@ export default function SprayChart({
       <rect x={PL} y={PT} width={PW} height={PH} fill="white" stroke="#aaa" strokeWidth="0.8" />
 
       <g clipPath="url(#sc-clip)">
-        {/* KDE density layer (Blues heatmap approximation) */}
-        {balls.filter(b => !b.is_wall_ball).length > 5 && (
-          <g filter="url(#sc-kde)" opacity="0.28">
-            {balls.filter(b => !b.is_wall_ball).map((b, i) => (
-              <circle key={i} cx={tx(b.x)} cy={ty(b.y)} r="30"
-                fill="rgb(74,114,196)" opacity="0.12" />
-            ))}
-          </g>
-        )}
 
         {/* 400 ft dashed arc */}
         <path
@@ -185,15 +230,28 @@ export default function SprayChart({
             points={parkBoundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
         )}
 
-        {/* Ball scatter (RdYlGn) */}
-        {balls.filter(b => !b.is_wall_ball).map((b, i) => (
-          <circle key={i} cx={tx(b.x)} cy={ty(b.y)} r="5.5"
-            fill={rdylgn(b.catch_prob)} fillOpacity="0.85"
-            stroke="gray" strokeWidth="0.3"
-            style={{ cursor: 'crosshair' }}
-            onMouseEnter={() => setHovered(b)}
-            onMouseLeave={() => setHovered(null)} />
-        ))}
+        {/* Ball scatter — color by catch prob or responsibility; filter by prob range */}
+        {balls.map((b, i) => {
+          if (b.is_wall_ball) return null
+          const pct = b.catch_prob * 100
+          if (pct < probMin || pct > probMax) return null
+          const owner = b.responsible !== undefined ? b.responsible : ballOwner?.[i]
+          const mine = !activePos || owner === activePos
+          const fill = colorMode === 'owner'
+            ? (OWNER_COLORS[owner] ?? OWNER_COLORS.null)
+            : rdylgn(b.catch_prob)
+          return (
+            <circle key={i} cx={tx(b.x)} cy={ty(b.y)}
+              r={mine ? 6 : 5}
+              fill={fill}
+              fillOpacity={mine ? 0.92 : 0.10}
+              stroke={mine ? 'white' : 'gray'}
+              strokeWidth={mine ? 0.8 : 0.2}
+              style={{ cursor: 'crosshair' }}
+              onMouseEnter={() => setHovered(b)}
+              onMouseLeave={() => setHovered(null)} />
+          )
+        })}
 
         {/* Wall balls (orange stars) */}
         {balls.filter(b => b.is_wall_ball).map((b, i) => (
@@ -201,12 +259,14 @@ export default function SprayChart({
             fill="#FF6B00" stroke="black" strokeWidth="0.4" opacity="0.9" />
         ))}
 
-        {/* Fielder position markers */}
+        {/* Fielder position markers (click to highlight responsible balls) */}
         {drawKeys.flatMap(key =>
           ['LF', 'CF', 'RF'].map(code => (
             <PosMarker key={`${key}-${code}`}
               cx={tx(pos[key][code].x)} cy={ty(pos[key][code].y)}
-              st={STYLES[key]} code={code} />
+              st={STYLES[key]} code={code}
+              isActive={activePos === code}
+              onClick={() => setActivePos(p => p === code ? null : code)} />
           ))
         )}
 
@@ -258,10 +318,10 @@ export default function SprayChart({
         y coordinate (ft)
       </text>
 
-      {/* ── Colorbar ── */}
+      {/* ── Colorbar / Owner legend ── */}
       {(() => {
         const cbX = PL + PW + 18, cbY = PT + PH * 0.1, cbH = PH * 0.8, cbW = 16
-        return (
+        if (colorMode === 'prob') return (
           <>
             <rect x={cbX} y={cbY} width={cbW} height={cbH}
               fill="url(#sc-grad)" stroke="#bbb" strokeWidth="0.5" />
@@ -283,6 +343,17 @@ export default function SprayChart({
             </text>
           </>
         )
+        return (
+          <>
+            {[['LF', '#4472C4'], ['CF', '#27AE60'], ['RF', '#E67E22'], ['其他', '#aaa']].map(([label, color], i) => (
+              <g key={label} transform={`translate(${cbX},${cbY + i * 26})`}>
+                <rect width={16} height={16} rx="3" fill={color} />
+                <text x={22} y={8} dominantBaseline="middle" fontSize="11" fill="#333">{label}</text>
+              </g>
+            ))}
+            <text x={cbX + cbW / 2} y={cbY + 4 * 26 + 8} textAnchor="middle" fontSize="10" fill="#444">責任</text>
+          </>
+        )
       })()}
 
       {/* ── Title ── */}
@@ -301,5 +372,6 @@ export default function SprayChart({
         </text>
       )}
     </svg>
+    </div>
   )
 }

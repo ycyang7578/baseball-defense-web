@@ -18,7 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.optimization import (
     optimize_positions, prepare_batter_balls, compute_w_j,
-    compute_ball_catch_probs, get_league_avg_positions, get_batter_stand,
+    compute_ball_catch_probs, compute_per_fielder_probs,
+    get_league_avg_positions, get_batter_stand,
     load_model_params, load_player_params, POSITIONS,
 )
 from src.hit_prob import predict_hit_probs_batch
@@ -536,12 +537,29 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             scatter_probs = probs_with_park
 
     # ── 球散點（全部球；打牆球 catch_prob=0、前端以橘星標示）─────
+    # responsible_fielder：對這顆球接殺機率最高的守備員（模型以距離決定）
+    # catch_prob < 5% → 不歸任何人管
+    primary_pos = (
+        pos_custom if fielder_mus
+        else (pos_with_park if home_team else pos_no_park)
+    )
+    # 責任分配：最近守備員（_catch_prob_single_fielder 含方向角特徵，
+    # 跨位置比較時角度項可能讓較遠守備員機率反而更高，不適合用來切割責任範圍）
+    bx_arr = balls_all["ball_x"].values
+    by_arr = balls_all["ball_y"].values
+    dists = {
+        code: np.hypot(bx_arr - primary_pos[code][0], by_arr - primary_pos[code][1])
+        for code in POSITIONS
+    }
+    nearest = [min(POSITIONS, key=lambda c, i=i: dists[c][i]) for i in range(len(balls_all))]
+
     balls_out = [
         BallPoint(
             x=float(balls_all.iloc[i]["ball_x"]),
             y=float(balls_all.iloc[i]["ball_y"]),
             catch_prob=float(scatter_probs[i]),
             is_wall_ball=bool(wall_flags[i]),
+            responsible=nearest[i] if scatter_probs[i] >= 0.05 else None,
         )
         for i in range(len(balls_all))
     ]

@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 from scipy.optimize import minimize
+from scipy.special import expit as _expit
 
 # 模型 scaler 以 DataFrame 訓練但以 numpy array 呼叫，suppress 已知無害警告
 warnings.filterwarnings(
@@ -413,6 +414,28 @@ def optimize_positions(
         "objective":   float(best["fun"]),
         "n_balls":     len(balls_f),
         "n_wall_balls": n_wall_balls,
+    }
+
+
+def compute_per_fielder_probs(
+    positions: dict,
+    balls: pd.DataFrame,
+    scalers: dict,
+    mus: dict,
+) -> dict:
+    """
+    各守備員對每顆球的個別接殺機率。
+    Returns {"LF": ndarray(N), "CF": ndarray(N), "RF": ndarray(N)}
+    """
+    bx = balls["ball_x"].values
+    by = balls["ball_y"].values
+    ft = balls["flight_time"].values
+    return {
+        pos: _catch_prob_single_fielder(
+            positions[pos][0], positions[pos][1], bx, by, ft,
+            scalers[pos].mean_, scalers[pos].scale_, mus[pos],
+        )
+        for pos in POSITIONS
     }
 
 
