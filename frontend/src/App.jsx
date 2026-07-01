@@ -54,6 +54,7 @@ export default function App() {
   // 比較模式
   const [minOpp, setMinOpp]           = useState(100)
   const [compareMode, setCompareMode] = useState(false)
+  const [homeTeamB, setHomeTeamB]     = useState('')
   const [selFieldersB, setSelFieldersB] = useState(EMPTY_FIELDERS)
   const [imgUrlB, setImgUrlB]         = useState(null)
   const [plotDataB, setPlotDataB]     = useState(null)
@@ -73,6 +74,7 @@ export default function App() {
 
   function toggleCompare() {
     setCompareMode(v => !v)
+    setHomeTeamB('')
     setImgUrlB(null)
     setPlotDataB(null)
   }
@@ -90,8 +92,8 @@ export default function App() {
       }
       if (compareMode) {
         const [resA, resB] = await Promise.all([
-          optimizePlot({ ...base, year, fielders: buildFielders(selFielders) }),
-          optimizePlot({ ...base, year, fielders: buildFielders(selFieldersB) }),
+          optimizePlot({ ...base, year, homeTeam: homeTeam || null, fielders: buildFielders(selFielders) }),
+          optimizePlot({ ...base, year, homeTeam: homeTeamB || null, fielders: buildFielders(selFieldersB) }),
         ])
         setImgUrl(prev  => { if (prev)  URL.revokeObjectURL(prev);  return resA.url })
         setImgUrlB(prev => { if (prev)  URL.revokeObjectURL(prev);  return resB.url })
@@ -173,11 +175,30 @@ export default function App() {
             <GameStateForm state={gameState} onChange={setGameState} />
           </Sec>
 
-          <Sec title="球場（選填）">
-            <select value={homeTeam} onChange={e => setHomeTeam(e.target.value)} style={s.select}>
-              <option value="">— 通用 —</option>
-              {teams.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
+          <Sec title={compareMode ? '球場（各組獨立）' : '球場（選填）'}>
+            {compareMode ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', minWidth: 28 }}>A</span>
+                  <select value={homeTeam} onChange={e => setHomeTeam(e.target.value)} style={{ ...s.select, flex: 1 }}>
+                    <option value="">— 通用 —</option>
+                    {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', minWidth: 28 }}>B</span>
+                  <select value={homeTeamB} onChange={e => setHomeTeamB(e.target.value)} style={{ ...s.select, flex: 1 }}>
+                    <option value="">— 通用 —</option>
+                    {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+            ) : (
+              <select value={homeTeam} onChange={e => setHomeTeam(e.target.value)} style={s.select}>
+                <option value="">— 通用 —</option>
+                {teams.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            )}
           </Sec>
 
           <Sec title="外野手">
