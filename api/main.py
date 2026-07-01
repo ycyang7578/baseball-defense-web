@@ -242,21 +242,35 @@ def get_years():
 
 @app.get("/api/player_trend")
 def player_trend(name: str):
-    """Return year-by-year OAA for a player across all available years."""
-    rows = []
-    for yr in _AVAILABLE_YEARS:
-        yr_cache = _fielders_cache.get(yr, {})
-        for pos in POSITIONS:
-            for f in yr_cache.get(pos, []):
-                if f["name"] == name:
-                    rows.append({
-                        "year": yr,
-                        "position": pos,
-                        "oaa": f["oaa"],
-                        "n_opp": f["n_opp"],
-                        "rate": round(f["oaa"] / f["n_opp"] * 100, 2) if f["n_opp"] else None,
-                    })
-    return sorted(rows, key=lambda x: x["year"])
+    """Return year-by-year centered OAA/100 matching the Rankings table."""
+    result = []
+    with psycopg2.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            for yr in _AVAILABLE_YEARS:
+                yr_model_names = _model_names.get(yr, {})
+                cur.execute(
+                    "SELECT name_fielder, position, model_oaa, n_opp FROM model_oaa WHERE year = %s",
+                    (yr,),
+                )
+                all_rows = cur.fetchall()
+
+                # 同 get_fielders：用有模型參數的球員計算聯盟平均
+                visible = [(float(oaa), int(n))
+                           for nm, pos, oaa, n in all_rows
+                           if nm in yr_model_names.get(pos, set())]
+                total_oaa = sum(r[0] for r in visible)
+                total_opp = sum(r[1] for r in visible)
+                avg_per_ball = total_oaa / total_opp if total_opp else 0.0
+
+                for nm, pos, oaa, n in all_rows:
+                    if nm == name and nm in yr_model_names.get(pos, set()):
+                        c = float(oaa) - avg_per_ball * int(n)
+                        result.append({
+                            "year": yr, "position": pos,
+                            "oaa": round(c, 2), "n_opp": int(n),
+                            "rate": round(c / int(n) * 100, 2) if n else None,
+                        })
+    return sorted(result, key=lambda x: x["year"])
 
 
 @app.get("/api/fielders", response_model=dict[str, list[FielderInfo]])

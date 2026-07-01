@@ -436,11 +436,11 @@ function TrendChart({ data }) {
         )
       })}
 
-      {/* legend */}
+      {/* legend（右上角，堆疊排列）*/}
       {Object.entries(byPos).map(([pos, _], i) => (
-        <g key={pos} transform={`translate(${PL + i * 70},${H - 8})`}>
-          <rect width={10} height={10} y={-9} fill={posColor[pos] || '#64748b'} rx={2} />
-          <text x={13} y={0} fontSize={9} fill="#374151">{pos}</text>
+        <g key={pos} transform={`translate(${W - 44},${PT + 2 + i * 16})`}>
+          <rect width={12} height={8} y={-7} fill={posColor[pos] || '#64748b'} rx={2} />
+          <text x={15} y={0} fontSize={9} fill="#374151" fontWeight={600}>{pos}</text>
         </g>
       ))}
     </svg>
