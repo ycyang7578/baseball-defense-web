@@ -24,6 +24,23 @@ export async function fetchFielders(minOpp = 100, year = 2025) {
   return res.json()
 }
 
+export async function fetchCoverageMap({ year, positions, homeTeam, label }) {
+  const res = await fetch(`${BASE}/coverage_map`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ year, positions, home_team: homeTeam || null, label: label || '' }),
+  })
+  if (!res.ok) {
+    let detail = 'Coverage map failed'
+    try { detail = (await res.json()).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  const data = await res.json()
+  const bytes = Uint8Array.from(atob(data.image_b64), c => c.charCodeAt(0))
+  const blob = new Blob([bytes], { type: 'image/png' })
+  return URL.createObjectURL(blob)
+}
+
 export async function fetchStarStats(year = 2025) {
   const res = await fetch(`${BASE}/star_stats?year=${year}`)
   if (!res.ok) throw new Error('Failed to fetch star stats')

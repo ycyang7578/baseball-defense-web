@@ -63,6 +63,13 @@ class OptimizeResponse(BaseModel):
     stats:         OptimizeStats
 
 
+class CoverageMapRequest(BaseModel):
+    year:       int = 2025
+    positions:  dict[str, PositionXY]   # keys: "LF", "CF", "RF"
+    home_team:  str | None = None
+    label:      str = ""
+
+
 class BatterInfo(BaseModel):
     batter_id: int
     name:      str

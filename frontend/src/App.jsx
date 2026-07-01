@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchBatters, fetchTeams, fetchFielders, fetchYears, optimizePlot } from './api'
+import { fetchBatters, fetchTeams, fetchFielders, fetchYears, optimizePlot, fetchCoverageMap } from './api'
 import GameStateForm from './components/GameStateForm'
 import SearchSelect from './components/SearchSelect'
 
@@ -62,6 +62,10 @@ export default function App() {
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState(null)
 
+  // 覆蓋率圖
+  const [coverageUrl, setCoverageUrl]         = useState(null)
+  const [loadingCoverage, setLoadingCoverage] = useState(false)
+
   useEffect(() => {
     fetchYears().then(ys => { setAvailYears(ys); setYear(ys[ys.length - 1]) }).catch(console.error)
     fetchTeams().then(setTeams).catch(console.error)
@@ -79,10 +83,31 @@ export default function App() {
     setPlotDataB(null)
   }
 
+  async function handleCoverageMap() {
+    if (!plotData) return
+    const posKey = plotData.positions.with_park ? 'with_park' : 'no_park'
+    const pos = plotData.positions[posKey]
+    setLoadingCoverage(true)
+    try {
+      const url = await fetchCoverageMap({
+        year,
+        positions: { LF: pos.LF, CF: pos.CF, RF: pos.RF },
+        homeTeam: homeTeam || null,
+        label: `${plotData.title} — Coverage`,
+      })
+      setCoverageUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoadingCoverage(false)
+    }
+  }
+
   async function handleOptimize() {
     if (!batterId) return
     setLoading(true)
     setError(null)
+    setCoverageUrl(null)
     try {
       const base = {
         batterId: Number(batterId),
@@ -270,7 +295,33 @@ export default function App() {
                   : <div style={s.placeholder}>選擇打者後按「計算最佳站位」</div>}
                 {loading && <Overlay />}
               </div>
-              {plotData && !loading && <StatsPanel data={plotData} />}
+              {plotData && !loading && (
+                <>
+                  <StatsPanel data={plotData} />
+                  <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      onClick={handleCoverageMap}
+                      disabled={loadingCoverage}
+                      style={{ ...s.toggleBtn, opacity: loadingCoverage ? 0.6 : 1 }}
+                    >
+                      {loadingCoverage ? '計算中…' : '🗺 覆蓋率圖'}
+                    </button>
+                    {coverageUrl && (
+                      <button
+                        onClick={() => setCoverageUrl(null)}
+                        style={{ ...s.toggleBtn, fontSize: 10, padding: '4px 8px' }}
+                      >
+                        ✕ 關閉
+                      </button>
+                    )}
+                  </div>
+                  {coverageUrl && (
+                    <img src={coverageUrl} alt="coverage map"
+                      style={{ width: '100%', marginTop: 8, borderRadius: 6,
+                               boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }} />
+                  )}
+                </>
+              )}
             </div>
           )}
         </div>
