@@ -243,7 +243,6 @@ export default function App() {
               {loading ? '計算中…' : '計算最佳站位'}
             </button>
             {error && <div style={s.error}>{error}</div>}
-            <div style={s.hint}>圖由後端 matplotlib 繪製，與論文圖一致。</div>
           </div>
         </div>
 
