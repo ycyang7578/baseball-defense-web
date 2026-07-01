@@ -89,9 +89,10 @@ export default function Rankings() {
     }).catch(() => {})
   }, [])
 
+  useEffect(() => { setTeamFilter('') }, [year])
+
   useEffect(() => {
     setLoading(true)
-    setTeamFilter('')
     Promise.all([fetchFielders(minOpp, year), fetchStarStats(year)])
       .then(([f, s]) => { setFielders(f); setStarData(s); setLoading(false) })
       .catch(() => setLoading(false))
