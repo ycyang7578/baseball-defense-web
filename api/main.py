@@ -211,8 +211,17 @@ async def lifespan(app: FastAPI):
     for yr in _AVAILABLE_YEARS:
         _fielders_cache[yr] = _load_fielders(yr)
         logger.info(f"  {yr}: " + ", ".join(f"{p}={len(_fielders_cache[yr][p])}" for p in POSITIONS))
-        all_pids = list({f["player_id"] for pos_list in _fielders_cache[yr].values()
-                         for f in pos_list if f.get("player_id")})
+        # 查全部球員的 player_id（不限 n_opp），確保低機會球員也有球隊資訊
+        with psycopg2.connect(DSN) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT o.player_id
+                    FROM model_oaa m
+                    JOIN oaa_leaderboard o
+                      ON o.player_name = m.name_fielder AND o.year = %(yr)s
+                    WHERE m.year = %(yr)s AND o.player_id IS NOT NULL
+                """, {"yr": yr})
+                all_pids = [row[0] for row in cur.fetchall()]
         _team_map[yr] = _load_team_info(all_pids, season=yr)
         logger.info(f"  {yr}: team info for {len(_team_map[yr])} players")
 
