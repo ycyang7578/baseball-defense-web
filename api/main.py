@@ -29,7 +29,7 @@ from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
-    CoverageMapRequest,
+    CoverageMapRequest, CoveragePositions,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -359,10 +359,11 @@ def coverage_map(req: CoverageMapRequest):
     from .plot import render_coverage_map
     if req.year not in _AVAILABLE_YEARS:
         raise HTTPException(422, f"No model for year {req.year}. Available: {_AVAILABLE_YEARS}")
-    if not all(pos in req.positions for pos in POSITIONS):
-        raise HTTPException(422, f"positions must include LF, CF, RF")
-
-    positions = {pos: (req.positions[pos].x, req.positions[pos].y) for pos in POSITIONS}
+    positions = {
+        "LF": (req.positions.LF.x, req.positions.LF.y),
+        "CF": (req.positions.CF.x, req.positions.CF.y),
+        "RF": (req.positions.RF.x, req.positions.RF.y),
+    }
     grid = compute_coverage_grid(positions, _scalers[req.year], _mus[req.year])
 
     park_boundary = None
