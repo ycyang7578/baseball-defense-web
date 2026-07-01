@@ -15,7 +15,6 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 URL = "https://baseballsavant.mlb.com/visuals/position_data"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-YEARS = range(2020, 2026)
 POSITIONS = {"LF": 7, "CF": 8, "RF": 9}
 
 
@@ -48,5 +47,7 @@ def fetch_year(year: int) -> None:
 
 
 if __name__ == "__main__":
-    for y in YEARS:
+    import sys
+    years = [int(y) for y in sys.argv[1:]] if len(sys.argv) > 1 else list(range(2020, 2026))
+    for y in years:
         fetch_year(y)
