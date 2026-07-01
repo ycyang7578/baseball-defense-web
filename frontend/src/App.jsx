@@ -300,12 +300,15 @@ export default function App() {
               <div style={{ position: 'relative' }}>
                 {imgUrl ? (
                   showSpray ? (
-                    <div style={{ background: '#1a4a25', borderRadius: plotData ? '8px 8px 0 0' : 8,
+                    <div style={{ borderRadius: plotData ? '8px 8px 0 0' : 8,
                                   boxShadow: '0 4px 20px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
                       <SprayChart
                         balls={plotData?.balls}
                         positions={plotData?.positions}
                         parkBoundary={plotData?.parkBoundary}
+                        title={plotData?.title}
+                        situation={plotData?.situation}
+                        stats={plotData?.stats}
                       />
                     </div>
                   ) : (

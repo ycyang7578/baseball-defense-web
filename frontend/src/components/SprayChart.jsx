@@ -1,175 +1,305 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 
-// viewBox: x ∈ [-430, 430], SVG y = -field_y (home plate at SVG y=0 = bottom)
-const VB = '-430 -490 860 520'
+// ── Layout (1 SVG unit ≈ 1 ft; same viewport as matplotlib xlim/ylim) ──
+const PL = 52, PT = 62, PW = 560, PH = 460, PR = 88, PB = 44
+const SVG_W = PL + PW + PR   // 700
+const SVG_H = PT + PH + PB   // 566
+const X0 = -280, X1 = 280, Y0 = -10, Y1 = 450
 
-const POS_COLORS = { LF: '#60a5fa', CF: '#34d399', RF: '#fb923c' }
+const tx = x => PL + (x - X0) / (X1 - X0) * PW
+const ty = y => PT + (Y1 - y) / (Y1 - Y0) * PH
 
-// HSL color: catch_prob 0→red(0°), 1→green(120°)
-const probColor = (p) => `hsl(${Math.round(p * 120)}, 90%, 52%)`
+// ── RdYlGn colormap (matching matplotlib) ──────────────
+const RDYLGN = [
+  [0.00, [165,   0,  38]],
+  [0.10, [215,  48,  39]],
+  [0.25, [244, 109,  67]],
+  [0.40, [253, 174,  97]],
+  [0.50, [255, 255, 191]],
+  [0.60, [217, 239, 139]],
+  [0.75, [166, 217, 106]],
+  [0.90, [102, 189,  99]],
+  [1.00, [  0, 104,  55]],
+]
 
-// Generic outfield arc when no park boundary (sample points on r=410ft circle ±45°)
-function genericArcPath() {
-  const pts = []
-  for (let deg = -45; deg <= 45; deg += 3) {
-    const rad = (deg * Math.PI) / 180
-    pts.push(`${(Math.sin(rad) * 410).toFixed(1)},${(-Math.cos(rad) * 410).toFixed(1)}`)
+function rdylgn(p) {
+  p = Math.max(0, Math.min(1, p))
+  for (let i = 0; i < RDYLGN.length - 1; i++) {
+    const [t0, c0] = RDYLGN[i], [t1, c1] = RDYLGN[i + 1]
+    if (p <= t1) {
+      const t = (p - t0) / (t1 - t0)
+      return `rgb(${c0.map((v, j) => Math.round(v + (c1[j] - v) * t)).join(',')})`
+    }
   }
-  return `M${pts[0]}L${pts.slice(1).join('L')}`
+  return 'rgb(0,104,55)'
 }
 
-// Convert park boundary array to SVG path (y negated)
-function parkPath(pts) {
-  if (!pts || pts.length === 0) return null
-  return `M${pts.map(p => `${p.x.toFixed(1)},${(-p.y).toFixed(1)}`).join('L')}Z`
+// ── Marker shapes ───────────────────────────────────────
+function starPts(cx, cy, r) {
+  return Array.from({ length: 10 }, (_, i) => {
+    const a = (Math.PI * i) / 5 - Math.PI / 2
+    const rad = i % 2 === 0 ? r : r * 0.38
+    return `${(cx + Math.cos(a) * rad).toFixed(2)},${(cy + Math.sin(a) * rad).toFixed(2)}`
+  }).join(' ')
 }
 
-// Infield diamond vertices (90ft bases → feet from home plate)
-const B = (90 / Math.sqrt(2)).toFixed(1)   // ≈ 63.6
-const DIAMOND = `0,0 ${B},${-B} 0,${-(2 * B * Math.SQRT2 / 2).toFixed(1)} ${-B},${-B}`
-// 2B = (0, 90√2) ≈ (0, 127.3)
-const SECOND_BASE_Y = -(90 * Math.SQRT2).toFixed(1)
+function diamondPts(cx, cy, r) {
+  return `${cx},${cy - r} ${cx + r * 0.7},${cy} ${cx},${cy + r} ${cx - r * 0.7},${cy}`
+}
 
-export default function SprayChart({ balls = [], positions = null, parkBoundary = null }) {
-  const [tooltip, setTooltip] = useState(null) // { ball, tx, ty }
+// ── Marker styles (colours matching matplotlib plot.py) ─
+const STYLES = {
+  league_avg: { color: '#1565C0', shape: 'diamond', r: 7,  dy: -20 },
+  no_park:    { color: '#C0392B', shape: 'circle',  r: 8,  dy: -24 },
+  with_park:  { color: '#7B2FBE', shape: 'star',    r: 12, dy: +22 },
+  custom:     { color: '#7B2FBE', shape: 'star',    r: 12, dy: +22 },
+}
 
-  const mainResult = positions
-    ? (positions.custom || positions.with_park || positions.no_park)
-    : null
-  const leagueAvg = positions?.league_avg
+function PosMarker({ cx, cy, st, code }) {
+  const { color, shape, r, dy } = st
+  return (
+    <g>
+      {shape === 'diamond' && <polygon points={diamondPts(cx, cy, r)} fill={color} stroke="white" strokeWidth="1.5" />}
+      {shape === 'circle'  && <circle  cx={cx} cy={cy} r={r}          fill={color} stroke="white" strokeWidth="1.5" />}
+      {shape === 'star'    && <polygon points={starPts(cx, cy, r)}     fill={color} stroke="white" strokeWidth="1.2" />}
+      {/* Label box (round,pad ≈ matplotlib bbox) */}
+      <rect x={cx - 12} y={cy + dy - 7} width={24} height={14}
+        rx="2.5" fill={color} stroke="white" strokeWidth="0.8" opacity="0.95" />
+      <text x={cx} y={cy + dy} textAnchor="middle" dominantBaseline="middle"
+        fill="white" fontSize="9.5" fontWeight="bold">{code}</text>
+    </g>
+  )
+}
 
-  const handleEnter = useCallback((ball, e) => {
-    // tx, ty in SVG viewBox coords (field x, -field y)
-    setTooltip({ ball, tx: ball.x, ty: -ball.y })
-  }, [])
+// ── 400 ft arc (= matplotlib Arc((0,0),800,800,theta1=45,theta2=135)) ──
+// Endpoints at x=±280: y = sqrt(400²-280²) ≈ 285.7
+const ARC_Y = Math.sqrt(400 * 400 - 280 * 280)
 
-  const boundary = parkPath(parkBoundary)
-  const arc      = genericArcPath()
+const X_TICKS = [-200, -100, 0, 100, 200]
+const Y_TICKS = [0, 100, 200, 300, 400]
 
-  // Clamp tooltip so it stays inside viewBox
-  const tip = tooltip ? {
-    tx: Math.max(-360, Math.min(360, tooltip.tx)),
-    ty: Math.min(-30, Math.max(-450, tooltip.ty - 28)),
-  } : null
+// ── Legend item ─────────────────────────────────────────
+function LegendItem({ color, shape, label, y }) {
+  return (
+    <g>
+      {shape === 'line'    && <line     x1={2}  y1={y}   x2={18}  y2={y}   stroke={color} strokeWidth="2.2" />}
+      {shape === 'star'    && <polygon  points={starPts(10, y, 6)}           fill={color} stroke="black" strokeWidth="0.4" />}
+      {shape === 'diamond' && <polygon  points={diamondPts(10, y, 6)}        fill={color} stroke="white" strokeWidth="1" />}
+      {shape === 'circle'  && <circle   cx={10}  cy={y}  r={5}               fill={color} stroke="white" strokeWidth="1" />}
+      <text x={24} y={y} dominantBaseline="middle" fontSize="9.5" fill="#333">{label}</text>
+    </g>
+  )
+}
+
+export default function SprayChart({
+  balls = [], positions = null, parkBoundary = null,
+  title = '', situation = '', stats = null,
+}) {
+  const [hovered, setHovered] = useState(null)
+
+  const park = stats?.home_team || ''
+  const pos  = positions || {}
+
+  // Which marker sets to draw (matches matplotlib logic)
+  const drawKeys = 'custom'    in pos ? ['custom']
+    : 'with_park' in pos              ? ['with_park']
+    : ['league_avg', 'no_park'].filter(k => k in pos)
+
+  // Legend
+  const legend = []
+  if (parkBoundary)
+    legend.push({ color: '#00CC55', shape: 'line',  label: 'Park Boundary' })
+  const nWall = stats?.n_wall_balls ?? balls.filter(b => b.is_wall_ball).length
+  if (nWall > 0)
+    legend.push({ color: '#FF6B00', shape: 'star',  label: `Wall Ball (${nWall})` })
+  for (const key of drawKeys) {
+    const label = key === 'with_park'  ? `RE24 Opt (park=${park})`
+      : key === 'no_park'              ? 'RE24 Opt (no park)'
+      : key === 'league_avg'           ? 'League Avg'
+      : 'Selected Fielders'
+    legend.push({ color: STYLES[key].color, shape: STYLES[key].shape, label })
+  }
+
+  // Tooltip position
+  const tip = hovered ? (() => {
+    const bx = tx(hovered.x), by = ty(hovered.y)
+    const tipX = Math.max(PL + 70, Math.min(PL + PW - 70, bx))
+    const tipY = (by - PT) > 55 ? by - 55 : by + 15
+    return { tipX, tipY }
+  })() : null
+
+  const legH = legend.length * 18 + 8
 
   return (
-    <div style={{ position: 'relative', width: '100%' }}>
-      <svg viewBox={VB} style={{ width: '100%', display: 'block' }}>
-        <defs>
-          <linearGradient id="probGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%"   stopColor="hsl(0,90%,52%)" />
-            <stop offset="50%"  stopColor="hsl(60,90%,52%)" />
-            <stop offset="100%" stopColor="hsl(120,90%,52%)" />
-          </linearGradient>
-          <clipPath id="fieldClip">
-            <path d={boundary || arc} />
-          </clipPath>
-        </defs>
+    <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', display: 'block', background: 'white' }}>
+      <defs>
+        <clipPath id="sc-clip">
+          <rect x={PL} y={PT} width={PW} height={PH} />
+        </clipPath>
+        {/* KDE blur (simulates seaborn kdeplot Blues) */}
+        <filter id="sc-kde" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="15" />
+        </filter>
+        {/* Colorbar gradient */}
+        <linearGradient id="sc-grad" x1="0" y1="1" x2="0" y2="0">
+          {RDYLGN.map(([t, [r, g, b]]) => (
+            <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
+          ))}
+        </linearGradient>
+      </defs>
 
-        {/* ── 背景草皮 ── */}
-        <rect x="-430" y="-490" width="860" height="520" fill="#1a4a25" />
+      {/* White background + plot area border */}
+      <rect width={SVG_W} height={SVG_H} fill="white" />
+      <rect x={PL} y={PT} width={PW} height={PH} fill="white" stroke="#aaa" strokeWidth="0.8" />
 
-        {/* ── 界外線（foul lines）── */}
-        <line x1="0" y1="0" x2="-450" y2="-450" stroke="white" strokeWidth="1.5" opacity="0.35" />
-        <line x1="0" y1="0" x2="450"  y2="-450" stroke="white" strokeWidth="1.5" opacity="0.35" />
-
-        {/* ── 球場圍牆 ── */}
-        {boundary
-          ? <path d={boundary} fill="none" stroke="#fbbf24" strokeWidth="3" />
-          : <path d={arc}      fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="8 5" />
-        }
-
-        {/* ── 內野（土色多邊形）── */}
-        <polygon points={DIAMOND}
-          fill="#8b6340" fillOpacity="0.25"
-          stroke="white" strokeWidth="0.8" strokeOpacity="0.3" />
-
-        {/* ── 投手丘 ── */}
-        <circle cx="0" cy="-60.5" r="9" fill="#8b6340" fillOpacity="0.3" />
-
-        {/* ── 本壘板標記 ── */}
-        <circle cx="0" cy="0" r="5" fill="white" fillOpacity="0.5" />
-
-        {/* ── 球散點 ── */}
-        {balls.map((ball, i) =>
-          ball.is_wall_ball ? (
-            <circle key={i} cx={ball.x} cy={-ball.y} r="5"
-              fill="#94a3b8" fillOpacity="0.25" />
-          ) : (
-            <circle key={i} cx={ball.x} cy={-ball.y} r="7"
-              fill={probColor(ball.catch_prob)} fillOpacity="0.78"
-              stroke="white" strokeWidth="0.6"
-              style={{ cursor: 'pointer' }}
-              onMouseEnter={e => handleEnter(ball, e)}
-              onMouseLeave={() => setTooltip(null)}
-            />
-          )
+      <g clipPath="url(#sc-clip)">
+        {/* KDE density layer (Blues heatmap approximation) */}
+        {balls.filter(b => !b.is_wall_ball).length > 5 && (
+          <g filter="url(#sc-kde)" opacity="0.28">
+            {balls.filter(b => !b.is_wall_ball).map((b, i) => (
+              <circle key={i} cx={tx(b.x)} cy={ty(b.y)} r="30"
+                fill="rgb(74,114,196)" opacity="0.12" />
+            ))}
+          </g>
         )}
 
-        {/* ── 聯盟平均站位（虛線圓圈）── */}
-        {leagueAvg && ['LF', 'CF', 'RF'].map(pos => {
-          const c = leagueAvg[pos]
-          return (
-            <circle key={`avg-${pos}`}
-              cx={c.x} cy={-c.y} r="14"
-              fill="none"
-              stroke={POS_COLORS[pos]} strokeWidth="2"
-              strokeDasharray="5 4" opacity="0.55" />
-          )
-        })}
+        {/* 400 ft dashed arc */}
+        <path
+          d={`M ${tx(280).toFixed(1)},${ty(ARC_Y).toFixed(1)} A 400 400 0 0 0 ${tx(-280).toFixed(1)},${ty(ARC_Y).toFixed(1)}`}
+          fill="none" stroke="gray" strokeWidth="2" strokeDasharray="8 5" />
 
-        {/* ── 最佳/自選站位（實心菱形 + 標籤）── */}
-        {mainResult && ['LF', 'CF', 'RF'].map(pos => {
-          const c = mainResult[pos]
-          const col = POS_COLORS[pos]
-          return (
-            <g key={pos} transform={`translate(${c.x},${-c.y})`}>
-              <polygon points="0,-13 10,0 0,13 -10,0"
-                fill={col} stroke="white" strokeWidth="1.5" />
-              <text textAnchor="middle" y="-19"
-                fill={col} fontSize="18" fontWeight="800"
-                stroke="#0f172a" strokeWidth="3" paintOrder="stroke"
-              >{pos}</text>
-            </g>
-          )
-        })}
+        {/* Foul lines */}
+        <line x1={tx(0)} y1={ty(0)} x2={tx(250)}  y2={ty(250)} stroke="black" strokeWidth="1.5" />
+        <line x1={tx(0)} y1={ty(0)} x2={tx(-250)} y2={ty(250)} stroke="black" strokeWidth="1.5" />
 
-        {/* ── Tooltip ── */}
-        {tooltip && tip && (() => {
-          const { ball } = tooltip
-          const pct = (ball.catch_prob * 100).toFixed(0)
-          return (
-            <g transform={`translate(${tip.tx},${tip.ty})`} pointerEvents="none">
-              <rect x="-65" y="-46" width="130" height="44"
-                rx="5" fill="rgba(15,23,42,0.92)" />
-              <text textAnchor="middle" y="-26"
-                fill="white" fontSize="15" fontWeight="700">
-                接殺機率 {pct}%
-              </text>
-              <text textAnchor="middle" y="-9"
-                fill="#94a3b8" fontSize="12">
-                {ball.is_wall_ball
-                  ? '打牆球'
-                  : `落點 (${Math.round(ball.x)}, ${Math.round(ball.y)}) ft`}
-              </text>
-            </g>
-          )
-        })()}
+        {/* Infield diamond */}
+        <polyline fill="none" stroke="black" strokeWidth="2"
+          points={`${tx(0)},${ty(0)} ${tx(63.64)},${ty(63.64)} ${tx(0)},${ty(127.28)} ${tx(-63.64)},${ty(63.64)} ${tx(0)},${ty(0)}`} />
+        {[[0,0],[63.64,63.64],[0,127.28],[-63.64,63.64]].map(([x, y], i) => (
+          <circle key={i} cx={tx(x)} cy={ty(y)} r="5" fill="white" stroke="black" strokeWidth="1.5" />
+        ))}
 
-        {/* ── 顏色圖例 ── */}
-        <g transform="translate(-200, 20)">
-          <rect x="0" y="0" width="160" height="12" rx="3"
-            fill="url(#probGrad)" />
-          <text x="0"   y="26" fill="#cbd5e1" fontSize="12" textAnchor="start">難接 0%</text>
-          <text x="160" y="26" fill="#cbd5e1" fontSize="12" textAnchor="end">易接 100%</text>
+        {/* Park boundary */}
+        {parkBoundary && (
+          <polyline fill="none" stroke="#00CC55" strokeWidth="2.2" opacity="0.9"
+            points={parkBoundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
+        )}
+
+        {/* Ball scatter (RdYlGn) */}
+        {balls.filter(b => !b.is_wall_ball).map((b, i) => (
+          <circle key={i} cx={tx(b.x)} cy={ty(b.y)} r="5.5"
+            fill={rdylgn(b.catch_prob)} fillOpacity="0.85"
+            stroke="gray" strokeWidth="0.3"
+            style={{ cursor: 'crosshair' }}
+            onMouseEnter={() => setHovered(b)}
+            onMouseLeave={() => setHovered(null)} />
+        ))}
+
+        {/* Wall balls (orange stars) */}
+        {balls.filter(b => b.is_wall_ball).map((b, i) => (
+          <polygon key={i} points={starPts(tx(b.x), ty(b.y), 7)}
+            fill="#FF6B00" stroke="black" strokeWidth="0.4" opacity="0.9" />
+        ))}
+
+        {/* Fielder position markers */}
+        {drawKeys.flatMap(key =>
+          ['LF', 'CF', 'RF'].map(code => (
+            <PosMarker key={`${key}-${code}`}
+              cx={tx(pos[key][code].x)} cy={ty(pos[key][code].y)}
+              st={STYLES[key]} code={code} />
+          ))
+        )}
+
+        {/* Hover tooltip */}
+        {hovered && tip && (
+          <g pointerEvents="none">
+            <rect x={tip.tipX - 66} y={tip.tipY} width={132} height={40}
+              rx="4" fill="rgba(15,23,42,0.9)" />
+            <text x={tip.tipX} y={tip.tipY + 14} textAnchor="middle"
+              fill="white" fontSize="13" fontWeight="700">
+              接殺機率 {(hovered.catch_prob * 100).toFixed(0)}%
+            </text>
+            <text x={tip.tipX} y={tip.tipY + 29} textAnchor="middle" fill="#94a3b8" fontSize="11">
+              落點 ({Math.round(hovered.x)}, {Math.round(hovered.y)}) ft
+            </text>
+          </g>
+        )}
+
+        {/* Legend (lower-left, inside plot) */}
+        <g transform={`translate(${PL + 6},${PT + PH - legH - 8})`}>
+          <rect x={-3} y={-3} width={155} height={legH + 6}
+            rx="4" fill="white" fillOpacity="0.9" stroke="#ccc" strokeWidth="0.8" />
+          {legend.map(({ color, shape, label }, i) => (
+            <LegendItem key={i} color={color} shape={shape} label={label} y={i * 18 + 10} />
+          ))}
         </g>
+      </g>
 
-        {/* ── 打牆球圖例 ── */}
-        <g transform="translate(80, 20)">
-          <circle cx="6" cy="6" r="5" fill="#94a3b8" fillOpacity="0.4" />
-          <text x="16" y="12" fill="#94a3b8" fontSize="12">打牆球（不計入）</text>
+      {/* ── Axes ── */}
+      <line x1={PL} y1={PT + PH} x2={PL + PW} y2={PT + PH} stroke="black" strokeWidth="1" />
+      <line x1={PL} y1={PT}      x2={PL}       y2={PT + PH} stroke="black" strokeWidth="1" />
+      {X_TICKS.map(x => (
+        <g key={x}>
+          <line x1={tx(x)} y1={PT + PH} x2={tx(x)} y2={PT + PH + 5} stroke="black" strokeWidth="1" />
+          <text x={tx(x)} y={PT + PH + 15} textAnchor="middle" fontSize="10" fill="#333">{x}</text>
         </g>
-      </svg>
-    </div>
+      ))}
+      {Y_TICKS.map(y => (
+        <g key={y}>
+          <line x1={PL - 5} y1={ty(y)} x2={PL} y2={ty(y)} stroke="black" strokeWidth="1" />
+          <text x={PL - 8} y={ty(y)} textAnchor="end" dominantBaseline="middle" fontSize="10" fill="#333">{y}</text>
+        </g>
+      ))}
+      <text x={PL + PW / 2} y={SVG_H - 6} textAnchor="middle" fontSize="11" fill="#444">
+        x coordinate (ft)
+      </text>
+      <text x={14} y={PT + PH / 2} textAnchor="middle" fontSize="11" fill="#444"
+        transform={`rotate(-90,14,${PT + PH / 2})`}>
+        y coordinate (ft)
+      </text>
+
+      {/* ── Colorbar ── */}
+      {(() => {
+        const cbX = PL + PW + 18, cbY = PT + PH * 0.1, cbH = PH * 0.8, cbW = 16
+        return (
+          <>
+            <rect x={cbX} y={cbY} width={cbW} height={cbH}
+              fill="url(#sc-grad)" stroke="#bbb" strokeWidth="0.5" />
+            {[0, 0.25, 0.5, 0.75, 1].map(t => {
+              const cy = cbY + cbH * (1 - t)
+              return (
+                <g key={t}>
+                  <line x1={cbX + cbW} y1={cy} x2={cbX + cbW + 5} y2={cy} stroke="#333" strokeWidth="1" />
+                  <text x={cbX + cbW + 8} y={cy} dominantBaseline="middle" fontSize="9.5" fill="#444">
+                    {(t * 100).toFixed(0)}%
+                  </text>
+                </g>
+              )
+            })}
+            <text x={cbX + cbW / 2} y={PT + PH / 2} textAnchor="middle" dominantBaseline="middle"
+              fontSize="10" fill="#444"
+              transform={`rotate(90,${cbX + cbW / 2},${PT + PH / 2})`}>
+              Catch Probability
+            </text>
+          </>
+        )
+      })()}
+
+      {/* ── Title ── */}
+      {title && (
+        <text x={PL + PW / 2} y={18} textAnchor="middle" fontSize="14" fontWeight="bold" fill="#111">
+          {title}
+        </text>
+      )}
+      {(situation || stats) && (
+        <text x={PL + PW / 2} y={40} textAnchor="middle" fontSize="10.5" fill="#555">
+          {[
+            situation && `Situation: ${situation}`,
+            stats?.n_balls     != null && `n = ${stats.n_balls}`,
+            stats?.n_wall_balls != null && `n_wall = ${stats.n_wall_balls}`,
+          ].filter(Boolean).join('   |   ')}
+        </text>
+      )}
+    </svg>
   )
 }
