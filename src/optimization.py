@@ -442,44 +442,6 @@ def compute_ball_catch_probs(
     return 1.0 - p_nc
 
 
-def compute_coverage_grid(
-    positions: dict,
-    scalers: dict,
-    mus: dict,
-    x_range: tuple = (-230, 230),
-    y_range: tuple = (30, 430),
-    step: int = 4,
-) -> dict:
-    """
-    Compute per-fielder and joint catch probability on a grid over the outfield.
-    Flight time is estimated as 1.0 + dist_from_home / 80 (seconds).
-    Returns {"xs", "ys", "joint", "per_pos"} — 2D arrays shaped (len(ys), len(xs)).
-    """
-    xs = np.arange(x_range[0], x_range[1] + 1, step, dtype=float)
-    ys = np.arange(y_range[0], y_range[1] + 1, step, dtype=float)
-    XX, YY = np.meshgrid(xs, ys)
-    gx, gy = XX.ravel(), YY.ravel()
-    flight_time = 1.0 + np.sqrt(gx ** 2 + gy ** 2) / 80.0
-
-    p_nc = np.ones(len(gx))
-    per_pos = {}
-    for pos in POSITIONS:
-        fx, fy = positions[pos]
-        sc = scalers[pos]
-        p = _catch_prob_single_fielder(
-            fx, fy, gx, gy, flight_time,
-            sc.mean_, sc.scale_, mus[pos],
-        )
-        per_pos[pos] = p.reshape(XX.shape)
-        p_nc *= (1.0 - p)
-
-    return {
-        "xs": xs,
-        "ys": ys,
-        "joint": (1.0 - p_nc).reshape(XX.shape),
-        "per_pos": per_pos,
-    }
-
 
 def get_league_avg_positions(year: int, dsn: str = DSN) -> dict:
     """

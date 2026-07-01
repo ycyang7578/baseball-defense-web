@@ -18,8 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.optimization import (
     optimize_positions, prepare_batter_balls, compute_w_j,
-    compute_ball_catch_probs, compute_coverage_grid,
-    get_league_avg_positions, get_batter_stand,
+    compute_ball_catch_probs, get_league_avg_positions, get_batter_stand,
     load_model_params, load_player_params, POSITIONS,
 )
 from src.hit_prob import predict_hit_probs_batch
@@ -29,7 +28,6 @@ from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
-    CoverageMapRequest, CoveragePositions,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -352,28 +350,6 @@ def optimize_plot(req: OptimizeRequest):
         "stats": resp.stats.model_dump(),
     }
 
-
-@app.post("/api/coverage_map")
-def coverage_map(req: CoverageMapRequest):
-    import base64
-    from .plot import render_coverage_map
-    if req.year not in _AVAILABLE_YEARS:
-        raise HTTPException(422, f"No model for year {req.year}. Available: {_AVAILABLE_YEARS}")
-    positions = {
-        "LF": (req.positions.LF.x, req.positions.LF.y),
-        "CF": (req.positions.CF.x, req.positions.CF.y),
-        "RF": (req.positions.RF.x, req.positions.RF.y),
-    }
-    grid = compute_coverage_grid(positions, _scalers[req.year], _mus[req.year])
-
-    park_boundary = None
-    if req.home_team and req.home_team.upper() in SUPPORTED_TEAMS:
-        coords = get_park_boundary_coords(req.home_team.upper())
-        park_boundary = [(c.x, c.y) for c in coords]
-
-    label = req.label or f"Coverage ({req.year})"
-    png = render_coverage_map(positions, grid, req.home_team, label, park_boundary)
-    return {"image_b64": base64.b64encode(png).decode()}
 
 
 def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:

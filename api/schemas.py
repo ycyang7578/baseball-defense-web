@@ -63,18 +63,6 @@ class OptimizeResponse(BaseModel):
     stats:         OptimizeStats
 
 
-class CoveragePositions(BaseModel):
-    LF: PositionXY
-    CF: PositionXY
-    RF: PositionXY
-
-
-class CoverageMapRequest(BaseModel):
-    year:       int = 2025
-    positions:  CoveragePositions
-    home_team:  str | None = None
-    label:      str = ""
-
 
 class BatterInfo(BaseModel):
     batter_id: int
