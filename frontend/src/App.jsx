@@ -320,14 +320,22 @@ function CompareStats({ dataA, dataB }) {
     )
   }
 
-  const posRow = (pos) => (
-    <tr key={pos}>
-      <td style={td.label}>{pos}</td>
-      <td style={td.val}>{fmtPos(rA[pos])}</td>
-      <td style={td.val}>{fmtPos(rB[pos])}</td>
-      <td style={td.val}>—</td>
-    </tr>
-  )
+  const posRow = (pos) => {
+    const dx = Math.round(rA[pos].x - rB[pos].x)
+    const dy = Math.round(rA[pos].y - rB[pos].y)
+    const sign = (v) => v > 0 ? `+${v}` : `${v}`
+    const color = (dx === 0 && dy === 0) ? '#475569' : '#2563eb'
+    return (
+      <tr key={pos}>
+        <td style={td.label}>{pos}</td>
+        <td style={td.val}>{fmtPos(rA[pos])}</td>
+        <td style={td.val}>{fmtPos(rB[pos])}</td>
+        <td style={{ ...td.val, color, fontWeight: 600 }}>
+          {dx === 0 && dy === 0 ? '—' : `(${sign(dx)}, ${sign(dy)})`}
+        </td>
+      </tr>
+    )
+  }
 
   return (
     <div style={{ background: 'white', borderRadius: '0 0 6px 6px', padding: '10px 16px',
