@@ -1,8 +1,7 @@
 """
-一次性腳本：查所有 2025 batter_id → 姓名，存到 data/reference/batter_names.json
+查所有年份 batter_id → 姓名，存到 data/reference/batter_names.json
 """
 import json
-import sys
 from pathlib import Path
 
 import psycopg2
@@ -12,14 +11,13 @@ DSN  = "host=localhost dbname=baseball user=postgres password=postgres"
 OUT  = Path(__file__).parent.parent / "data" / "reference" / "batter_names.json"
 
 def main():
-    # 撈 2025 有效飛球打者 ID
+    # 撈所有年份有效飛球打者 ID
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT DISTINCT batter
                 FROM statcast
-                WHERE game_year = 2025
-                  AND game_type = 'R'
+                WHERE game_type = 'R'
                   AND type = 'X'
                   AND bb_type IN ('fly_ball', 'line_drive')
                   AND events != 'home_run'

@@ -98,14 +98,23 @@ _BATTER_QUERY = """
 
 # ── 模型參數載入 ────────────────────────────────────────────────────
 
+def _resolve_model_dir(pos: str, models_dir: Path) -> tuple[Path, str]:
+    """Return (dir, prefix) for the model files. Falls back to unified OF if pos-specific missing."""
+    d = Path(models_dir) / pos
+    if (d / f"{pos}_scaler.joblib").exists():
+        return d, pos
+    # unified OF model fallback (2021-2024 only have OF/)
+    return Path(models_dir) / "OF", "OF"
+
+
 def load_model_params(pos: str, models_dir: Path) -> tuple:
     """
     Returns (scaler, mu_dict) for position pos.
     mu_dict keys: mu_alpha, mu_beta_speed, mu_beta_cos, mu_beta_sin, mu_beta_dist
     """
-    d = Path(models_dir) / pos
-    scaler = joblib.load(d / f"{pos}_scaler.joblib")
-    group = pd.read_csv(d / f"{pos}_summary_group.csv", encoding="utf-8-sig", index_col=0)
+    d, prefix = _resolve_model_dir(pos, models_dir)
+    scaler = joblib.load(d / f"{prefix}_scaler.joblib")
+    group = pd.read_csv(d / f"{prefix}_summary_group.csv", encoding="utf-8-sig", index_col=0)
     mu = group["mean"]
     mu_dict = {
         "mu_alpha":      float(mu["mu_alpha"]),
@@ -122,8 +131,8 @@ def load_player_params(pos: str, player_name: str, models_dir: Path) -> dict:
     讀取指定球員的 player-level 參數，回傳與 group mu 相同 key 格式的 dict
     （沿用該位置共用的 scaler）。供「指定特定外野手」的站位最佳化使用。
     """
-    d = Path(models_dir) / pos
-    players = pd.read_csv(d / f"{pos}_summary_players.csv", index_col=0, encoding="utf-8-sig")
+    d, prefix = _resolve_model_dir(pos, models_dir)
+    players = pd.read_csv(d / f"{prefix}_summary_players.csv", index_col=0, encoding="utf-8-sig")
 
     def g(param: str) -> float:
         return float(players.loc[f"{param}[{player_name}]", "mean"])
