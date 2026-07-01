@@ -262,10 +262,21 @@ export default function App() {
             <div style={{ width: '100%', maxWidth: 680 }}>
               <div style={{ position: 'relative' }}>
                 {imgUrl
-                  ? <img src={imgUrl} alt="defense plot"
-                      style={{ width: '100%', display: 'block',
-                               borderRadius: plotData ? '6px 6px 0 0' : 6,
-                               boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }} />
+                  ? <>
+                      <img src={imgUrl} alt="defense plot"
+                        style={{ width: '100%', display: 'block',
+                                 borderRadius: plotData ? '6px 6px 0 0' : 6,
+                                 boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }} />
+                      <a href={imgUrl}
+                        download={`defense_${batterId}_${year}.png`}
+                        style={{ position: 'absolute', top: 8, right: 8,
+                                 background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(4px)',
+                                 border: '1px solid #d1d5db', borderRadius: 6,
+                                 padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                                 color: '#374151', cursor: 'pointer', textDecoration: 'none' }}>
+                        ↓ 下載
+                      </a>
+                    </>
                   : <div style={s.placeholder}>選擇打者後按「計算最佳站位」</div>}
                 {loading && <Overlay />}
               </div>

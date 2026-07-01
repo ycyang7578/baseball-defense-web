@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { fetchYears, fetchFielders, fetchStarStats } from '../api'
+import { fetchYears, fetchFielders, fetchStarStats, fetchPlayerTrend } from '../api'
 
 const POSITIONS = ['LF', 'CF', 'RF']
 const TABS = ['ALL', 'LF', 'CF', 'RF']
@@ -77,6 +77,10 @@ export default function Rankings() {
   const [sortDir, setSortDir]     = useState('desc')
   const [availYears, setAvailYears] = useState([2025])
   const [year, setYear]           = useState(2025)
+  const [teamFilter, setTeamFilter] = useState('')
+  const [trendPlayer, setTrendPlayer] = useState(null)   // { name, player_id }
+  const [trendData, setTrendData]    = useState([])
+  const [trendLoading, setTrendLoading] = useState(false)
 
   useEffect(() => {
     fetchYears().then(ys => {
@@ -87,15 +91,31 @@ export default function Rankings() {
 
   useEffect(() => {
     setLoading(true)
+    setTeamFilter('')
     Promise.all([fetchFielders(minOpp, year), fetchStarStats(year)])
       .then(([f, s]) => { setFielders(f); setStarData(s); setLoading(false) })
       .catch(() => setLoading(false))
   }, [minOpp, year])
 
+  function openTrend(name, player_id) {
+    setTrendPlayer({ name, player_id })
+    setTrendData([])
+    setTrendLoading(true)
+    fetchPlayerTrend(name)
+      .then(d => { setTrendData(d); setTrendLoading(false) })
+      .catch(() => setTrendLoading(false))
+  }
+
   function handleSort(key) {
     if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
     else { setSortKey(key); setSortDir('desc') }
   }
+
+  const allTeams = useMemo(() => {
+    const ids = new Set()
+    POSITIONS.forEach(p => (fielders[p] || []).forEach(f => { if (f.team_id) ids.add(f.team_id) }))
+    return [...ids].sort((a, b) => (TEAM_ABBR[a] || '').localeCompare(TEAM_ABBR[b] || ''))
+  }, [fielders])
 
   const rows = useMemo(() => {
     const source = pos === 'ALL'
@@ -128,7 +148,10 @@ export default function Rankings() {
       }
       return row
     })
-    return [...base].sort((a, b) => {
+    const filtered = teamFilter
+      ? base.filter(r => r.team_id === Number(teamFilter))
+      : base
+    return [...filtered].sort((a, b) => {
       if (sortKey === 'name' || sortKey === 'position') {
         const cmp = sortKey === 'position'
           ? a.position.localeCompare(b.position) || a.name.localeCompare(b.name)
@@ -139,7 +162,7 @@ export default function Rankings() {
       const bv = b[sortKey] ?? -Infinity
       return sortDir === 'desc' ? bv - av : av - bv
     }).map((r, i) => ({ ...r, rank: i + 1 }))
-  }, [fielders, starData, pos, sortKey, sortDir])
+  }, [fielders, starData, pos, sortKey, sortDir, teamFilter])
 
   const isActive = key => sortKey === key
 
@@ -189,6 +212,24 @@ export default function Rankings() {
             onChange={e => setMinOpp(Number(e.target.value))}
             style={{ width: 130, accentColor: '#2563eb' }} />
           <span style={s.oppVal}>{minOpp}</span>
+        </div>
+        <div style={s.oppRow}>
+          <span style={s.oppLabel}>球隊篩選</span>
+          <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}
+            style={{ fontSize: 13, padding: '3px 6px', borderRadius: 5,
+                     border: '1px solid #d1d5db', color: '#374151' }}>
+            <option value="">全部球隊</option>
+            {allTeams.map(tid => (
+              <option key={tid} value={tid}>{TEAM_ABBR[tid] || tid}</option>
+            ))}
+          </select>
+          {teamFilter && (
+            <button onClick={() => setTeamFilter('')}
+              style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4,
+                       border: '1px solid #d1d5db', cursor: 'pointer', background: 'white' }}>
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -244,9 +285,14 @@ export default function Rankings() {
                 <tr key={r.name + r.position} style={s.tr}>
                   <td style={{ ...s.td, color: '#9ca3af', fontSize: 11 }}>{r.rank}</td>
                   <td style={tdStyle('name', { fontWeight: 500, textAlign: 'left' })}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 9, whiteSpace: 'nowrap' }}>
+                    <div
+                      onClick={() => openTrend(r.name, r.player_id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 9,
+                               whiteSpace: 'nowrap', cursor: 'pointer' }}
+                      title="查看多年趨勢"
+                    >
                       <PlayerAvatar playerId={r.player_id} name={r.name} />
-                      {displayName(r.name)}
+                      <span style={{ borderBottom: '1px dashed #93c5fd' }}>{displayName(r.name)}</span>
                     </div>
                   </td>
                   <td style={s.td}>
@@ -293,7 +339,111 @@ export default function Rankings() {
           </table>
         </div>
       )}
+
+      {trendPlayer && (
+        <div onClick={() => setTrendPlayer(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+                   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'white', borderRadius: 12, padding: 28,
+                     minWidth: 380, maxWidth: 480, boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <PlayerAvatar playerId={trendPlayer.player_id} name={trendPlayer.name} />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>{displayName(trendPlayer.name)}</div>
+                <div style={{ fontSize: 11, color: '#6b7280' }}>OAA/100 多年趨勢</div>
+              </div>
+              <button onClick={() => setTrendPlayer(null)}
+                style={{ marginLeft: 'auto', border: 'none', background: 'none',
+                         cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>✕</button>
+            </div>
+            {trendLoading ? (
+              <div style={{ textAlign: 'center', color: '#9ca3af', padding: 32 }}>載入中…</div>
+            ) : trendData.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#9ca3af', padding: 32 }}>無資料</div>
+            ) : (
+              <TrendChart data={trendData} />
+            )}
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function TrendChart({ data }) {
+  const W = 400, H = 200, PL = 44, PR = 16, PT = 16, PB = 36
+  const years = data.map(d => d.year)
+  const rates = data.map(d => d.rate ?? 0)
+  const minY = Math.min(...rates, 0) - 2
+  const maxY = Math.max(...rates, 0) + 2
+  const minX = Math.min(...years), maxX = Math.max(...years)
+  const allYears = Array.from({ length: maxX - minX + 1 }, (_, i) => minX + i)
+
+  const cx = yr => PL + ((yr - minX) / Math.max(maxX - minX, 1)) * (W - PL - PR)
+  const cy = v  => PT + (1 - (v - minY) / (maxY - minY)) * (H - PT - PB)
+
+  const posColor = { LF: '#3B82F6', CF: '#10B981', RF: '#F97316' }
+
+  const byPos = {}
+  data.forEach(d => {
+    if (!byPos[d.position]) byPos[d.position] = []
+    byPos[d.position].push(d)
+  })
+
+  return (
+    <svg width={W} height={H} style={{ display: 'block', margin: '0 auto' }}>
+      {/* zero line */}
+      <line x1={PL} x2={W - PR} y1={cy(0)} y2={cy(0)}
+        stroke="#e2e8f0" strokeWidth={1.5} />
+      <text x={PL - 4} y={cy(0) + 4} fontSize={9} fill="#9ca3af" textAnchor="end">0</text>
+
+      {/* y ticks */}
+      {[-10, -5, 5, 10].map(v => v > minY && v < maxY && (
+        <g key={v}>
+          <line x1={PL} x2={W - PR} y1={cy(v)} y2={cy(v)}
+            stroke="#f1f5f9" strokeWidth={1} strokeDasharray="3,3" />
+          <text x={PL - 4} y={cy(v) + 4} fontSize={9} fill="#cbd5e1" textAnchor="end">{v}</text>
+        </g>
+      ))}
+
+      {/* x axis labels */}
+      {allYears.map(yr => (
+        <text key={yr} x={cx(yr)} y={H - 6} fontSize={10} fill="#6b7280" textAnchor="middle">{yr}</text>
+      ))}
+
+      {/* lines + points per position */}
+      {Object.entries(byPos).map(([pos, pts]) => {
+        const sorted = [...pts].sort((a, b) => a.year - b.year)
+        const col = posColor[pos] || '#64748b'
+        const pathD = sorted.map((d, i) =>
+          `${i === 0 ? 'M' : 'L'}${cx(d.year)},${cy(d.rate ?? 0)}`
+        ).join(' ')
+        return (
+          <g key={pos}>
+            <path d={pathD} fill="none" stroke={col} strokeWidth={2} />
+            {sorted.map(d => (
+              <g key={d.year}>
+                <circle cx={cx(d.year)} cy={cy(d.rate ?? 0)} r={5}
+                  fill={col} stroke="white" strokeWidth={1.5} />
+                <text x={cx(d.year)} y={cy(d.rate ?? 0) - 8}
+                  fontSize={9} fill={col} textAnchor="middle" fontWeight={600}>
+                  {(d.rate ?? 0) >= 0 ? '+' : ''}{(d.rate ?? 0).toFixed(1)}
+                </text>
+              </g>
+            ))}
+          </g>
+        )
+      })}
+
+      {/* legend */}
+      {Object.entries(byPos).map(([pos, _], i) => (
+        <g key={pos} transform={`translate(${PL + i * 70},${H - 8})`}>
+          <rect width={10} height={10} y={-9} fill={posColor[pos] || '#64748b'} rx={2} />
+          <text x={13} y={0} fontSize={9} fill="#374151">{pos}</text>
+        </g>
+      ))}
+    </svg>
   )
 }
 

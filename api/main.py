@@ -240,6 +240,25 @@ def get_years():
     return sorted(_AVAILABLE_YEARS)
 
 
+@app.get("/api/player_trend")
+def player_trend(name: str):
+    """Return year-by-year OAA for a player across all available years."""
+    rows = []
+    for yr in _AVAILABLE_YEARS:
+        yr_cache = _fielders_cache.get(yr, {})
+        for pos in POSITIONS:
+            for f in yr_cache.get(pos, []):
+                if f["name"] == name:
+                    rows.append({
+                        "year": yr,
+                        "position": pos,
+                        "oaa": f["oaa"],
+                        "n_opp": f["n_opp"],
+                        "rate": round(f["oaa"] / f["n_opp"] * 100, 2) if f["n_opp"] else None,
+                    })
+    return sorted(rows, key=lambda x: x["year"])
+
+
 @app.get("/api/fielders", response_model=dict[str, list[FielderInfo]])
 def get_fielders(year: int = 2025, min_opp: int = 100):
     if year not in _fielders_cache:
