@@ -85,8 +85,11 @@ export default function App() {
 
   async function handleCoverageMap() {
     if (!plotData) return
-    const posKey = plotData.positions.with_park ? 'with_park' : 'no_park'
+    const posKey = plotData.positions.custom    ? 'custom'
+                 : plotData.positions.with_park ? 'with_park'
+                 : 'no_park'
     const pos = plotData.positions[posKey]
+    if (!pos) return
     setLoadingCoverage(true)
     try {
       const url = await fetchCoverageMap({
