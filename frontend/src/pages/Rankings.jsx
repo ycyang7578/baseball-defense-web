@@ -350,7 +350,15 @@ export default function Rankings() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
               <PlayerAvatar playerId={trendPlayer.player_id} name={trendPlayer.name} />
               <div>
-                <div style={{ fontWeight: 700, fontSize: 16 }}>{displayName(trendPlayer.name)}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700, fontSize: 16 }}>{displayName(trendPlayer.name)}</span>
+                  {[...new Set(trendData.map(d => d.position))].map(p => (
+                    <span key={p} style={{
+                      fontSize: 10, fontWeight: 700, color: 'white', padding: '1px 6px',
+                      borderRadius: 4, background: { LF: '#3B82F6', CF: '#10B981', RF: '#F97316' }[p] || '#64748b',
+                    }}>{p}</span>
+                  ))}
+                </div>
                 <div style={{ fontSize: 11, color: '#6b7280' }}>OAA/100 多年趨勢</div>
               </div>
               <button onClick={() => setTrendPlayer(null)}
@@ -436,13 +444,6 @@ function TrendChart({ data }) {
         )
       })}
 
-      {/* legend（右上角，堆疊排列）*/}
-      {Object.entries(byPos).map(([pos, _], i) => (
-        <g key={pos} transform={`translate(${W - 44},${PT + 2 + i * 16})`}>
-          <rect width={12} height={8} y={-7} fill={posColor[pos] || '#64748b'} rx={2} />
-          <text x={15} y={0} fontSize={9} fill="#374151" fontWeight={600}>{pos}</text>
-        </g>
-      ))}
     </svg>
   )
 }
