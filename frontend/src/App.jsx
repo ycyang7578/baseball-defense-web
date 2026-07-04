@@ -70,6 +70,13 @@ export default function App() {
     fetchFielders(minOpp, year).then(setFielderOpts).catch(console.error)
   }, [year, minOpp])
 
+  // 切換年份時，先前選的守備員可能在新年份沒有模型參數（例如新秀球員），
+  // 清掉避免送出「舊年份選的球員 + 新年份」這種無效組合給後端
+  useEffect(() => {
+    setSelFielders(EMPTY_FIELDERS)
+    setSelFieldersB(EMPTY_FIELDERS)
+  }, [year])
+
   function toggleCompare() {
     setCompareMode(v => !v)
     setHomeTeamB('')
