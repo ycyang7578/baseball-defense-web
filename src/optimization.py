@@ -39,10 +39,9 @@ warnings.filterwarnings(
 )
 
 from . import physics
+from .config import DSN
 from .hit_prob import load_hit_prob, predict_hit_probs_batch
 from .re24 import load_re24
-
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
 
 POSITIONS = ("LF", "CF", "RF")
 FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]

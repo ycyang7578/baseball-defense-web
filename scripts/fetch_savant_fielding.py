@@ -98,8 +98,10 @@ def fetch_year(year: int, sleep_sec: float = 1.0) -> None:
 def reload_db(years: list[int]) -> None:
     """將指定年份的 parquet 追加進 savant_fielding（不 TRUNCATE，只插入缺少的年份）。"""
     import io
+    import sys
     import psycopg2
-    DSN = "host=localhost dbname=baseball user=postgres password=postgres"
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.config import DSN
     with psycopg2.connect(DSN) as conn:
         for year in years:
             path = OUTPUT_DIR / f"{year}.parquet"

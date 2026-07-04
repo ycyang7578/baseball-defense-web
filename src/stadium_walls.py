@@ -15,8 +15,8 @@ import numpy as np
 import pyreadr
 from shapely.geometry import Point, Polygon
 
-_X0    = 125.42
-_Y0    = 198.27
+from .physics import _X0, _Y0
+
 _SCALE = 2.484
 
 _RDA_PATH = Path(__file__).parent.parent / "data" / "reference" / "MLBStadiaPathData.rda"

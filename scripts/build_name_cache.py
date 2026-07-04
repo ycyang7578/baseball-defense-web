@@ -2,12 +2,15 @@
 查所有年份 batter_id → 姓名，存到 data/reference/batter_names.json
 """
 import json
+import sys
 from pathlib import Path
 
 import psycopg2
 import pybaseball
 
-DSN  = "host=localhost dbname=baseball user=postgres password=postgres"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import DSN
+
 OUT  = Path(__file__).parent.parent / "data" / "reference" / "batter_names.json"
 
 def main():

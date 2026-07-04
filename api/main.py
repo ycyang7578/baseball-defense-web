@@ -22,6 +22,7 @@ from src.optimization import (
     get_league_avg_positions, get_batter_stand,
     load_model_params, load_player_params, POSITIONS,
 )
+from src.config import DSN
 from src.hit_prob import predict_hit_probs_batch
 from src.re24 import load_re24
 from src.hit_prob import load_hit_prob
@@ -36,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 BASE    = Path(__file__).parent.parent
 PRE_DIR = BASE / "data" / "precomputed"
-DSN     = "host=localhost dbname=baseball user=postgres password=postgres"
 _MIN_BALLS = 30
 
 # 掃描哪些年份有模型 summary
@@ -250,6 +250,19 @@ def get_years():
     return sorted(_AVAILABLE_YEARS)
 
 
+def _compute_avg_oaa_per_ball(rows, yr_model_names: dict) -> float:
+    """跨 LF+CF+RF 統一中心化用的聯盟平均：只用有模型參數的球員計算。
+
+    rows: (name, position, model_oaa, n_opp, ...) 的可迭代物件，只用前四欄。
+    """
+    visible = [(float(oaa), int(n))
+               for name, pos, oaa, n, *_ in rows
+               if name in yr_model_names.get(pos, set())]
+    total_oaa = sum(r[0] for r in visible)
+    total_opp = sum(r[1] for r in visible)
+    return total_oaa / total_opp if total_opp else 0.0
+
+
 @app.get("/api/player_trend")
 def player_trend(name: str):
     """Return year-by-year centered OAA/100 matching the Rankings table."""
@@ -264,13 +277,7 @@ def player_trend(name: str):
                 )
                 all_rows = cur.fetchall()
 
-                # 同 get_fielders：用有模型參數的球員計算聯盟平均
-                visible = [(float(oaa), int(n))
-                           for nm, pos, oaa, n in all_rows
-                           if nm in yr_model_names.get(pos, set())]
-                total_oaa = sum(r[0] for r in visible)
-                total_opp = sum(r[1] for r in visible)
-                avg_per_ball = total_oaa / total_opp if total_opp else 0.0
+                avg_per_ball = _compute_avg_oaa_per_ball(all_rows, yr_model_names)
 
                 for nm, pos, oaa, n in all_rows:
                     if nm == name and nm in yr_model_names.get(pos, set()):
@@ -291,7 +298,6 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
     yr_model_names = _model_names.get(year, {})
     yr_team_map    = _team_map.get(year, {})
 
-    # 跨 LF+CF+RF 統一中心化：avg_oaa_per_ball 從有 OF 模型參數的球員計算
     _SQL_ALL = """
         SELECT m.name_fielder, m.position, m.model_oaa, m.n_opp,
                MAX(o.player_id) AS player_id
@@ -306,12 +312,7 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
             cur.execute(_SQL_ALL, {"year": year})
             all_rows = cur.fetchall()
 
-    visible = [(float(oaa), int(n))
-               for name, pos, oaa, n, pid in all_rows
-               if name in yr_model_names.get(pos, set())]
-    total_oaa = sum(r[0] for r in visible)
-    total_opp = sum(r[1] for r in visible)
-    avg_oaa_per_ball = total_oaa / total_opp if total_opp else 0.0
+    avg_oaa_per_ball = _compute_avg_oaa_per_ball(all_rows, yr_model_names)
 
     result: dict[str, list[dict]] = {}
     for pos in POSITIONS:

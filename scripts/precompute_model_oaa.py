@@ -21,6 +21,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.defender_features import get_defender_opportunities, mark_official
+from src.config import DSN
 
 _parser = argparse.ArgumentParser()
 _parser.add_argument("target_year", type=int, nargs="?", default=2025)
@@ -91,7 +92,6 @@ print(f"\nSaved {len(result)} rows → {OUT_PATH}")
 
 # UPSERT to PostgreSQL
 import psycopg2
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
 with psycopg2.connect(DSN) as conn:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM model_oaa WHERE year = %s", (TARGET_YEAR,))

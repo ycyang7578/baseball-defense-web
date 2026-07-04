@@ -4,13 +4,16 @@ Re-runnable: each table is TRUNCATEd before reload, so this always rebuilds the 
 from data/raw/ from scratch (e.g. on a fresh machine).
 """
 import io
+import sys
 from pathlib import Path
 
 import pandas as pd
 import psycopg2
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import DSN
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
 YEARS = range(2020, 2026)
 
 

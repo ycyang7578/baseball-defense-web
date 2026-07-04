@@ -13,8 +13,10 @@ from pathlib import Path
 import pandas as pd
 import psycopg2
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import DSN
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
 
 
 def _copy(conn, table: str, df: pd.DataFrame) -> None:

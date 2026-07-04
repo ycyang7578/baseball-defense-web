@@ -12,6 +12,9 @@ __pycache__/
 *.pyo
 .env
 
+# local dev tools：含 DB 連線字串
+.localconfig.json
+
 # Frontend
 frontend/node_modules/
 frontend/dist/
@@ -19,3 +22,6 @@ frontend/dist/
 # 暫存與日誌
 logs/
 *.log
+
+# pytest
+.pytest_cache/

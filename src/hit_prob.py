@@ -32,7 +32,8 @@ import psycopg2
 from sklearn.neighbors import KernelDensity
 from sklearn.preprocessing import StandardScaler
 
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
+from .config import DSN
+from .physics import _X0, _Y0
 
 _HIT_TYPES = ("1B", "2B", "3B")
 _EVENT_MAP = {"single": "1B", "double": "2B", "triple": "3B"}
@@ -51,11 +52,6 @@ _QUERY = """
       AND hc_y IS NOT NULL
       AND stand IN ('L', 'R')
 """
-
-# Statcast 像素座標原點（與 physics.py 相同）
-_X0 = 125.42
-_Y0 = 198.27
-
 
 def _spray_angle(hc_x: pd.Series, hc_y: pd.Series) -> pd.Series:
     """Spray angle in degrees (-90°=left foul, 0°=center, +90°=right foul)."""

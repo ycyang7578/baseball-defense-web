@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
+from .config import DSN
 
 # 只取有 events 的打席（每個打席的最後一球），且為例行賽
 _QUERY = """

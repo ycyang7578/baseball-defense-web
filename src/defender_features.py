@@ -7,8 +7,7 @@ import pandas as pd
 import psycopg2
 
 from . import physics
-
-DSN = "host=localhost dbname=baseball user=postgres password=postgres"
+from .config import DSN
 
 # LF/CF/RF 對應 Statcast 的 fielder_N 欄位與 hit_location 編號（標準棒球位置編號，剛好一致）
 _FIELDER_COLUMN = {"LF": "fielder_7", "CF": "fielder_8", "RF": "fielder_9"}
