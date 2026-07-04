@@ -38,7 +38,6 @@ warnings.filterwarnings(
     module="sklearn",
 )
 
-from . import physics
 from .config import DSN
 from .hit_prob import load_hit_prob, predict_hit_probs_batch
 from .re24 import load_re24
@@ -70,29 +69,12 @@ def _polar_to_xy(params: np.ndarray) -> np.ndarray:
         out[2 * i + 1] = r * np.cos(t)   # y
     return out
 
+# 查精簡預計算表（scripts/precompute_batter_balls.py 產生），不直查 5GB 的 statcast。
+# 舊版直查 statcast 再算物理公式的版本見 git 歷史（2026-07 前的 prepare_batter_balls）。
 _BATTER_QUERY = """
-    SELECT
-        s.batter,
-        s.stand,
-        s.hit_distance_sc,
-        s.launch_speed,
-        s.launch_angle,
-        s.hc_x,
-        s.hc_y,
-        s.plate_z
-    FROM statcast s
-    WHERE s.batter = %(batter_id)s
-      AND s.game_year = ANY(%(years)s)
-      AND s.game_type = 'R'
-      AND s.type = 'X'
-      AND s.bb_type IN ('fly_ball', 'line_drive')
-      AND s.events != 'home_run'
-      AND s.hit_distance_sc IS NOT NULL
-      AND s.launch_speed    IS NOT NULL
-      AND s.launch_angle    IS NOT NULL
-      AND s.hc_x            IS NOT NULL
-      AND s.hc_y            IS NOT NULL
-      AND s.plate_z         IS NOT NULL
+    SELECT ball_x, ball_y, flight_time, launch_speed, launch_angle, spray_angle, stand
+    FROM precomputed_batter_balls
+    WHERE batter = %(batter_id)s AND game_year = ANY(%(years)s)
 """
 
 
@@ -154,11 +136,10 @@ def prepare_batter_balls(
     dsn: str = DSN,
 ) -> pd.DataFrame:
     """
-    Query a batter's historical fly balls / line drives and compute physics features.
+    Query a batter's historical fly balls / line drives (precomputed physics features).
 
     Returns DataFrame with columns:
       ball_x, ball_y, flight_time, launch_speed, launch_angle, spray_angle, stand
-    Rows with non-positive flight_time are dropped.
     """
     with psycopg2.connect(dsn) as conn:
         df = pd.read_sql(
@@ -168,20 +149,6 @@ def prepare_batter_balls(
 
     if df.empty:
         return df
-
-    df["ball_x"], df["ball_y"] = physics.transform_coordinates(
-        df["hc_x"], df["hc_y"], df["hit_distance_sc"]
-    )
-    df["flight_time"] = physics.calculate_flight_time(
-        df["launch_speed"], df["launch_angle"], df["plate_z"]
-    )
-
-    df["spray_angle"] = np.degrees(
-        np.arctan2(df["hc_x"] - physics._X0, physics._Y0 - df["hc_y"])
-    )
-
-    # 只保留飛行時間有意義的球
-    df = df[df["flight_time"] > 0.5].copy()
 
     return df[["ball_x", "ball_y", "flight_time",
                "launch_speed", "launch_angle", "spray_angle", "stand"]].reset_index(drop=True)
@@ -487,14 +454,31 @@ def get_league_avg_positions(year: int, dsn: str = DSN) -> dict:
 
 
 def get_batter_stand(batter_id: int, year: int, dsn: str = DSN) -> str:
-    """取打者在指定年度最常見的打擊姿勢（'L' / 'R' / 'S'）。"""
+    """取打者在指定年度最常見的打擊姿勢（'L' / 'R' / 'S'）。查精簡預計算表（見
+    scripts/precompute_batter_balls.py），最常見值已在 precompute 階段算好。"""
     with psycopg2.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT stand, COUNT(*) AS n
-                FROM statcast
+                SELECT stand FROM precomputed_batter_stand
                 WHERE batter = %(bid)s AND game_year = %(year)s
-                GROUP BY stand ORDER BY n DESC LIMIT 1
             """, {"bid": batter_id, "year": year})
             row = cur.fetchone()
     return row[0] if row else "R"
+
+
+def load_qualifying_batters(year: int, dsn: str = DSN, min_balls: int = 30) -> list[dict]:
+    """指定年度、球數 >= min_balls 的打者清單，供 api/main.py 的 /api/batters 用。
+    查精簡預計算表（見 scripts/precompute_batter_balls.py）。"""
+    query = """
+        SELECT batter, COUNT(*) AS n_balls
+        FROM precomputed_batter_balls
+        WHERE game_year = %(year)s
+        GROUP BY batter
+        HAVING COUNT(*) >= %(min_balls)s
+        ORDER BY n_balls DESC
+    """
+    with psycopg2.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, {"year": year, "min_balls": min_balls})
+            rows = cur.fetchall()
+    return [{"batter_id": r[0], "n_balls": r[1]} for r in rows]

@@ -15,11 +15,13 @@ from pathlib import Path
 import psycopg2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.optimization import (
     optimize_positions, prepare_batter_balls, compute_w_j,
     compute_ball_catch_probs, compute_per_fielder_probs,
-    get_league_avg_positions, get_batter_stand,
+    get_league_avg_positions, get_batter_stand, load_qualifying_batters,
     load_model_params, load_player_params, POSITIONS,
 )
 from src.config import DSN
@@ -150,28 +152,7 @@ def _load_team_info(player_ids: list[int], season: int) -> dict[int, int]:
 
 
 def _load_batters(year: int) -> list[dict]:
-    query = """
-        SELECT batter, COUNT(*) AS n_balls
-        FROM statcast
-        WHERE game_year  = %(year)s
-          AND game_type  = 'R'
-          AND type       = 'X'
-          AND bb_type    IN ('fly_ball', 'line_drive')
-          AND events     != 'home_run'
-          AND hit_distance_sc IS NOT NULL
-          AND launch_speed    IS NOT NULL
-          AND launch_angle    IS NOT NULL
-          AND hc_x            IS NOT NULL
-          AND hc_y            IS NOT NULL
-        GROUP BY batter
-        HAVING COUNT(*) >= %(min_balls)s
-        ORDER BY n_balls DESC
-    """
-    with psycopg2.connect(DSN) as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, {"year": year, "min_balls": _MIN_BALLS})
-            rows = cur.fetchall()
-    return [{"batter_id": r[0], "n_balls": r[1]} for r in rows]
+    return load_qualifying_batters(year, DSN, _MIN_BALLS)
 
 
 @asynccontextmanager
@@ -601,3 +582,18 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             home_team=home_team,
         ),
     )
+
+
+# ── 前端靜態檔案（放最後，所有 /api/* 路由都已註冊完畢，不會衝突）─────────
+# 部署時單一服務同時提供 API 與前端建置產物（frontend/dist），兩者同源，
+# 前端 frontend/src/api.js 的相對路徑 '/api' 不用額外設定 base URL 或 CORS。
+_FRONTEND_DIST = BASE / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        file_path = _FRONTEND_DIST / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_FRONTEND_DIST / "index.html")
