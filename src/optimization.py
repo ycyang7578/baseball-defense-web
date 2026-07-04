@@ -262,7 +262,7 @@ def optimize_positions(
     hit_prob_dir: Path | None = None,
     dsn: str = DSN,
     seed: int = 42,
-    n_restarts: int = 100,
+    n_restarts: int = 20,
     fielder_mus: dict | None = None,
     balls: pd.DataFrame | None = None,
     hit_probs: np.ndarray | None = None,
