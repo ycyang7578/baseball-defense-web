@@ -29,6 +29,7 @@ import pandas as pd
 import psycopg2
 from scipy.optimize import minimize
 from scipy.special import expit as _expit
+from scipy.stats import qmc
 
 # 模型 scaler 以 DataFrame 訓練但以 numpy array 呼叫，suppress 已知無害警告
 warnings.filterwarnings(
@@ -373,13 +374,23 @@ def optimize_positions(
         return objective_re24(_polar_to_xy(params), ctx)
 
     unit_bounds = [(0.0, 1.0)] * 6
-    rng = np.random.default_rng(seed)
     best: dict | None = None
 
     # warm start 頂替一個隨機起點的名額（不是額外加一次），維持總 evaluate 次數等於
     # n_restarts 不變 —— 不增加算力成本，也不會因為多做一次評估而變慢。
+    #
+    # 隨機起點取樣法：沒有 warm start 時用 Latin Hypercube Sampling，有 warm start 時用均勻隨機。
+    # 這不是隨意選擇——30 樣本實測（2026-07-05，見 ARCHITECTURE.md）發現兩者效果相反：
+    #   - no_park（無 warm start）：LHS 比均勻隨機 miss rate 更低（n_restarts=20 時 2/30 vs 4/30）
+    #   - with_park（用 no_park 解 warm start）：LHS 反而比均勻隨機更差（n_restarts=8 時同一批樣本
+    #     6/30 vs 4/30）——推測 LHS 的分層設計是針對「這批起點」整體算的，硬插入一個外部的 warm
+    #     start 點會打亂分層假設的均勻覆蓋，均勻隨機沒有這個分層依賴問題。
     n_random = n_restarts - 1 if warm_start_xy is not None else n_restarts
-    starts = [rng.uniform(0.0, 1.0, size=6) for _ in range(max(n_random, 0))]
+    n_random = max(n_random, 0)
+    if warm_start_xy is not None:
+        starts = list(np.random.default_rng(seed).uniform(0.0, 1.0, size=(n_random, 6)))
+    else:
+        starts = list(qmc.LatinHypercube(d=6, seed=seed).random(n=n_random))
     if warm_start_xy is not None:
         warm_params = _xy_to_polar_params(warm_start_xy)
         starts.append(np.clip((warm_params - _lows) / _range, 0.0, 1.0))
