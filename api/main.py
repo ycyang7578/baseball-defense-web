@@ -9,6 +9,7 @@ Endpoints:
 """
 import json
 import logging
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,6 +42,11 @@ logger = logging.getLogger(__name__)
 BASE    = Path(__file__).parent.parent
 PRE_DIR = BASE / "data" / "precomputed"
 _MIN_BALLS = 30
+
+# Render 免費方案只有 0.1 CPU：多個 optimize_positions 同時跑會互搶 CPU、
+# 讓每一個都變慢（實測：單獨跑 50s，兩個同時跑各要 70~80s）。用 semaphore
+# 把 CPU 密集的優化計算序列化，避免併發請求（如比較模式 A/B 同時送出）互相拖慢。
+_optimize_semaphore = threading.Semaphore(1)
 
 # 掃描哪些年份有模型 summary
 _AVAILABLE_YEARS: list[int] = sorted(
@@ -482,13 +488,14 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     if fielder_mus:
         # ── 指定外野手：只算一組 custom 站位（用選定球員能力）──────
         t_opt = time.perf_counter()
-        opt_custom = optimize_positions(
-            batter_id=req.batter_id,
-            on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
-            years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
-            home_team=home_team, dsn=DSN, fielder_mus=fielder_mus,
-            balls=balls_all, hit_probs=hit_probs_all,
-        )
+        with _optimize_semaphore:
+            opt_custom = optimize_positions(
+                batter_id=req.batter_id,
+                on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
+                years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
+                home_team=home_team, dsn=DSN, fielder_mus=fielder_mus,
+                balls=balls_all, hit_probs=hit_probs_all,
+            )
         logger.info(f"[timing] optimize_positions(custom): {time.perf_counter() - t_opt:.2f}s")
         pos_custom = {p: opt_custom[p] for p in POSITIONS}
         probs_custom, re_custom, catch_custom = eval_positions(pos_custom)
@@ -497,13 +504,14 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     else:
         # ── 一般模式：league_avg + no_park (+ with_park) ─────────
         t_opt = time.perf_counter()
-        opt_no_park = optimize_positions(
-            batter_id=req.batter_id,
-            on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
-            years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
-            home_team=None, dsn=DSN,
-            balls=balls_all, hit_probs=hit_probs_all,
-        )
+        with _optimize_semaphore:
+            opt_no_park = optimize_positions(
+                batter_id=req.batter_id,
+                on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
+                years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
+                home_team=None, dsn=DSN,
+                balls=balls_all, hit_probs=hit_probs_all,
+            )
         logger.info(f"[timing] optimize_positions(no_park): {time.perf_counter() - t_opt:.2f}s")
         pos_no_park = {p: opt_no_park[p] for p in POSITIONS}
         probs_no_park, re_no_park, catch_no_park = eval_positions(pos_no_park)
@@ -515,13 +523,14 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         scatter_probs = probs_no_park
         if home_team:
             t_opt = time.perf_counter()
-            opt_with_park_res = optimize_positions(
-                batter_id=req.batter_id,
-                on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
-                years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
-                home_team=home_team, dsn=DSN,
-                balls=balls_all, hit_probs=hit_probs_all,
-            )
+            with _optimize_semaphore:
+                opt_with_park_res = optimize_positions(
+                    batter_id=req.batter_id,
+                    on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
+                    years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
+                    home_team=home_team, dsn=DSN,
+                    balls=balls_all, hit_probs=hit_probs_all,
+                )
             logger.info(f"[timing] optimize_positions(with_park): {time.perf_counter() - t_opt:.2f}s")
             pos_with_park = {p: opt_with_park_res[p] for p in POSITIONS}
             probs_with_park, re_with_park, catch_with_park = eval_positions(pos_with_park)
