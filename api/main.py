@@ -9,6 +9,7 @@ Endpoints:
 """
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -380,6 +381,7 @@ def optimize_plot(req: OptimizeRequest):
 
 
 def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
+    t_start = time.perf_counter()
     if req.home_team and req.home_team.upper() not in SUPPORTED_TEAMS:
         raise HTTPException(422, f"Unsupported team '{req.home_team}'. Use GET /api/teams.")
     if req.year not in _AVAILABLE_YEARS:
@@ -396,6 +398,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     yr_hprob_cache  = _batter_hitprobs_cache.setdefault(year, {})
 
     if req.batter_id not in yr_balls_cache:
+        t_db = time.perf_counter()
         try:
             balls_all = prepare_batter_balls(req.batter_id, [year], DSN)
         except Exception as e:
@@ -404,6 +407,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             raise HTTPException(422, f"Batter {req.batter_id} has no qualifying balls in {year}")
         yr_balls_cache[req.batter_id]  = balls_all
         yr_hprob_cache[req.batter_id]  = predict_hit_probs_batch(_hit_bundle, balls_all)
+        logger.info(f"[timing] prepare_batter_balls+hit_probs (DB, cache miss): {time.perf_counter() - t_db:.2f}s")
     else:
         balls_all = yr_balls_cache[req.batter_id]
 
@@ -477,6 +481,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
 
     if fielder_mus:
         # ── 指定外野手：只算一組 custom 站位（用選定球員能力）──────
+        t_opt = time.perf_counter()
         opt_custom = optimize_positions(
             batter_id=req.batter_id,
             on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
@@ -484,12 +489,14 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             home_team=home_team, dsn=DSN, fielder_mus=fielder_mus,
             balls=balls_all, hit_probs=hit_probs_all,
         )
+        logger.info(f"[timing] optimize_positions(custom): {time.perf_counter() - t_opt:.2f}s")
         pos_custom = {p: opt_custom[p] for p in POSITIONS}
         probs_custom, re_custom, catch_custom = eval_positions(pos_custom)
         positions_out = {"custom": make_pos_set(pos_custom, re_custom, catch_custom)}
         scatter_probs = probs_custom
     else:
         # ── 一般模式：league_avg + no_park (+ with_park) ─────────
+        t_opt = time.perf_counter()
         opt_no_park = optimize_positions(
             batter_id=req.batter_id,
             on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
@@ -497,6 +504,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             home_team=None, dsn=DSN,
             balls=balls_all, hit_probs=hit_probs_all,
         )
+        logger.info(f"[timing] optimize_positions(no_park): {time.perf_counter() - t_opt:.2f}s")
         pos_no_park = {p: opt_no_park[p] for p in POSITIONS}
         probs_no_park, re_no_park, catch_no_park = eval_positions(pos_no_park)
         _, re_league, catch_league = eval_positions(league_avg_pos)
@@ -506,6 +514,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         }
         scatter_probs = probs_no_park
         if home_team:
+            t_opt = time.perf_counter()
             opt_with_park_res = optimize_positions(
                 batter_id=req.batter_id,
                 on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
@@ -513,6 +522,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
                 home_team=home_team, dsn=DSN,
                 balls=balls_all, hit_probs=hit_probs_all,
             )
+            logger.info(f"[timing] optimize_positions(with_park): {time.perf_counter() - t_opt:.2f}s")
             pos_with_park = {p: opt_with_park_res[p] for p in POSITIONS}
             probs_with_park, re_with_park, catch_with_park = eval_positions(pos_with_park)
             positions_out["with_park"] = make_pos_set(pos_with_park, re_with_park, catch_with_park)
@@ -568,6 +578,9 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
 
     bases = ("1" if req.on_1b else "-") + ("2" if req.on_2b else "-") + ("3" if req.on_3b else "-")
     situation = f"{bases}  {req.outs} out"
+
+    logger.info(f"[timing] _run_optimize TOTAL: {time.perf_counter() - t_start:.2f}s "
+                f"(batter={req.batter_id}, year={year}, home_team={home_team}, fielders={bool(fielder_mus)})")
 
     return OptimizeResponse(
         title=title,
