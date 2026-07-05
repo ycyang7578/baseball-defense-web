@@ -395,13 +395,17 @@ def optimize_positions(
         warm_params = _xy_to_polar_params(warm_start_xy)
         starts.append(np.clip((warm_params - _lows) / _range, 0.0, 1.0))
 
+    # ftol/gtol 放寬過（原本 1e-10/1e-6）：診斷發現 maxiter=500 從未被打到（實測中位數只跑 15 次
+    # 迭代），真正的收斂容忍度沒有那麼嚴格的必要。30 樣本驗證（2026-07-05，見 ARCHITECTURE.md）顯示
+    # 1e-6/1e-4 這組跟原本一樣的 miss rate，快 14~17%；再放寬（1e-4/1e-3 以上）miss rate 會明顯
+    # 惡化，不要再往下調。
     for x0_norm in starts:
         res = minimize(
             _obj_normalized,
             x0_norm,
             method="L-BFGS-B",
             bounds=unit_bounds,
-            options={"maxiter": 500, "ftol": 1e-10, "gtol": 1e-6},
+            options={"maxiter": 500, "ftol": 1e-6, "gtol": 1e-4},
         )
         if best is None or res.fun < best["fun"]:
             best = {"x": res.x, "fun": res.fun}
