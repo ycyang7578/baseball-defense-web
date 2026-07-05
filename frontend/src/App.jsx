@@ -151,10 +151,10 @@ export default function App() {
 
   return (
     <div style={s.root}>
-      <div style={s.body}>
+      <div className="app-body" style={s.body}>
 
         {/* ── 左側控制面板 ── */}
-        <div style={s.panel}>
+        <div className="app-panel" style={s.panel}>
 
           {/* 年份 */}
           <div style={s.panelHeader}>
@@ -262,13 +262,13 @@ export default function App() {
         </div>
 
         {/* ── 右側結果區 ── */}
-        <div style={s.chartArea}>
+        <div className="app-chart-area" style={s.chartArea}>
           {compareMode && (imgUrl || imgUrlB) ? (
             /* ── 比較模式 ── */
             <div style={{ width: '100%', maxWidth: 1400 }}>
               {!loading && (imgUrl || imgUrlB) && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                              marginBottom: 10 }}>
+                              marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
                   <ChartToggle value={showSpray} onChange={setShowSpray} />
                   <div style={{ display: 'flex', gap: 8 }}>
                     {imgUrl  && <DownloadBtn href={imgUrl}  name={`defense_A_${batterId}_${year}.png`} label="↓ A" />}
@@ -276,7 +276,7 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div className="compare-row" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <PlotBox imgUrl={imgUrl}  plotData={plotData}  label="組合 A" loading={loading} showSpray={showSpray} />
                 <PlotBox imgUrl={imgUrlB} plotData={plotDataB} label="組合 B" loading={loading} showSpray={showSpray} />
               </div>
@@ -308,7 +308,22 @@ export default function App() {
           )}
         </div>
       </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } } * { box-sizing: border-box; }`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+          .app-body { flex-direction: column; }
+          .app-panel {
+            width: 100% !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            border-right: none !important;
+            border-bottom: 1px solid #e2e8f0;
+          }
+          .app-chart-area { min-height: 0 !important; padding: 16px !important; }
+          .compare-row { flex-direction: column; }
+        }
+      `}</style>
     </div>
   )
 }

@@ -184,8 +184,8 @@ export default function Rankings() {
   return (
     <div style={s.page}>
       <div style={s.header}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <h1 style={s.title}>外野手守備排名</h1>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+          <h1 style={{ ...s.title, flexShrink: 0 }}>外野手守備排名</h1>
           <div style={s.yearTabs}>
             {availYears.map(y => (
               <button key={y} onClick={() => setYear(y)}
@@ -347,7 +347,7 @@ export default function Rankings() {
                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ background: 'white', borderRadius: 12, padding: 28,
-                     minWidth: 380, maxWidth: 480, boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
+                     width: 'min(380px, 92vw)', maxWidth: 480, boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
               <PlayerAvatar playerId={trendPlayer.player_id} name={trendPlayer.name} />
               <div>
@@ -401,7 +401,7 @@ function TrendChart({ data }) {
   })
 
   return (
-    <svg width={W} height={H} style={{ display: 'block', margin: '0 auto' }}>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block', margin: '0 auto' }}>
       {/* zero line */}
       <line x1={PL} x2={W - PR} y1={cy(0)} y2={cy(0)}
         stroke="#e2e8f0" strokeWidth={1.5} />
