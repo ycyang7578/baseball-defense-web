@@ -119,6 +119,60 @@ def test_optimize_positions_beats_a_deliberately_bad_guess():
     assert optimized_obj < bad_obj
 
 
+def test_optimize_positions_warm_start_reaches_same_optimum_with_zero_random_restarts():
+    """warm_start_xy 應該可以獨立當唯一起點用（n_restarts=0），驗證它真的有被拿去 minimize，不是被忽略。"""
+    balls, hit_probs = _synthetic_right_field_balls()
+
+    reference = optimize_positions(
+        batter_id=0, on_1b=0, on_2b=0, on_3b=0, outs=0,
+        years=[2025], models_dir=MODELS_DIR, re24_dir=RE24_DIR,
+        n_restarts=N_RESTARTS_TEST, seed=42, balls=balls, hit_probs=hit_probs,
+    )
+    warm = {p: reference[p] for p in POSITIONS}
+
+    warm_started = optimize_positions(
+        batter_id=0, on_1b=0, on_2b=0, on_3b=0, outs=0,
+        years=[2025], models_dir=MODELS_DIR, re24_dir=RE24_DIR,
+        n_restarts=0, seed=999, balls=balls, hit_probs=hit_probs,
+        warm_start_xy=warm,
+    )
+
+    assert warm_started["objective"] == pytest.approx(reference["objective"], abs=1e-6)
+
+
+def test_optimize_positions_warm_start_from_related_problem_matches_full_restart_quality():
+    """模擬 no_park -> with_park 的實際用法：球集只差幾顆球（模擬拿掉打牆球），
+    用 no_park 的解 warm start with_park，n_restarts=2（1 隨機+1 warm start）也要能
+    達到跟 10 個隨機起點相近的品質。"""
+    balls, hit_probs = _synthetic_right_field_balls(n=12)
+
+    no_park_result = optimize_positions(
+        batter_id=0, on_1b=0, on_2b=0, on_3b=0, outs=0,
+        years=[2025], models_dir=MODELS_DIR, re24_dir=RE24_DIR,
+        n_restarts=N_RESTARTS_TEST, seed=42, balls=balls, hit_probs=hit_probs,
+    )
+
+    subset_balls = balls.iloc[:-2].reset_index(drop=True)
+    subset_hit_probs = hit_probs[:-2]
+
+    reference_with_park = optimize_positions(
+        batter_id=0, on_1b=0, on_2b=0, on_3b=0, outs=0,
+        years=[2025], models_dir=MODELS_DIR, re24_dir=RE24_DIR,
+        n_restarts=N_RESTARTS_TEST, seed=42, balls=subset_balls, hit_probs=subset_hit_probs,
+    )
+
+    warm_started_with_park = optimize_positions(
+        batter_id=0, on_1b=0, on_2b=0, on_3b=0, outs=0,
+        years=[2025], models_dir=MODELS_DIR, re24_dir=RE24_DIR,
+        n_restarts=2, seed=999, balls=subset_balls, hit_probs=subset_hit_probs,
+        warm_start_xy={p: no_park_result[p] for p in POSITIONS},
+    )
+
+    assert warm_started_with_park["objective"] == pytest.approx(
+        reference_with_park["objective"], abs=1e-3
+    )
+
+
 def test_optimize_positions_raises_when_batter_has_no_balls():
     empty_balls = pd.DataFrame({"ball_x": [], "ball_y": [], "flight_time": []})
 

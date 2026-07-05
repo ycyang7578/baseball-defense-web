@@ -530,6 +530,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
                     years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
                     home_team=home_team, dsn=DSN,
                     balls=balls_all, hit_probs=hit_probs_all,
+                    warm_start_xy=pos_no_park,
                 )
             logger.info(f"[timing] optimize_positions(with_park): {time.perf_counter() - t_opt:.2f}s")
             pos_with_park = {p: opt_with_park_res[p] for p in POSITIONS}

@@ -69,6 +69,16 @@ def _polar_to_xy(params: np.ndarray) -> np.ndarray:
         out[2 * i + 1] = r * np.cos(t)   # y
     return out
 
+
+def _xy_to_polar_params(xy: dict) -> np.ndarray:
+    """{'LF':(x,y),'CF':(x,y),'RF':(x,y)} → [r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF]（_polar_to_xy 的反函式，供 warm start 用）"""
+    out = np.empty(6)
+    for i, pos in enumerate(POSITIONS):
+        x, y = xy[pos]
+        out[2 * i]     = np.hypot(x, y)
+        out[2 * i + 1] = np.degrees(np.arctan2(x, y))
+    return out
+
 # 查精簡預計算表（scripts/precompute_batter_balls.py 產生），不直查 5GB 的 statcast。
 # 舊版直查 statcast 再算物理公式的版本見 git 歷史（2026-07 前的 prepare_batter_balls）。
 _BATTER_QUERY = """
@@ -266,6 +276,7 @@ def optimize_positions(
     fielder_mus: dict | None = None,
     balls: pd.DataFrame | None = None,
     hit_probs: np.ndarray | None = None,
+    warm_start_xy: dict | None = None,
 ) -> dict:
     """
     Compute optimal outfield positions for a given batter and game state.
@@ -274,6 +285,13 @@ def optimize_positions(
     home_team: MLB team abbreviation (e.g. 'BOS', 'LAD').
                When provided, balls that would clear the wall at that park
                are excluded from the objective (they cannot be caught).
+
+    warm_start_xy: 選填 {"LF":(x,y),"CF":(x,y),"RF":(x,y)}，通常是另一次
+        （目標函數相近的）optimize_positions 呼叫的解，拿來頂替其中一個
+        隨機起點（不是額外多加一次評估，總 evaluate 次數仍等於 n_restarts，
+        不增加算力成本），用來加速收斂。
+        典型用法：with_park 用 no_park 的解 warm start，因為兩者只差在
+        是否排除打牆球，目標函數幾乎一樣。
 
     Returns:
         {
@@ -358,8 +376,15 @@ def optimize_positions(
     rng = np.random.default_rng(seed)
     best: dict | None = None
 
-    for _ in range(n_restarts):
-        x0_norm = rng.uniform(0.0, 1.0, size=6)
+    # warm start 頂替一個隨機起點的名額（不是額外加一次），維持總 evaluate 次數等於
+    # n_restarts 不變 —— 不增加算力成本，也不會因為多做一次評估而變慢。
+    n_random = n_restarts - 1 if warm_start_xy is not None else n_restarts
+    starts = [rng.uniform(0.0, 1.0, size=6) for _ in range(max(n_random, 0))]
+    if warm_start_xy is not None:
+        warm_params = _xy_to_polar_params(warm_start_xy)
+        starts.append(np.clip((warm_params - _lows) / _range, 0.0, 1.0))
+
+    for x0_norm in starts:
         res = minimize(
             _obj_normalized,
             x0_norm,
