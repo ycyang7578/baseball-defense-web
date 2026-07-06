@@ -234,13 +234,21 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
 - `src/if_dataset.py` — 滾地球特徵工程（設計依據：Melville 2024 §3.1 的 a_d/b_t、
   Tango 2020 Infield OAA 的競速結構）。`build_gb_dataset(years, bases_empty, alignment)`
   一站式產出；特徵計算在純函式 `attach_features()`（可測試，不碰 DB）
+- `src/if_model.py` — **兩個模型、兩種角色**（這是關鍵設計決策，勿混用）：
+  - 優化用 GLM（`FielderGeometryFeatures` + logistic）：只用野手相對幾何，**刻意排除
+    raw spray 項**——spray 的位置特定出局率模式反映「現在聯盟都站哪」（內生性），搬動
+    野手後不會保留，混入會讓優化器重複計算
+  - 評價用 GBM：spray+球質+跑者、無任何野手資訊的聯盟平均難度模型（xBA 式 p̂）
+  - 依據（2026-07-06 消融，train 2023→val 2024）：GBM「球質+跑者+raw spray」AUC 0.8065
+    ≈ 全特徵 GBM 0.8055，野手特徵在其上**零增益**——Standard 佈陣下賽季平均站位近似
+    spray 的確定函數，位置訊號吃掉了一切；野手相對 GLM 的價值是 counterfactual 結構
+    不是 AUC
+  - 交互作用配置用 train 2023→val 2024 選定（tensor ad×bt、ad×EV、hp×throw、hp×bt），
+    2025 只在最終評估碰一次
 - `scripts/train_if_gb.py` — 訓練（2023–2024）＋樣本外評估（2025）→ `models/if_gb/`
   - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
-  - **2026-07-06 結果**：GLM（spline logistic）AUC=0.747、Brier=0.164、校準十分位最大偏差
-    0.026（n_test=18,404）；全量滾地球 AUC=0.750
-  - ⚠️ GBM benchmark（同樣 7 特徵）AUC=0.813，比 GLM 高 0.065 —— 特徵間有可觀的交互作用
-    訊號（推測：ball_time×ad_min、hp_to_1b 只在 close play 有用），GLM 結構待升級，
-    是下一步的首要事項
+  - **2026-07-06 最終結果**（n_test=18,404）：優化用 GLM AUC=0.754、Brier=0.162、校準最大
+    偏差 0.029；評價用 GBM AUC=0.815、Brier=0.140、校準最大偏差 0.026
 - 官方對照資料：`if_oaa_leaderboard` 表（見資料表清單）
 - 已知限制：站位仍是賽季平均（同外野的 OAA scale 問題，內野對站位誤差更敏感——反應時間
   僅 1–2 秒）；跑者速度用賽季平均 hp_to_1b（官方 OAA 也是用平均 sprint speed，做法一致）
