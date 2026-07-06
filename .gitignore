@@ -12,8 +12,9 @@ __pycache__/
 *.pyo
 .env
 
-# local dev tools：含 DB 連線字串
+# 本機開發工具設定：含 DB 連線字串，不上 repo
 .localconfig.json
+.devtool/
 
 # Frontend
 frontend/node_modules/
