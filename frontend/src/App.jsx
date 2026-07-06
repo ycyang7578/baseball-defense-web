@@ -604,7 +604,6 @@ const s = {
   panelFooter: {
     padding: '12px 16px 18px',
     borderTop: '1px solid #f1f5f9',
-    marginTop: 'auto',
     display: 'flex', flexDirection: 'column', gap: 8,
   },
   select: {
