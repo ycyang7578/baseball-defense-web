@@ -42,9 +42,10 @@ def _polar_to_xy(r, deg):
 def fetch_raw_gb(years: list[int]) -> pd.DataFrame:
     """撈指定年份的非觸擊、有明確結果標籤的滾地球（含壘況與佈陣欄位）。"""
     events = OUT_EVENTS + NONOUT_EVENTS
+    # ORDER BY 確保回傳順序確定（無序時 GBM early-stopping 的內部驗證切分不可重現）
     sql = f"""
         SELECT game_year, batter, stand, hc_x, hc_y, launch_speed, launch_angle,
-               events, if_fielding_alignment,
+               events, if_fielding_alignment, hit_location,
                (on_1b IS NULL AND on_2b IS NULL AND on_3b IS NULL) AS bases_empty,
                fielder_3, fielder_4, fielder_5, fielder_6
         FROM statcast
@@ -53,6 +54,7 @@ def fetch_raw_gb(years: list[int]) -> pd.DataFrame:
           AND hc_x IS NOT NULL AND launch_speed IS NOT NULL
           AND events IN {events}
           AND des NOT ILIKE '%%bunt%%'
+        ORDER BY game_year, batter, hc_x, hc_y, launch_speed
     """
     with psycopg2.connect(DSN) as conn:
         return pd.read_sql(sql, conn, params={"years": list(years)})

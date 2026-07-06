@@ -249,6 +249,17 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
   - **2026-07-06 最終結果**（n_test=18,404）：優化用 GLM AUC=0.754、Brier=0.162、校準最大
     偏差 0.029；評價用 GBM AUC=0.815、Brier=0.140、校準最大偏差 0.026
+- `scripts/evaluate_if_2025.py` — 階段 2 球員評價：difficulty GBM 當 p̂（2023–24 訓練、
+  2025 評分，無球員資訊→無循環論證），球員 model OAA = Σ(is_out − p̂)，對照
+  `if_oaa_leaderboard` 官方數字
+  - 歸責規則：出局球給實際處理者（`hit_location` 3–6，92.5% 的出局球適用，其中 26.9%
+    跟最近角距不同——改用 hit_location 讓 qualified R 從 0.48 → 0.53）；安打球與投手/
+    捕手處理的球退回最近角距內野手
+  - 分位置中心化（官方是「跟同位置平均比」）：每球 oaa_play 減去歸責位置的平均
+  - **2026-07-06 結果（2025 樣本外，qualified n=158）**：Pearson R=0.525、Spearman=0.562、
+    每球率 R=0.591；分位置 1B 0.68 / 2B 0.63 / 3B 0.64 / **SS 0.34**（SS 對實際起始位置
+    最敏感，賽季平均站位在此損失最大）；scale 健康（model SD 8.4 vs 官方 6.9，不像外野
+    2–3 倍——因為 p̂ 是聯盟平均難度不是站位相依接殺率）
 - 官方對照資料：`if_oaa_leaderboard` 表（見資料表清單）
 - 已知限制：站位仍是賽季平均（同外野的 OAA scale 問題，內野對站位誤差更敏感——反應時間
   僅 1–2 秒）；跑者速度用賽季平均 hp_to_1b（官方 OAA 也是用平均 sprint speed，做法一致）
