@@ -29,10 +29,10 @@ export default function GameStateForm({ state, onChange }) {
               style={{
                 ...btnBase,
                 flex: 1,
-                background: outs === n ? '#f59e0b' : '#f8fafc',
-                color: outs === n ? '#1f2937' : '#6b7280',
+                background: outs === n ? 'var(--amber-500)' : 'var(--slate-50)',
+                color: outs === n ? '#1f2937' : 'var(--gray-500)',
                 fontWeight: outs === n ? 'bold' : 'normal',
-                border: outs === n ? '1px solid #f59e0b' : '1px solid #d1d5db',
+                border: outs === n ? '1px solid var(--amber-500)' : '1px solid var(--gray-300)',
               }}
             >
               {n} out{n !== 1 ? 's' : ''}
@@ -50,10 +50,10 @@ function BaseBtn({ label, active, onClick }) {
       onClick={onClick}
       style={{
         ...btnBase,
-        background: active ? '#f59e0b' : '#f8fafc',
-        color:      active ? '#1f2937' : '#9ca3af',
+        background: active ? 'var(--amber-500)' : 'var(--slate-50)',
+        color:      active ? '#1f2937' : 'var(--gray-400)',
         fontWeight: active ? 'bold' : 'normal',
-        border:     active ? '1px solid #f59e0b' : '1px solid #d1d5db',
+        border:     active ? '1px solid var(--amber-500)' : '1px solid var(--gray-300)',
       }}
     >
       {label}
@@ -71,7 +71,7 @@ const btnBase = {
 
 const labelStyle = {
   fontSize: 10,
-  color: '#6b7280',
+  color: 'var(--gray-500)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
 }

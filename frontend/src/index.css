@@ -1,2 +1,28 @@
+/* 共用 UI 配色 token（供 App.jsx / Rankings.jsx / 共用元件的 inline style 引用）。
+   落點圖（DensityChart/SprayChart）的站位/球場標記色不在這裡——那些跟後端 api/plot.py
+   的 _STYLES 配色一一對應，是資料語意色而非 UI chrome，刻意保持字面 hex 值。 */
+:root {
+  --slate-50:  #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-200: #e2e8f0;
+  --slate-400: #94a3b8;
+  --slate-500: #64748b;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1e293b;
+
+  --gray-300: #d1d5db;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-700: #374151;
+
+  --blue-600: #2563eb;
+  --blue-800: #1e40af;
+
+  --amber-500: #f59e0b;
+  --red-600:   #dc2626;
+  --green-600: #16a34a;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; padding: 0; }

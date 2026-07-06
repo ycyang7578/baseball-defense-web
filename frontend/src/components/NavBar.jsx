@@ -27,13 +27,13 @@ const s = {
     padding: '0 24px',
     height: 48,
     background: 'white',
-    borderBottom: '1px solid #e2e8f0',
+    borderBottom: '1px solid var(--slate-200)',
     boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
   },
   brand: {
     fontWeight: 700,
     fontSize: 15,
-    color: '#1e293b',
+    color: 'var(--slate-800)',
     marginRight: 8,
   },
   links: {
@@ -44,13 +44,13 @@ const s = {
     padding: '6px 14px',
     borderRadius: 6,
     fontSize: 13,
-    color: '#64748b',
+    color: 'var(--slate-500)',
     textDecoration: 'none',
     transition: 'background 0.15s',
   },
   active: {
-    background: '#f1f5f9',
-    color: '#1e293b',
+    background: 'var(--slate-100)',
+    color: 'var(--slate-800)',
     fontWeight: 600,
   },
 }

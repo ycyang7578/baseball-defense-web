@@ -50,8 +50,8 @@ export default function SearchSelect({ options, value, onChange, placeholder }) 
               onMouseEnter={() => setHi(i)}
               style={{
                 ...st.opt,
-                background: i === hi ? '#2563eb' : 'transparent',
-                color: i === hi ? '#fff' : (o.value === '' ? '#9ca3af' : '#1e293b'),
+                background: i === hi ? 'var(--blue-600)' : 'transparent',
+                color: i === hi ? '#fff' : (o.value === '' ? 'var(--gray-400)' : 'var(--slate-800)'),
               }}
             >
               {o.label}
@@ -65,16 +65,16 @@ export default function SearchSelect({ options, value, onChange, placeholder }) 
 
 const st = {
   input: {
-    width: '100%', padding: '6px 8px', background: '#f8fafc',
-    color: '#1e293b', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 12,
+    width: '100%', padding: '6px 8px', background: 'var(--slate-50)',
+    color: 'var(--slate-800)', border: '1px solid var(--gray-300)', borderRadius: 5, fontSize: 12,
     outline: 'none',
   },
   drop: {
     position: 'absolute', top: '100%', left: 0, minWidth: '100%', zIndex: 20,
     marginTop: 2, maxHeight: 240, overflowY: 'auto',
-    background: 'white', border: '1px solid #d1d5db', borderRadius: 5,
+    background: 'white', border: '1px solid var(--gray-300)', borderRadius: 5,
     boxShadow: '0 6px 18px rgba(0,0,0,0.1)',
   },
   opt: { padding: '5px 9px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' },
-  empty: { padding: '6px 9px', fontSize: 12, color: '#9ca3af' },
+  empty: { padding: '6px 9px', fontSize: 12, color: 'var(--gray-400)' },
 }

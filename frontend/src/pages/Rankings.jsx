@@ -50,7 +50,7 @@ function PlayerAvatar({ playerId, name }) {
     return (
       <div style={{
         width: 28, height: 28, borderRadius: '50%',
-        background: '#e2e8f0', flexShrink: 0,
+        background: 'var(--slate-200)', flexShrink: 0,
       }} />
     )
   }
@@ -61,7 +61,7 @@ function PlayerAvatar({ playerId, name }) {
       style={{
         width: 28, height: 28, borderRadius: '50%',
         objectFit: 'cover', flexShrink: 0,
-        background: '#e2e8f0',
+        background: 'var(--slate-200)',
       }}
     />
   )
@@ -169,7 +169,7 @@ export default function Rankings() {
 
   const thStyle = (key, extra = {}) => ({
     ...s.th, ...s.thSort,
-    ...(isActive(key) ? { background: ACTIVE_HDR, color: '#1e40af' } : {}),
+    ...(isActive(key) ? { background: ACTIVE_HDR, color: 'var(--blue-800)' } : {}),
     ...extra,
   })
 
@@ -211,7 +211,7 @@ export default function Rankings() {
           <span style={s.oppLabel}>球隊篩選</span>
           <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}
             style={{ fontSize: 13, padding: '3px 6px', borderRadius: 5,
-                     border: '1px solid #d1d5db', color: '#374151' }}>
+                     border: '1px solid var(--gray-300)', color: 'var(--gray-700)' }}>
             <option value="">全部球隊</option>
             {allTeams.map(tid => (
               <option key={tid} value={tid}>{TEAM_ABBR[tid] || tid}</option>
@@ -220,7 +220,7 @@ export default function Rankings() {
           {teamFilter && (
             <button onClick={() => setTeamFilter('')}
               style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4,
-                       border: '1px solid #d1d5db', cursor: 'pointer', background: 'white' }}>
+                       border: '1px solid var(--gray-300)', cursor: 'pointer', background: 'white' }}>
               ✕
             </button>
           )}
@@ -229,7 +229,7 @@ export default function Rankings() {
           <span style={s.oppLabel}>最低守備機會（模型）</span>
           <input type="range" min={0} max={400} step={25} value={minOpp}
             onChange={e => setMinOpp(Number(e.target.value))}
-            style={{ width: 130, accentColor: '#2563eb' }} />
+            style={{ width: 130, accentColor: 'var(--blue-600)' }} />
           <span style={s.oppVal}>{minOpp}</span>
         </div>
       </div>
@@ -256,18 +256,18 @@ export default function Rankings() {
                 <th onClick={() => handleSort('rate')}  style={thStyle('rate',  { verticalAlign: 'middle' })} rowSpan={2}>OAA/100</th>
                 {STARS.map(i => (
                   <th key={i} colSpan={3}
-                    style={{ ...s.th, ...s.thGroup, borderLeft: '1px solid #e2e8f0' }}>
+                    style={{ ...s.th, ...s.thGroup, borderLeft: '1px solid var(--slate-200)' }}>
                     {STAR_LABELS[i]}
                   </th>
                 ))}
-                <th colSpan={3} style={{ ...s.th, ...s.thGroup, borderLeft: '1px solid #e2e8f0' }}>All Plays</th>
+                <th colSpan={3} style={{ ...s.th, ...s.thGroup, borderLeft: '1px solid var(--slate-200)' }}>All Plays</th>
               </tr>
               <tr>
                 {STARS.map(i =>
                   ['outs', 'opp', 'pct'].map((h, hi) => (
                     <th key={`${i}-${h}`}
                       onClick={() => handleSort(`s${i}_${h}`)}
-                      style={thStyle(`s${i}_${h}`, hi === 0 ? { borderLeft: '1px solid #e2e8f0' } : {})}>
+                      style={thStyle(`s${i}_${h}`, hi === 0 ? { borderLeft: '1px solid var(--slate-200)' } : {})}>
                       {h === 'pct' ? '%' : h.charAt(0).toUpperCase() + h.slice(1)}
                     </th>
                   ))
@@ -275,7 +275,7 @@ export default function Rankings() {
                 {['outs', 'opp', 'pct'].map((h, hi) => (
                   <th key={`all-${h}`}
                     onClick={() => handleSort(`all_${h}`)}
-                    style={thStyle(`all_${h}`, hi === 0 ? { borderLeft: '1px solid #e2e8f0' } : {})}>
+                    style={thStyle(`all_${h}`, hi === 0 ? { borderLeft: '1px solid var(--slate-200)' } : {})}>
                     {h === 'pct' ? '%' : h.charAt(0).toUpperCase() + h.slice(1)}
                   </th>
                 ))}
@@ -284,7 +284,7 @@ export default function Rankings() {
             <tbody>
               {rows.map(r => (
                 <tr key={r.name + r.position} style={s.tr}>
-                  <td style={{ ...s.td, color: '#9ca3af', fontSize: 11 }}>{r.rank}</td>
+                  <td style={{ ...s.td, color: 'var(--gray-400)', fontSize: 11 }}>{r.rank}</td>
                   <td style={tdStyle('name', { fontWeight: 500, textAlign: 'left' })}>
                     <div
                       onClick={() => openTrend(r.name, r.player_id)}
@@ -300,7 +300,7 @@ export default function Rankings() {
                     <TeamLogo teamId={r.team_id} />
                   </td>
                   {pos === 'ALL' && (
-                    <td style={tdStyle('position', { color: '#6b7280' })}>{r.position}</td>
+                    <td style={tdStyle('position', { color: 'var(--gray-500)' })}>{r.position}</td>
                   )}
                   <td style={tdStyle('n_opp')}>{r.n_opp}</td>
                   <td style={{ ...tdStyle('oaa'), ...oaaColor(r.oaa) }}>
@@ -314,8 +314,8 @@ export default function Rankings() {
                     return ['outs', 'opp', 'pct'].map((h, hi) => (
                       <td key={`${r.name}-s${i}-${h}`}
                         style={tdStyle(`s${i}_${h}`, {
-                          ...(hi === 0 ? { borderLeft: '1px solid #f1f5f9' } : {}),
-                          color: h === 'pct' ? '#6b7280' : undefined,
+                          ...(hi === 0 ? { borderLeft: '1px solid var(--slate-100)' } : {}),
+                          color: h === 'pct' ? 'var(--gray-500)' : undefined,
                         })}>
                         {sv ? (h === 'pct' ? pct(sv.outs, sv.opp) : sv[h]) : '—'}
                       </td>
@@ -327,8 +327,8 @@ export default function Rankings() {
                       <td key={`${r.name}-all-${h}`}
                         style={tdStyle(`all_${h}`, {
                           fontWeight: 500,
-                          ...(hi === 0 ? { borderLeft: '1px solid #e2e8f0' } : {}),
-                          color: h === 'pct' ? '#6b7280' : undefined,
+                          ...(hi === 0 ? { borderLeft: '1px solid var(--slate-200)' } : {}),
+                          color: h === 'pct' ? 'var(--gray-500)' : undefined,
                         })}>
                         {a ? (h === 'pct' ? pct(a.outs, a.opp) : a[h]) : '—'}
                       </td>
@@ -356,20 +356,20 @@ export default function Rankings() {
                   {[...new Set(trendData.map(d => d.position))].map(p => (
                     <span key={p} style={{
                       fontSize: 10, fontWeight: 700, color: 'white', padding: '1px 6px',
-                      borderRadius: 4, background: { LF: '#3B82F6', CF: '#10B981', RF: '#F97316' }[p] || '#64748b',
+                      borderRadius: 4, background: { LF: '#3B82F6', CF: '#10B981', RF: '#F97316' }[p] || 'var(--slate-500)',
                     }}>{p}</span>
                   ))}
                 </div>
-                <div style={{ fontSize: 11, color: '#6b7280' }}>OAA/100 多年趨勢</div>
+                <div style={{ fontSize: 11, color: 'var(--gray-500)' }}>OAA/100 多年趨勢</div>
               </div>
               <button onClick={() => setTrendPlayer(null)}
                 style={{ marginLeft: 'auto', border: 'none', background: 'none',
-                         cursor: 'pointer', fontSize: 18, color: '#9ca3af' }}>✕</button>
+                         cursor: 'pointer', fontSize: 18, color: 'var(--gray-400)' }}>✕</button>
             </div>
             {trendLoading ? (
-              <div style={{ textAlign: 'center', color: '#9ca3af', padding: 32 }}>載入中…</div>
+              <div style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}>載入中…</div>
             ) : trendData.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#9ca3af', padding: 32 }}>無資料</div>
+              <div style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}>無資料</div>
             ) : (
               <TrendChart data={trendData} />
             )}
@@ -404,27 +404,27 @@ function TrendChart({ data }) {
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block', margin: '0 auto' }}>
       {/* zero line */}
       <line x1={PL} x2={W - PR} y1={cy(0)} y2={cy(0)}
-        stroke="#e2e8f0" strokeWidth={1.5} />
-      <text x={PL - 4} y={cy(0) + 4} fontSize={9} fill="#9ca3af" textAnchor="end">0</text>
+        stroke="var(--slate-200)" strokeWidth={1.5} />
+      <text x={PL - 4} y={cy(0) + 4} fontSize={9} fill="var(--gray-400)" textAnchor="end">0</text>
 
       {/* y ticks */}
       {[-10, -5, 5, 10].map(v => v > minY && v < maxY && (
         <g key={v}>
           <line x1={PL} x2={W - PR} y1={cy(v)} y2={cy(v)}
-            stroke="#f1f5f9" strokeWidth={1} strokeDasharray="3,3" />
+            stroke="var(--slate-100)" strokeWidth={1} strokeDasharray="3,3" />
           <text x={PL - 4} y={cy(v) + 4} fontSize={9} fill="#cbd5e1" textAnchor="end">{v}</text>
         </g>
       ))}
 
       {/* x axis labels */}
       {allYears.map(yr => (
-        <text key={yr} x={cx(yr)} y={H - 6} fontSize={10} fill="#6b7280" textAnchor="middle">{yr}</text>
+        <text key={yr} x={cx(yr)} y={H - 6} fontSize={10} fill="var(--gray-500)" textAnchor="middle">{yr}</text>
       ))}
 
       {/* lines + points per position */}
       {Object.entries(byPos).map(([pos, pts]) => {
         const sorted = [...pts].sort((a, b) => a.year - b.year)
-        const col = posColor[pos] || '#64748b'
+        const col = posColor[pos] || 'var(--slate-500)'
         const pathD = sorted.map((d, i) =>
           `${i === 0 ? 'M' : 'L'}${cx(d.year)},${cy(d.rate ?? 0)}`
         ).join(' ')
@@ -451,9 +451,9 @@ function TrendChart({ data }) {
 
 function oaaColor(val) {
   if (val == null) return {}
-  if (val > 2)  return { color: '#16a34a' }
+  if (val > 2)  return { color: 'var(--green-600)' }
   if (val > 0)  return { color: '#4ade80', filter: 'brightness(0.75)' }
-  if (val < -2) return { color: '#dc2626' }
+  if (val < -2) return { color: 'var(--red-600)' }
   if (val < 0)  return { color: '#f87171', filter: 'brightness(0.8)' }
   return {}
 }
@@ -462,33 +462,33 @@ const s = {
   page:     { padding: '24px 28px' },
   header:   { marginBottom: 18 },
   title:    { margin: '0 0 4px', fontSize: 20, fontWeight: 700 },
-  subtitle: { fontSize: 11, color: '#9ca3af' },
+  subtitle: { fontSize: 11, color: 'var(--gray-400)' },
   controls: { display: 'flex', alignItems: 'center', gap: 24, marginBottom: 18, flexWrap: 'wrap' },
   tabs:     { display: 'flex', gap: 6 },
   tab: {
-    padding: '6px 18px', border: '1px solid #d1d5db', borderRadius: 6,
-    background: 'white', color: '#6b7280', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+    padding: '6px 18px', border: '1px solid var(--gray-300)', borderRadius: 6,
+    background: 'white', color: 'var(--gray-500)', cursor: 'pointer', fontSize: 14, fontWeight: 600,
   },
-  tabActive: { background: '#2563eb', color: '#fff', border: '1px solid #2563eb' },
+  tabActive: { background: 'var(--blue-600)', color: '#fff', border: '1px solid var(--blue-600)' },
   yearTabs: { display: 'flex', gap: 4 },
   yearTab: {
-    padding: '3px 10px', border: '1px solid #d1d5db', borderRadius: 5,
-    background: 'white', color: '#6b7280', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    padding: '3px 10px', border: '1px solid var(--gray-300)', borderRadius: 5,
+    background: 'white', color: 'var(--gray-500)', cursor: 'pointer', fontSize: 13, fontWeight: 600,
   },
-  yearTabActive: { background: '#1e40af', color: '#fff', border: '1px solid #1e40af' },
+  yearTabActive: { background: 'var(--blue-800)', color: '#fff', border: '1px solid var(--blue-800)' },
   oppRow:   { display: 'flex', alignItems: 'center', gap: 8 },
-  oppLabel: { fontSize: 12, color: '#6b7280' },
-  oppVal:   { fontSize: 13, color: '#1e293b', minWidth: 30 },
-  loading:  { color: '#9ca3af', marginTop: 40, textAlign: 'center' },
+  oppLabel: { fontSize: 12, color: 'var(--gray-500)' },
+  oppVal:   { fontSize: 13, color: 'var(--slate-800)', minWidth: 30 },
+  loading:  { color: 'var(--gray-400)', marginTop: 40, textAlign: 'center' },
   table:    { borderCollapse: 'collapse', fontSize: 12, whiteSpace: 'nowrap' },
   th: {
-    padding: '7px 10px', fontSize: 11, color: '#6b7280',
+    padding: '7px 10px', fontSize: 11, color: 'var(--gray-500)',
     textTransform: 'uppercase', letterSpacing: '0.04em',
-    borderBottom: '2px solid #e2e8f0', textAlign: 'center',
-    userSelect: 'none', background: '#f8fafc',
+    borderBottom: '2px solid var(--slate-200)', textAlign: 'center',
+    userSelect: 'none', background: 'var(--slate-50)',
   },
-  thGroup:  { fontWeight: 700, color: '#374151', fontSize: 12 },
+  thGroup:  { fontWeight: 700, color: 'var(--gray-700)', fontSize: 12 },
   thSort:   { cursor: 'pointer' },
-  tr:       { borderBottom: '1px solid #f1f5f9' },
-  td:       { padding: '6px 10px', color: '#1e293b', textAlign: 'center' },
+  tr:       { borderBottom: '1px solid var(--slate-100)' },
+  td:       { padding: '6px 10px', color: 'var(--slate-800)', textAlign: 'center' },
 }

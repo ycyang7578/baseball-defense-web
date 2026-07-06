@@ -122,7 +122,7 @@ export default function App() {
   const fielderSection = (sel, setSel, label) => (
     <div>
       {label && (
-        <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8',
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-400)',
                       textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
           {label}
         </div>
@@ -130,7 +130,7 @@ export default function App() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {POSITIONS.map(p => (
           <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 24, fontSize: 11, color: '#64748b', fontWeight: 700,
+            <span style={{ width: 24, fontSize: 11, color: 'var(--slate-500)', fontWeight: 700,
                            flexShrink: 0 }}>{p}</span>
             <div style={{ flex: 1 }}>
               <SearchSelect
@@ -162,9 +162,9 @@ export default function App() {
               {availYears.map(y => (
                 <button key={y} onClick={() => setYear(y)} style={{
                   ...s.yearBtn,
-                  background: year === y ? '#2563eb' : '#f1f5f9',
-                  color:      year === y ? 'white'   : '#475569',
-                  border:     year === y ? '1px solid #2563eb' : '1px solid transparent',
+                  background: year === y ? 'var(--blue-600)' : 'var(--slate-100)',
+                  color:      year === y ? 'white'   : 'var(--slate-600)',
+                  border:     year === y ? '1px solid var(--blue-600)' : '1px solid transparent',
                 }}>{y}</button>
               ))}
             </div>
@@ -194,7 +194,7 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {[['A', homeTeam, setHomeTeam], ['B', homeTeamB, setHomeTeamB]].map(([lbl, val, set]) => (
                   <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8',
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-400)',
                                    minWidth: 14 }}>{lbl}</span>
                     <select value={val} onChange={e => set(e.target.value)} style={{ ...s.select, flex: 1 }}>
                       <option value="">— 通用 —</option>
@@ -214,14 +214,14 @@ export default function App() {
           {/* 外野手 */}
           <Sec title="外野手">
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <span style={{ fontSize: 10, color: '#94a3b8', whiteSpace: 'nowrap' }}>最低守備次數</span>
+              <span style={{ fontSize: 10, color: 'var(--slate-400)', whiteSpace: 'nowrap' }}>最低守備次數</span>
               <input
                 type="range" min={0} max={400} step={25}
                 value={minOpp}
                 onChange={e => setMinOpp(Number(e.target.value))}
-                style={{ flex: 1, accentColor: '#2563eb' }}
+                style={{ flex: 1, accentColor: 'var(--blue-600)' }}
               />
-              <span style={{ fontSize: 11, color: '#475569', minWidth: 28,
+              <span style={{ fontSize: 11, color: 'var(--slate-600)', minWidth: 28,
                              textAlign: 'right', fontWeight: 600 }}>{minOpp}</span>
             </div>
             <div style={{ fontSize: 9, color: '#cbd5e1', marginBottom: 10, lineHeight: 1.6 }}>
@@ -230,7 +230,7 @@ export default function App() {
             {compareMode ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {fielderSection(selFielders,  setSelFielders,  '組合 A')}
-                <div style={{ borderTop: '1px solid #f1f5f9' }} />
+                <div style={{ borderTop: '1px solid var(--slate-100)' }} />
                 {fielderSection(selFieldersB, setSelFieldersB, '組合 B')}
               </div>
             ) : (
@@ -244,8 +244,8 @@ export default function App() {
               onClick={toggleCompare}
               style={{ ...s.compareBtn,
                 background: compareMode ? '#ede9fe' : 'white',
-                color:      compareMode ? '#6d28d9' : '#64748b',
-                border:     `1px solid ${compareMode ? '#c4b5fd' : '#e2e8f0'}`,
+                color:      compareMode ? '#6d28d9' : 'var(--slate-500)',
+                border:     `1px solid ${compareMode ? '#c4b5fd' : 'var(--slate-200)'}`,
               }}
             >
               {compareMode ? '✕ 關閉比較模式' : '⇔ 比較模式'}
@@ -318,7 +318,7 @@ export default function App() {
             min-width: 0 !important;
             min-height: 0 !important;
             border-right: none !important;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid var(--slate-200);
           }
           .app-chart-area { min-height: 0 !important; padding: 16px !important; }
           .compare-row { flex-direction: column; }
@@ -330,13 +330,13 @@ export default function App() {
 
 function EmptyState() {
   return (
-    <div style={{ background: 'white', borderRadius: 8, border: '1px solid #e2e8f0',
+    <div style={{ background: 'white', borderRadius: 8, border: '1px solid var(--slate-200)',
                   padding: '64px 32px', textAlign: 'center',
                   boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-      <div style={{ fontSize: 15, fontWeight: 600, color: '#334155', marginBottom: 8 }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--slate-700)', marginBottom: 8 }}>
         選擇打者開始分析
       </div>
-      <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.7, maxWidth: 280, margin: '0 auto' }}>
+      <div style={{ fontSize: 12, color: 'var(--slate-400)', lineHeight: 1.7, maxWidth: 280, margin: '0 auto' }}>
         系統依據打者的飛球傾向，以 RE24 為目標函數計算最佳外野站位
       </div>
     </div>
@@ -346,13 +346,13 @@ function EmptyState() {
 /* ── Shared UI helpers ──────────────────────────────── */
 function ChartToggle({ value, onChange }) {
   return (
-    <div style={{ display: 'flex', background: '#e2e8f0', borderRadius: 7, padding: 3, gap: 2 }}>
+    <div style={{ display: 'flex', background: 'var(--slate-200)', borderRadius: 7, padding: 3, gap: 2 }}>
       {[{ key: false, label: '落點密度圖' }, { key: true, label: '互動圖' }].map(({ key, label }) => (
         <button key={String(key)} onClick={() => onChange(key)} style={{
           padding: '4px 14px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
           border: 'none', borderRadius: 5,
           background: value === key ? 'white' : 'transparent',
-          color:      value === key ? '#1e293b' : '#64748b',
+          color:      value === key ? 'var(--slate-800)' : 'var(--slate-500)',
           boxShadow:  value === key ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
         }}>{label}</button>
       ))}
@@ -363,9 +363,9 @@ function ChartToggle({ value, onChange }) {
 function DownloadBtn({ href, name, label = '↓ 下載論文圖' }) {
   return (
     <a href={href} download={name}
-      style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6,
+      style={{ background: 'var(--slate-50)', border: '1px solid var(--slate-200)', borderRadius: 6,
                padding: '4px 12px', fontSize: 11, fontWeight: 600,
-               color: '#374151', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+               color: 'var(--gray-700)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
       {label}
     </a>
   )
@@ -388,13 +388,13 @@ function FieldChart({ imgUrl, data, showSpray, radius = '8px' }) {
 function PlotBox({ imgUrl, plotData, label, loading, showSpray }) {
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b',
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--slate-500)',
                     textAlign: 'center', marginBottom: 6, letterSpacing: '0.04em',
                     textTransform: 'uppercase' }}>{label}</div>
       <div style={{ position: 'relative' }}>
         {imgUrl
           ? <FieldChart imgUrl={imgUrl} data={plotData} showSpray={showSpray} />
-          : <div style={{ background: 'white', border: '1px solid #e2e8f0',
+          : <div style={{ background: 'white', border: '1px solid var(--slate-200)',
                           borderRadius: 8, minHeight: 200 }} />}
         {loading && <Overlay />}
       </div>
@@ -414,7 +414,7 @@ function CompareStats({ dataA, dataB }) {
 
   const numRow = (label, valA, valB, delta, higherIsBetter = true) => {
     const better = higherIsBetter ? delta > 0 : delta < 0
-    const color  = Math.abs(delta) < 0.01 ? '#475569' : (better ? '#16a34a' : '#dc2626')
+    const color  = Math.abs(delta) < 0.01 ? 'var(--slate-600)' : (better ? 'var(--green-600)' : 'var(--red-600)')
     return (
       <tr key={label}>
         <td style={td.label}>{label}</td>
@@ -429,7 +429,7 @@ function CompareStats({ dataA, dataB }) {
     const dx = Math.round(rA[pos].x - rB[pos].x)
     const dy = Math.round(rA[pos].y - rB[pos].y)
     const sign = (v) => v > 0 ? `+${v}` : `${v}`
-    const color = (dx === 0 && dy === 0) ? '#475569' : '#2563eb'
+    const color = (dx === 0 && dy === 0) ? 'var(--slate-600)' : 'var(--blue-600)'
     return (
       <tr key={pos}>
         <td style={td.label}>{pos}</td>
@@ -444,7 +444,7 @@ function CompareStats({ dataA, dataB }) {
 
   return (
     <div style={{ background: 'white', borderRadius: '0 0 8px 8px', padding: '12px 18px',
-                  borderTop: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                  borderTop: '1px solid var(--slate-200)', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
                   marginTop: -1 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
@@ -459,7 +459,7 @@ function CompareStats({ dataA, dataB }) {
           {numRow('Catch %', rA.catch_pct.toFixed(1) + '%', rB.catch_pct.toFixed(1) + '%', dCatch.toFixed(1), true)}
           {numRow('RE24',    rA.objective.toFixed(2),        rB.objective.toFixed(2),        dRE.toFixed(2),   false)}
           <tr><td colSpan={4} style={{ padding: '4px 0' }}>
-            <hr style={{ border: 'none', borderTop: '1px solid #f1f5f9', margin: 0 }} />
+            <hr style={{ border: 'none', borderTop: '1px solid var(--slate-100)', margin: 0 }} />
           </td></tr>
           {['LF', 'CF', 'RF'].map(posRow)}
         </tbody>
@@ -469,10 +469,10 @@ function CompareStats({ dataA, dataB }) {
 }
 
 const td = {
-  label: { padding: '4px 8px', color: '#64748b', fontWeight: 600, textAlign: 'left' },
-  val:   { padding: '4px 14px', textAlign: 'center', color: '#1e293b' },
+  label: { padding: '4px 8px', color: 'var(--slate-500)', fontWeight: 600, textAlign: 'left' },
+  val:   { padding: '4px 14px', textAlign: 'center', color: 'var(--slate-800)' },
   head:  { padding: '4px 14px', textAlign: 'center', fontSize: 11,
-           color: '#94a3b8', fontWeight: 600, borderBottom: '1px solid #e2e8f0' },
+           color: 'var(--slate-400)', fontWeight: 600, borderBottom: '1px solid var(--slate-200)' },
 }
 
 function StatsPanel({ data }) {
@@ -492,20 +492,20 @@ function StatsPanel({ data }) {
   }
   return (
     <div style={{ background: 'white', borderRadius: '0 0 8px 8px', padding: '12px 18px',
-                  borderTop: '1px solid #e2e8f0', boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}>
+                  borderTop: '1px solid var(--slate-200)', boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 12 }}>
         {entries.map(({ label, key }) => {
           const ps = positions[key]
           return (
-            <div key={key} style={{ background: '#f8fafc', border: '1px solid #e2e8f0',
+            <div key={key} style={{ background: 'var(--slate-50)', border: '1px solid var(--slate-200)',
                                      borderRadius: 7, padding: '8px 16px', minWidth: 140 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b',
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-500)',
                             textTransform: 'uppercase', letterSpacing: '0.05em',
                             marginBottom: 5 }}>{label}</div>
-              <div style={{ fontSize: 12, color: '#334155', marginBottom: 2 }}>
+              <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
                 Catch <strong style={{ fontSize: 14 }}>{ps.catch_pct.toFixed(1)}%</strong>
               </div>
-              <div style={{ fontSize: 12, color: '#334155' }}>
+              <div style={{ fontSize: 12, color: 'var(--slate-700)' }}>
                 RE24 <strong style={{ fontSize: 14 }}>{ps.objective.toFixed(2)}</strong>
               </div>
             </div>
@@ -519,13 +519,13 @@ function StatsPanel({ data }) {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
                           color: delta > 0 ? '#166534' : '#991b1b', marginBottom: 4 }}>Δ RE24</div>
             <div style={{ fontSize: 20, fontWeight: 700,
-                          color: delta > 0 ? '#16a34a' : '#dc2626' }}>
+                          color: delta > 0 ? 'var(--green-600)' : 'var(--red-600)' }}>
               {delta > 0 ? '+' : ''}{delta.toFixed(2)}
             </div>
           </div>
         )}
       </div>
-      <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 10 }}>
+      <div style={{ borderTop: '1px solid var(--slate-100)', paddingTop: 10 }}>
         <table style={{ borderCollapse: 'collapse', fontSize: 11 }}>
           <thead>
             <tr>
@@ -536,7 +536,7 @@ function StatsPanel({ data }) {
           <tbody>
             {['LF', 'CF', 'RF'].map(p => (
               <tr key={p}>
-                <td style={{ ...spc.td, fontWeight: 700, color: '#334155' }}>{p}</td>
+                <td style={{ ...spc.td, fontWeight: 700, color: 'var(--slate-700)' }}>{p}</td>
                 {entries.map(({ key }) => {
                   const pos = positions[key][p]
                   return (
@@ -556,8 +556,8 @@ function StatsPanel({ data }) {
 
 const spc = {
   th: { padding: '2px 16px', textAlign: 'center', fontSize: 10, fontWeight: 600,
-        color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' },
-  td: { padding: '4px 16px', textAlign: 'center', color: '#475569' },
+        color: 'var(--slate-400)', textTransform: 'uppercase', letterSpacing: '0.05em' },
+  td: { padding: '4px 16px', textAlign: 'center', color: 'var(--slate-600)' },
 }
 
 function Overlay() {
@@ -571,8 +571,8 @@ function Overlay() {
 
 function Sec({ title, children }) {
   return (
-    <section style={{ padding: '12px 16px', borderTop: '1px solid #f1f5f9' }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8',
+    <section style={{ padding: '12px 16px', borderTop: '1px solid var(--slate-100)' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-400)',
                     textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>
         {title}
       </div>
@@ -582,17 +582,17 @@ function Sec({ title, children }) {
 }
 
 const s = {
-  root: { minHeight: '100vh', background: '#f1f5f9', fontFamily: "'Inter', system-ui, sans-serif" },
+  root: { minHeight: '100vh', background: 'var(--slate-100)', fontFamily: "'Inter', system-ui, sans-serif" },
   body: { display: 'flex', minHeight: '100vh', alignItems: 'flex-start' },
   panel: {
-    width: 280, minWidth: 260, background: 'white', color: '#1e293b',
+    width: 280, minWidth: 260, background: 'white', color: 'var(--slate-800)',
     display: 'flex', flexDirection: 'column',
-    minHeight: '100vh', borderRight: '1px solid #e2e8f0',
+    minHeight: '100vh', borderRight: '1px solid var(--slate-200)',
     overflowY: 'auto', flexShrink: 0,
   },
   panelHeader: {
     padding: '18px 16px 14px',
-    borderBottom: '1px solid #f1f5f9',
+    borderBottom: '1px solid var(--slate-100)',
   },
   panelTitle: {
     fontSize: 14, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em',
@@ -603,29 +603,29 @@ const s = {
   },
   panelFooter: {
     padding: '12px 16px 18px',
-    borderTop: '1px solid #f1f5f9',
+    borderTop: '1px solid var(--slate-100)',
     display: 'flex', flexDirection: 'column', gap: 8,
   },
   select: {
-    width: '100%', padding: '6px 8px', background: '#f8fafc',
-    color: '#334155', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11,
+    width: '100%', padding: '6px 8px', background: 'var(--slate-50)',
+    color: 'var(--slate-700)', border: '1px solid var(--slate-200)', borderRadius: 6, fontSize: 11,
   },
   compareBtn: {
     width: '100%', padding: '6px 0', borderRadius: 6,
     fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
   btn: {
-    width: '100%', padding: '9px 0', background: '#2563eb', color: 'white',
+    width: '100%', padding: '9px 0', background: 'var(--blue-600)', color: 'white',
     border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer',
     letterSpacing: '0.01em',
   },
   error: {
     background: '#fef2f2', border: '1px solid #fca5a5',
-    borderRadius: 6, padding: '6px 10px', fontSize: 11, color: '#dc2626',
+    borderRadius: 6, padding: '6px 10px', fontSize: 11, color: 'var(--red-600)',
   },
   chartArea: {
     flex: 1, padding: '20px', display: 'flex', justifyContent: 'center',
-    alignItems: 'flex-start', background: '#f1f5f9', minHeight: '100vh',
+    alignItems: 'flex-start', background: 'var(--slate-100)', minHeight: '100vh',
   },
   overlay: {
     position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
