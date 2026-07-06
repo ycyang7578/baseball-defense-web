@@ -82,6 +82,7 @@ PostgreSQL 資料表：
    CSV 匯出缺機會數，所以改解析頁面 `var data` JSON；頁面 year 欄為空，由腳本以請求年份補。
    執行：`python scripts/fetch_if_oaa_leaderboard.py 2023 2024 2025`
 6. `scripts/fetch_sprint_speed.py` — 抓 Savant sprint speed leaderboard（含 hp_to_1b）→ parquet
+   （內野滾地球模型見下方「內野擴展」章節）
 7. `scripts/load_to_postgres.py` — 把 statcast/positioning/sprint_speed/savant_fielding 四種 parquet 用 COPY 灌進 PostgreSQL（可重跑，每次先 TRUNCATE 重建）
 
 ## API（FastAPI）
@@ -222,6 +223,27 @@ w_j = Σ_k P(k|j) × ΔRE(k, s)
   Okabe-Ito 色盲友善配色 → `figures/validation_scatter_v2.png`（自用，不覆蓋/不修改 v1）
 - `make_reliability_plot.py` — 繪製 Reliability Diagram → `figures/reliability_diagram.png`（自用）
   使用 2025 全部球（**不**限 is_official）：n=52,598，Brier=0.0632，LogLoss=0.2142，MAE=0.1278
+
+## 內野擴展（2026-07-06 起，開發中）
+
+把站位最佳化延伸到內野滾地球。與外野的根本差異：出局是「攔截＋傳球 vs 跑者到一壘」的
+競速（外野只需接到球）；滾地球 hc_x/hc_y 是被處理位置非落點（出局球記錄深度中位數 ~46
+savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D），不能像外野建 2D 落點分布。
+訓練資料從 2023 起（禁趨位後規則同代），2025 留樣本外驗證。
+
+- `src/if_dataset.py` — 滾地球特徵工程（設計依據：Melville 2024 §3.1 的 a_d/b_t、
+  Tango 2020 Infield OAA 的競速結構）。`build_gb_dataset(years, bases_empty, alignment)`
+  一站式產出；特徵計算在純函式 `attach_features()`（可測試，不碰 DB）
+- `scripts/train_if_gb.py` — 訓練（2023–2024）＋樣本外評估（2025）→ `models/if_gb/`
+  - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
+  - **2026-07-06 結果**：GLM（spline logistic）AUC=0.747、Brier=0.164、校準十分位最大偏差
+    0.026（n_test=18,404）；全量滾地球 AUC=0.750
+  - ⚠️ GBM benchmark（同樣 7 特徵）AUC=0.813，比 GLM 高 0.065 —— 特徵間有可觀的交互作用
+    訊號（推測：ball_time×ad_min、hp_to_1b 只在 close play 有用），GLM 結構待升級，
+    是下一步的首要事項
+- 官方對照資料：`if_oaa_leaderboard` 表（見資料表清單）
+- 已知限制：站位仍是賽季平均（同外野的 OAA scale 問題，內野對站位誤差更敏感——反應時間
+  僅 1–2 秒）；跑者速度用賽季平均 hp_to_1b（官方 OAA 也是用平均 sprint speed，做法一致）
 
 ## 前端（React + Vite）
 

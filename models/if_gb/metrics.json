@@ -1,0 +1,44 @@
+{
+  "train_years": [
+    2023,
+    2024
+  ],
+  "test_year": 2025,
+  "features": [
+    "ad_min",
+    "ball_time",
+    "launch_angle",
+    "launch_speed",
+    "throw_dist",
+    "hp_to_1b",
+    "stand_R"
+  ],
+  "primary": {
+    "n_train": 39354,
+    "n_test": 18404,
+    "glm": {
+      "auc": 0.7471,
+      "brier": 0.1643,
+      "calibration_max_dev": 0.0264
+    },
+    "gbm": {
+      "auc": 0.8126,
+      "brier": 0.1413,
+      "calibration_max_dev": 0.0367
+    }
+  },
+  "all_gb": {
+    "n_train": 104813,
+    "n_test": 52160,
+    "glm": {
+      "auc": 0.7502,
+      "brier": 0.1636,
+      "calibration_max_dev": 0.0257
+    },
+    "gbm": {
+      "auc": 0.8196,
+      "brier": 0.1396,
+      "calibration_max_dev": 0.0236
+    }
+  }
+}
