@@ -3,6 +3,9 @@ data/raw/statcast/
 data/raw/savant_fielding/
 data/raw/positioning/
 
+# 可由 scripts/precompute_model_oaa.py 重新生成的中間產物（真正的資料在 DB 的 model_oaa 表）
+data/precomputed/model_oaa_*.csv
+
 # PyMC 後驗樣本（大型 .nc）
 models/**/*.nc
 
@@ -15,6 +18,7 @@ __pycache__/
 # 本機開發工具設定：含 DB 連線字串，不上 repo
 .localconfig.json
 .devtool/
+.vscode/
 
 # Frontend
 frontend/node_modules/
