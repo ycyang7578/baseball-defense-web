@@ -1,11 +1,9 @@
 """
 Baseball Defense Optimizer — FastAPI backend
 
-Endpoints:
-  GET  /api/batters              列出 2025 可查詢打者（含姓名）
-  GET  /api/teams                列出支援球場縮寫
-  GET  /api/park_boundary/{team} 回傳球場圍牆多邊形座標
-  POST /api/optimize             計算最佳外野站位（同步，約 10-20s）
+完整端點清單見 ARCHITECTURE.md「API（FastAPI）」章節。
+POST /api/optimize 系列耗時受 n_restarts/併發影響，實測數字見 ARCHITECTURE.md「已知效能限制」章節，
+不在這裡重複維護避免兩處數字不同步。
 """
 import json
 import logging
@@ -22,14 +20,13 @@ from fastapi.staticfiles import StaticFiles
 
 from src.optimization import (
     optimize_positions, prepare_batter_balls, compute_w_j,
-    compute_ball_catch_probs, compute_per_fielder_probs,
+    compute_ball_catch_probs,
     get_league_avg_positions, get_batter_stand, load_qualifying_batters,
     load_model_params, load_player_params, POSITIONS,
 )
 from src.config import DSN
-from src.hit_prob import predict_hit_probs_batch
+from src.hit_prob import predict_hit_probs_batch, load_hit_prob
 from src.re24 import load_re24
-from src.hit_prob import load_hit_prob
 from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall_ball
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,

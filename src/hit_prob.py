@@ -37,6 +37,7 @@ from .physics import _X0, _Y0
 
 _HIT_TYPES = ("1B", "2B", "3B")
 _EVENT_MAP = {"single": "1B", "double": "2B", "triple": "3B"}
+_FEATURES = ["launch_speed", "launch_angle", "spray_angle"]
 
 _QUERY = """
     SELECT launch_speed, launch_angle, hc_x, hc_y, stand, events
@@ -81,8 +82,6 @@ def fit_hit_type_kde(
     df["hit_type"] = df["events"].map(_EVENT_MAP)
     df = df.dropna(subset=["launch_speed", "launch_angle", "spray_angle", "hit_type"])
 
-    FEATURES = ["launch_speed", "launch_angle", "spray_angle"]
-
     models: dict = {}
     scalers: dict = {}
     priors: dict = {}
@@ -93,13 +92,13 @@ def fit_hit_type_kde(
             continue
 
         scaler = StandardScaler()
-        scaler.fit(sub[FEATURES].values)
+        scaler.fit(sub[_FEATURES].values)
         scalers[stand] = scaler
 
         total = len(sub)
         for ht in _HIT_TYPES:
             mask = sub["hit_type"] == ht
-            X = sub.loc[mask, FEATURES].values
+            X = sub.loc[mask, _FEATURES].values
             prior = len(X) / total
             priors[(stand, ht)] = prior
 
@@ -126,7 +125,6 @@ def predict_hit_probs(
 
     If stand not in bundle (rare), falls back to uniform.
     """
-    FEATURES = ["launch_speed", "launch_angle", "spray_angle"]
     x_raw = np.array([[launch_speed, launch_angle, spray_angle]])
 
     scaler = bundle["scalers"].get(stand)
@@ -162,7 +160,6 @@ def predict_hit_probs_batch(
 
     Returns array of shape (N, 3): columns = [P(1B), P(2B), P(3B)].
     """
-    FEATURES = ["launch_speed", "launch_angle", "spray_angle"]
     N = len(df)
     probs = np.full((N, 3), 1 / 3)
 
@@ -175,7 +172,7 @@ def predict_hit_probs_batch(
             continue
 
         pos = df.index.get_indexer(idx)  # integer positions in the original array
-        x_std = scaler.transform(df.loc[idx, FEATURES].values)
+        x_std = scaler.transform(df.loc[idx, _FEATURES].values)
 
         log_dens = np.zeros((len(idx), 3))
         for i, ht in enumerate(_HIT_TYPES):
