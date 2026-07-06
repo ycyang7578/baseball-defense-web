@@ -52,6 +52,19 @@ def load_fielder_positioning(conn) -> None:
         print(f"[loaded] fielder_positioning {year}: {len(df):,} rows")
 
 
+def load_sprint_speed(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE sprint_speed;")
+    conn.commit()
+    for year in YEARS:
+        path = DATA_DIR / "sprint_speed" / f"{year}.parquet"
+        if not path.exists():
+            continue  # 尚未抓取的年份直接跳過
+        df = pd.read_parquet(path)
+        _copy(conn, "sprint_speed", df)
+        print(f"[loaded] sprint_speed {year}: {len(df):,} rows")
+
+
 def load_savant_fielding(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("TRUNCATE savant_fielding;")
@@ -70,6 +83,7 @@ if __name__ == "__main__":
     try:
         load_statcast(conn)
         load_fielder_positioning(conn)
+        load_sprint_speed(conn)
         load_savant_fielding(conn)
     finally:
         conn.close()

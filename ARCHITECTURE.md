@@ -28,7 +28,8 @@
 ## 資料夾結構
 ```
 data/raw/statcast/{year}.parquet           逐球 Statcast 原始資料（未篩選；2020–2025）
-data/raw/positioning/{year}.parquet        球員平均起始守備站位（距離+角度；2020–2025）
+data/raw/positioning/{year}.parquet        球員平均起始守備站位（距離+角度；2017–2025，含內外野七個位置）
+data/raw/sprint_speed/{year}.parquet       跑者速度 leaderboard（sprint_speed + hp_to_1b；2020–2025）
 data/raw/savant_fielding/{year}.parquet    Savant 官方 OAA 所用的逐球守備機會（目前只有 2025）
 data/reference/MLBStadiaPathData.rda       各球場外野圍牆多邊形（GeomMLBStadiums R 套件）
 data/reference/batter_names.json           batter_id → 姓名快取（pybaseball 反查）
@@ -49,7 +50,9 @@ pytest.ini                                  定義 integration marker，預設 -
 
 PostgreSQL 資料表：
 - `statcast` — 426 萬筆逐球原始資料（2020–2025），5.1GB。只有本機訓練/評估/precompute 用，**不部署到雲端**
-- `fielder_positioning` — 球員每年各位置平均站位
+- `fielder_positioning` — 球員每年各位置平均站位（2017–2025；2026-07-06 起含 1B/2B/3B/SS/LF/CF/RF 七個位置，供內野擴展用）
+- `sprint_speed` — 跑者速度 leaderboard（2020–2025，每年 500–630 人）。`hp_to_1b`（本壘到一壘秒數）是滾地球出局率模型的跑者端輸入，約 85% 球員有值（球級覆蓋 ~97%）
+- `if_oaa_leaderboard` — 每位內野手的官方 OAA 匯總（2023–2025，每年 ~350 人）。含分位置機會數/OAA（`n_pos3~6`/`oaa_role3~6`）、方向與左右打分解。與外野的 `oaa_leaderboard` 分表，因為欄位結構不同（內野無 0–5 星概念）
 - `savant_fielding` — 官方 OAA 逐球守備機會（2025，36,848 筆）
   - ⚠️ `catch_prob` 欄位是 xban（難度分數 0~1），**只有接到的球才有值**（未接球=0.000），不是所有球的接殺機率
   - ⚠️ `star_savant` 欄位是 0/1（有沒有接到），**不是** 0~5 星難度分級
@@ -66,14 +69,20 @@ PostgreSQL 資料表：
 
 ## 資料管線（依序）
 1. `scripts/fetch_statcast.py` — pybaseball 抓整年逐球 Statcast → parquet
-2. `scripts/fetch_positioning.py` — 抓 Savant `/visuals/position_data` 球員平均站位（非官方 API，DevTools 逆向）
+2. `scripts/fetch_positioning.py` — 抓 Savant `/visuals/position_data` 球員平均站位（非官方 API，DevTools 逆向）。
+   位置代碼用 MLB 標準編號（3=1B … 9=RF），Savant 5xx 會自動重試。
+   單獨重載站位不動 statcast：`python scripts/append_years_to_db.py --positioning-only 2017 ... 2025`
 3. `scripts/fetch_savant_fielding.py` — 抓 Savant 官方守備機會逐球（leaderboard + gamelogs 兩個非官方端點），
    作為「官方 OAA 所用球集」，評估時用來把樣本限制在同一母體
 4. `scripts/fetch_oaa_leaderboard.py` — 抓 Savant OAA leaderboard 匯總資料 → `oaa_leaderboard` 資料表。
    每位外野手一列，含官方 OAA、全部守備機會（n_opp，含 0 星）、1~5 星的接殺數與機會數、達標旗標。
    執行：`python scripts/fetch_oaa_leaderboard.py 2025 [2024 ...]`（支援多年）。
    ⚠️ savant_fielding 的 `catch_prob`（xban）是難度分數（0=容易、1=最難），**不是**接殺機率，無法直接還原官方 OAA。
-5. `scripts/load_to_postgres.py` — 把 statcast/positioning/savant_fielding 三種 parquet 用 COPY 灌進 PostgreSQL（可重跑，每次先 TRUNCATE 重建）
+5. `scripts/fetch_if_oaa_leaderboard.py` — 抓內野官方 OAA（`/leaderboard/outs_above_average?pos=if`）→ `if_oaa_leaderboard`。
+   CSV 匯出缺機會數，所以改解析頁面 `var data` JSON；頁面 year 欄為空，由腳本以請求年份補。
+   執行：`python scripts/fetch_if_oaa_leaderboard.py 2023 2024 2025`
+6. `scripts/fetch_sprint_speed.py` — 抓 Savant sprint speed leaderboard（含 hp_to_1b）→ parquet
+7. `scripts/load_to_postgres.py` — 把 statcast/positioning/sprint_speed/savant_fielding 四種 parquet 用 COPY 灌進 PostgreSQL（可重跑，每次先 TRUNCATE 重建）
 
 ## API（FastAPI）
 - `api/main.py` — FastAPI 主程式，startup 快取打者清單、姓名、各位置外野手清單、模型參數

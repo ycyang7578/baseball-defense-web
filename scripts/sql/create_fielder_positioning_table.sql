@@ -8,7 +8,7 @@ CREATE TABLE fielder_positioning (
     fielder_id               BIGINT NOT NULL,
     fld_name_display_club    TEXT,
     season                   INTEGER NOT NULL,
-    position                 TEXT NOT NULL,        -- 'LF' | 'CF' | 'RF'
+    position                 TEXT NOT NULL,        -- '1B' | '2B' | '3B' | 'SS' | 'LF' | 'CF' | 'RF'
     pa                       BIGINT,
     avg_norm_start_distance  BIGINT,
     avg_norm_start_angle     BIGINT,

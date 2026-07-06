@@ -1,7 +1,8 @@
 """Fetch average fielder starting position data from Baseball Savant (no pybaseball wrapper exists).
 
 API endpoint found via browser DevTools network capture (2026-06-23), not officially documented.
-Saved per year (like fetch_statcast.py), each file covering LF/CF/RF combined.
+Saved per year (like fetch_statcast.py), each file covering all seven non-battery
+positions (1B/2B/3B/SS/LF/CF/RF) combined.
 """
 import time
 from pathlib import Path
@@ -15,13 +16,17 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 URL = "https://baseballsavant.mlb.com/visuals/position_data"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-POSITIONS = {"LF": 7, "CF": 8, "RF": 9}
+POSITIONS = {"1B": 3, "2B": 4, "3B": 5, "SS": 6, "LF": 7, "CF": 8, "RF": 9}
 
 
-def fetch_one(year: int, position_code: int) -> pd.DataFrame:
+def fetch_one(year: int, position_code: int, retries: int = 3) -> pd.DataFrame:
     params = {"type": "player", "teamId": "", "season": year, "position": position_code,
               "attempts": 1, "csv": "true"}
-    r = requests.get(URL, params=params, headers=HEADERS, timeout=30)
+    for attempt in range(retries):
+        r = requests.get(URL, params=params, headers=HEADERS, timeout=30)
+        if r.status_code < 500:
+            break
+        time.sleep(3 * (attempt + 1))  # Savant偶爾回502，稍等後重試
     r.raise_for_status()
     r.encoding = "utf-8-sig"
     import io

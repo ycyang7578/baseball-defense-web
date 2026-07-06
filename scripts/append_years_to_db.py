@@ -5,6 +5,7 @@ target years before re-inserting, leaving other years intact.
 
 Usage:
     python append_years_to_db.py 2017 2018 2019
+    python append_years_to_db.py --positioning-only 2017 2018 2019
 """
 import io
 import sys
@@ -64,16 +65,19 @@ def append_positioning(conn, year: int) -> None:
 
 
 if __name__ == "__main__":
-    years = [int(y) for y in sys.argv[1:]]
+    args = sys.argv[1:]
+    positioning_only = "--positioning-only" in args
+    years = [int(y) for y in args if y != "--positioning-only"]
     if not years:
-        print("Usage: python append_years_to_db.py 2017 2018 2019")
+        print("Usage: python append_years_to_db.py [--positioning-only] 2017 2018 2019")
         sys.exit(1)
 
     conn = psycopg2.connect(DSN)
     try:
         for year in years:
             print(f"\n--- {year} ---")
-            append_statcast(conn, year)
+            if not positioning_only:
+                append_statcast(conn, year)
             append_positioning(conn, year)
     finally:
         conn.close()

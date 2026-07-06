@@ -2,6 +2,7 @@
 data/raw/statcast/
 data/raw/savant_fielding/
 data/raw/positioning/
+data/raw/sprint_speed/
 
 # 可由 scripts/precompute_model_oaa.py 重新生成的中間產物（真正的資料在 DB 的 model_oaa 表）
 data/precomputed/model_oaa_*.csv
