@@ -245,21 +245,26 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     不是 AUC
   - 交互作用配置用 train 2023→val 2024 選定（tensor ad×bt、ad×EV、hp×throw、hp×bt），
     2025 只在最終評估碰一次
-- `scripts/train_if_gb.py` — 訓練（2023–2024）＋樣本外評估（2025）→ `models/if_gb/`
+- `scripts/train_if_gb.py` — 訓練（2021–2024）＋樣本外評估（2025）→ `models/if_gb/`
   - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
-  - **2026-07-06 最終結果**（n_test=18,404）：優化用 GLM AUC=0.754、Brier=0.162、校準最大
-    偏差 0.029；評價用 GBM AUC=0.815、Brier=0.140、校準最大偏差 0.026
-- `scripts/evaluate_if_2025.py` — 階段 2 球員評價：difficulty GBM 當 p̂（2023–24 訓練、
+  - **2026-07-09 現行結果（訓練改 2021–2024，n_train=73,379、n_test=18,404）**：優化用 GLM
+    AUC=0.7531、Brier=0.162、校準最大偏差 0.031；評價用 GBM AUC=0.8165、Brier=0.139、
+    校準最大偏差 0.020
+  - （歷史對照 2026-07-06，訓練 2023–2024：GLM AUC=0.754/校準 0.029；GBM AUC=0.815/
+    校準 0.026——擴充訓練年份差異在雜訊內，見下方「訓練年份實驗」）
+- `scripts/evaluate_if_2025.py` — 階段 2 球員評價：difficulty GBM 當 p̂（2021–24 訓練、
   2025 評分，無球員資訊→無循環論證），球員 model OAA = Σ(is_out − p̂)，對照
   `if_oaa_leaderboard` 官方數字
   - 歸責規則：出局球給實際處理者（`hit_location` 3–6，92.5% 的出局球適用，其中 26.9%
     跟最近角距不同——改用 hit_location 讓 qualified R 從 0.48 → 0.53）；安打球與投手/
     捕手處理的球退回最近角距內野手
   - 分位置中心化（官方是「跟同位置平均比」）：每球 oaa_play 減去歸責位置的平均
-  - **2026-07-06 結果（2025 樣本外，qualified n=158）**：Pearson R=0.525、Spearman=0.562、
-    每球率 R=0.591；分位置 1B 0.68 / 2B 0.63 / 3B 0.64 / **SS 0.34**（SS 對實際起始位置
-    最敏感，賽季平均站位在此損失最大）；scale 健康（model SD 8.4 vs 官方 6.9，不像外野
-    2–3 倍——因為 p̂ 是聯盟平均難度不是站位相依接殺率）
+  - **2026-07-09 現行結果（訓練 2021–2024，2025 樣本外，qualified n=158）**：Pearson R=0.521、
+    Spearman=0.555、每球率 R=0.585；分位置（n≥100）1B 0.68 / 2B 0.65 / 3B 0.61 / **SS 0.33**
+    （SS 對實際起始位置最敏感，賽季平均站位在此損失最大）；scale 健康（model SD 8.3 vs
+    官方 6.9，不像外野 2–3 倍——因為 p̂ 是聯盟平均難度不是站位相依接殺率）
+  - （歷史對照 2026-07-06，訓練 2023–2024：R=0.525/Spearman 0.562/每球率 0.591，
+    差異在雜訊內）
 - `src/if_optimize.py` — 禁趨位約束下的四內野手站位優化（階段 3+4）
   - 打者分布直接用歷史滾地球（角度不受站位污染），不需要 KDE
   - 規則約束全部化成 box bounds：1B/2B 角度 [1°,44°]、3B/SS [-44°,-1°]（兩側各兩人、
@@ -348,9 +353,12 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   shift 時代資料理論上可用）。實驗結果（同一 2025 樣本外）：GLM AUC 0.7531 vs 現行
   0.7540、GBM 0.8165 vs 0.8150、球員評價 R 0.521 vs 0.525——資料翻倍後三指標全在
   雜訊內，學習曲線已飽和、2021–22 的賽季平均站位污染（聯盟平均在 2022→2023 有
-  斷點：3B/SS 角度外移 2~3°、2B 深度縮 4 呎）幅度不大。**已決定正式改用 2021–24
-  （尚未執行）**——執行時：改 train_if_gb.py TRAIN_YEARS → 重訓 → 重跑 precompute
-  全下游 → Neon 再 sync。後續還計劃加壘況/出局數情境（階段A=RE24 加權+線上即時算
+  斷點：3B/SS 角度外移 2~3°、2B 深度縮 4 呎）幅度不大。**2026-07-09 已正式改用
+  2021–24**：train_if_gb.py / evaluate_if_2025.py / precompute_if_model_oaa.py 三處
+  TRAIN_YEARS 同步改（後兩者是內部重訓 GBM，不載 joblib）→ 重訓（數字與實驗一致）→
+  重跑 precompute 全下游 → Neon 再 sync。跨年驗證（validate_if_positioning.py）的
+  TRAIN_YEARS 是打者分布年份（驗證設計），維持 2023–24 不隨訓練年份改。
+  後續還計劃加壘況/出局數情境（階段A=RE24 加權+線上即時算
   +無人在壘解 warm start；階段B=有人在壘 out 模型 force/DP/hold runner，屬新研究）
 
 ## 前端（React + Vite）
