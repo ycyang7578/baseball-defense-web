@@ -340,7 +340,8 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     （內野無星級概念，以官方 OAA 對照取代星級分解）；只有 2025（樣本外年），無多年趨勢 modal
   - `components/playerDisplay.jsx` — 從 Rankings.jsx 抽出的共用元件（頭像/隊徽/配色）
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
-  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪）。
+  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪，
+  逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）。
   sync 方式見「部署上線」章節。陷阱：nullable INTEGER 欄 pandas 會讀成 float，
   COPY 前要轉 Int64
 - **訓練年份實驗（2026-07-09）**：使用者提議訓練改用 2021–2024（Standard 子集篩選下
