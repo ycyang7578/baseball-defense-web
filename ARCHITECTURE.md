@@ -360,6 +360,18 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   TRAIN_YEARS 是打者分布年份（驗證設計），維持 2023–24 不隨訓練年份改。
   後續還計劃加壘況/出局數情境（階段A=RE24 加權+線上即時算
   +無人在壘解 warm start；階段B=有人在壘 out 模型 force/DP/hold runner，屬新研究）
+- **內野球員層（野手個人化站位）驗證為無訊號，已收案（2026-07-10）**：目標是對齊外野的
+  「指定野手 → 站位建議跟著變」。前提檢定：能力必須與幾何交互才會改變 argmax（純截距
+  不動最佳解）。用 ad_eff = ad_min × scale(能力)^γ 掃描 γ，兩種能力 proxy 都是 γ=0 最佳
+  且單調變差：①sprint speed（train 2021–23→val 2024，league/within 兩變體，
+  `scripts/exp_if_speed_scaling.py`）②前一年官方 OAA rate 含橫向分解
+  （球 2024←proxy 2023→球 2025←proxy 2024，無洩漏，`scripts/exp_if_oaa_scaling.py`）。
+  解讀：野手整體轉換力確實有差（評價 R=0.52），但那是截距性質（手套/轉傳/站位品質）；
+  會改變站位的「橫向 range × 幾何」成分在 MLB 選材壓縮（sprint P10–P90 僅 ±6%）＋
+  賽季平均站位誤差（ad_min 本身帶噪，同 SS R=0.33 根源）下量測不到。
+  結論：階層貝葉斯（外野式隨機斜率）與結構競速模型的個人化插槽會估到同一批
+  偵測不到的交互作用，公開資料下不值得投入；根治需逐球起始位置（Hawk-Eye 私有）。
+  優化器維持「打者個人化＋野手聯盟平均」。
 
 ## 前端（React + Vite）
 
