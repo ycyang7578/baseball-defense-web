@@ -26,14 +26,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import joblib
+import numpy as np
 import pandas as pd
 import psycopg2
 
 from src.config import DSN
-from src.if_dataset import OUT_EVENTS
+from src.if_dataset import HOME_X, HOME_Y, OUT_EVENTS
 from src.if_optimize import (POSITIONS, expected_outs, fetch_batter_gbs,
                              geometry_features, league_average_positions,
                              optimize_infield, positions_to_params)
+
+# Savant hc 座標單位 → 呎（慣用換算；出局球換算後中位深度 ~118 呎落在內野手
+# 深度帶、對得上歸責野手位置，經驗上成立）
+FT_PER_UNIT = 2.5
 
 BASE = Path(__file__).resolve().parent.parent
 SQL_DIR = BASE / "scripts" / "sql"
@@ -48,8 +53,24 @@ POS_COLS = ["batter", "game_year", "stand", "n_gb", "hp_to_1b",
             "exp_outs_league", "exp_outs_opt",
             "angle_1b", "depth_1b", "angle_2b", "depth_2b",
             "angle_3b", "depth_3b", "angle_ss", "depth_ss"]
-GBS_COLS = ["batter", "game_year", "spray_deg", "launch_speed", "launch_angle",
-            "is_out", "p_out_league", "p_out_opt"]
+GBS_COLS = ["batter", "game_year", "spray_deg", "ball_x", "ball_y",
+            "launch_speed", "launch_angle", "is_out", "p_out_league", "p_out_opt"]
+
+
+def gbs_frame(batter: int, year: int, balls: pd.DataFrame,
+              p_league, p_opt) -> pd.DataFrame:
+    """逐球表的一個 (打者, 年份) 區塊。ball_x/ball_y 是 hc 換算成呎的
+    「被處理/撿起位置」（展示用；語意與內生性見 DDL 註解）。"""
+    return pd.DataFrame({
+        "batter": batter, "game_year": year,
+        "spray_deg": balls["spray_deg"].round(2),
+        "ball_x": ((balls["hc_x"] - HOME_X) * FT_PER_UNIT).round(1),
+        "ball_y": ((HOME_Y - balls["hc_y"]) * FT_PER_UNIT).round(1),
+        "launch_speed": balls["launch_speed"],
+        "launch_angle": balls["launch_angle"],
+        "is_out": balls["events"].isin(OUT_EVENTS),
+        "p_out_league": np.round(p_league, 4), "p_out_opt": np.round(p_opt, 4),
+    })[GBS_COLS]
 
 
 def candidate_batters(year: int, min_gb: int) -> list[int]:
@@ -109,14 +130,7 @@ def compute(years: list[int], min_gb: int, n_restarts: int) -> None:
             p_opt = model.predict_proba(
                 geometry_features(balls, res["angles"], res["depths"]))[:, 1]
 
-            gbs = pd.DataFrame({
-                "batter": batter, "game_year": year,
-                "spray_deg": balls["spray_deg"].round(2),
-                "launch_speed": balls["launch_speed"],
-                "launch_angle": balls["launch_angle"],
-                "is_out": balls["events"].isin(OUT_EVENTS),
-                "p_out_league": p_league.round(4), "p_out_opt": p_opt.round(4),
-            })[GBS_COLS]
+            gbs = gbs_frame(batter, year, balls, p_league, p_opt)
             gbs.to_csv(GBS_CSV, mode="a", index=False, header=not GBS_CSV.exists())
 
             row = {"batter": batter, "game_year": year,
@@ -139,6 +153,41 @@ def compute(years: list[int], min_gb: int, n_restarts: int) -> None:
     print(f"聯盟平均站位 → {LEAGUE_JSON.name}")
 
 
+def refresh_gbs() -> None:
+    """只重算逐球表：沿用 DB 已存的最佳化站位與該年聯盟平均，重抓球、重算
+    兩組站位的出局率（不重跑優化）。改逐球表 schema（如新增 ball_x/ball_y）
+    或展示欄位時用這個，幾十分鐘就能重建，不用重跑 3 小時的優化。"""
+    model = joblib.load(MODEL)
+    with psycopg2.connect(DSN) as conn:
+        pos = pd.read_sql(
+            "SELECT * FROM precomputed_if_positions ORDER BY game_year, batter", conn)
+    print(f"重算 {len(pos)} 個 (打者, 年份) 的逐球表")
+    if GBS_CSV.exists():
+        GBS_CSV.unlink()
+
+    league = {}
+    t0 = time.perf_counter()
+    for i, row in enumerate(pos.itertuples(), 1):
+        if row.game_year not in league:
+            league[row.game_year] = league_average_positions([row.game_year])
+        avg_angles, avg_depths = league[row.game_year]
+        balls = fetch_batter_gbs(row.batter, [row.game_year])
+        if len(balls) != row.n_gb:
+            print(f"  [!] 打者 {row.batter} {row.game_year}: 球數 {len(balls)} != "
+                  f"已存 n_gb {row.n_gb}（statcast 資料變動？）")
+        opt_angles = np.array([row.angle_1b, row.angle_2b, row.angle_3b, row.angle_ss])
+        opt_depths = np.array([row.depth_1b, row.depth_2b, row.depth_3b, row.depth_ss])
+        p_league = model.predict_proba(
+            geometry_features(balls, avg_angles, avg_depths))[:, 1]
+        p_opt = model.predict_proba(
+            geometry_features(balls, opt_angles, opt_depths))[:, 1]
+        gbs = gbs_frame(row.batter, row.game_year, balls, p_league, p_opt)
+        gbs.to_csv(GBS_CSV, mode="a", index=False, header=not GBS_CSV.exists())
+        if i % 100 == 0 or i == len(pos):
+            rate = (time.perf_counter() - t0) / i
+            print(f"  [{i}/{len(pos)}] 剩餘約 {rate * (len(pos) - i) / 60:.0f} 分", flush=True)
+
+
 def _copy(conn, table: str, df: pd.DataFrame) -> None:
     buf = io.StringIO()
     df.to_csv(buf, index=False, header=False, na_rep="")
@@ -156,11 +205,12 @@ def load_to_db(target_dsn: str) -> None:
     gbs = gbs[[k in key for k in zip(gbs["batter"], gbs["game_year"])]]
     with psycopg2.connect(target_dsn) as conn:
         with conn.cursor() as cur:
+            # 純衍生表：直接重建，schema 變動（如新增欄位）才不會卡在 IF NOT EXISTS
+            cur.execute("DROP TABLE IF EXISTS precomputed_if_positions")
+            cur.execute("DROP TABLE IF EXISTS precomputed_if_gbs")
             for ddl in ("create_precomputed_if_positions_table.sql",
                         "create_precomputed_if_gbs_table.sql"):
                 cur.execute((SQL_DIR / ddl).read_text(encoding="utf-8"))
-            cur.execute("TRUNCATE precomputed_if_positions")
-            cur.execute("TRUNCATE precomputed_if_gbs")
         conn.commit()
         _copy(conn, "precomputed_if_positions", pos)
         _copy(conn, "precomputed_if_gbs", gbs)
@@ -176,11 +226,15 @@ def main():
     parser.add_argument("--n-restarts", type=int, default=50)
     parser.add_argument("--load-only", action="store_true",
                         help="跳過計算，直接把現有 CSV 灌進 DB")
+    parser.add_argument("--refresh-gbs", action="store_true",
+                        help="只重算逐球表（沿用 DB 已存站位，不重跑優化）")
     parser.add_argument("--target-dsn", default=None,
                         help="要灌入的 DB（預設本機；部署時帶 Neon DSN）")
     args = parser.parse_args()
 
-    if not args.load_only:
+    if args.refresh_gbs:
+        refresh_gbs()
+    elif not args.load_only:
         compute(args.years, args.min_gb, args.n_restarts)
     load_to_db(args.target_dsn or DSN)
 

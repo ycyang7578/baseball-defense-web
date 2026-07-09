@@ -447,7 +447,8 @@ def if_result(batter_id: int, year: int):
             if row is None:
                 raise HTTPException(404, f"Batter {batter_id} has no precomputed result in {year}")
             cur.execute(
-                "SELECT spray_deg, launch_speed, is_out, p_out_league, p_out_opt "
+                "SELECT spray_deg, ball_x, ball_y, launch_speed, is_out, "
+                "       p_out_league, p_out_opt "
                 "FROM precomputed_if_gbs "
                 "WHERE batter = %s AND game_year = %s", (batter_id, year))
             ball_rows = cur.fetchall()
@@ -464,9 +465,9 @@ def if_result(batter_id: int, year: int):
         stand=stand,
         league=_if_position_set(league_pairs, exp_league),
         optimized=_if_position_set(opt_pairs, exp_opt),
-        balls=[IFBallPoint(spray_deg=s, launch_speed=ls, is_out=o,
+        balls=[IFBallPoint(spray_deg=s, x=bx, y=by, launch_speed=ls, is_out=o,
                            p_out_league=pl, p_out_opt=po)
-               for s, ls, o, pl, po in ball_rows],
+               for s, bx, by, ls, o, pl, po in ball_rows],
         stats=IFStats(n_gb=n_gb, gain=round(gain, 4),
                       outs_per_450=round(gain * 450, 1), hp_to_1b=hp_to_1b),
     )

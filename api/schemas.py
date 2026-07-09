@@ -94,6 +94,8 @@ class IFPositionSet(BaseModel):
 
 class IFBallPoint(BaseModel):
     spray_deg:    float
+    x:            float   # 呎，Statcast 記錄的處理/撿球位置（展示用，非落點）
+    y:            float
     launch_speed: float
     is_out:       bool
     p_out_league: float

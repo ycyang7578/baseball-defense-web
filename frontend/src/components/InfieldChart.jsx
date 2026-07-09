@@ -1,11 +1,13 @@
 import { useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
+// 視野涵蓋到安打的撿球深度（穿出內野的球 Statcast 座標記在外野淺處）
 const PL = 52, PT = 56, PW = 560, PR = 88, PB = 40
-const X0 = -170, X1 = 170, Y0 = -18, Y1 = 215
+const X0 = -240, X1 = 240, Y0 = -18, Y1 = 320
 const PH = PW * (Y1 - Y0) / (X1 - X0)          // 等比例，不變形
 const SVG_W = PL + PW + PR
 const SVG_H = PT + PH + PB
+const MAX_R = 305   // 超出視野的深球夾回邊緣（沿同方向）
 
 const tx = x => PL + (x - X0) / (X1 - X0) * PW
 const ty = y => PT + (Y1 - y) / (Y1 - Y0) * PH
@@ -88,8 +90,13 @@ const B1 = [90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 const B2 = [0, 90 * Math.SQRT2]
 const B3 = [-90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 
-// 球點半徑：EV 60→110 mph 映射到 165→205 呎（土外緣外的展示帶，越強勁越深）
-const ballR = ev => 165 + Math.max(0, Math.min(1, (ev - 60) / 50)) * 40
+// 球點畫在 Statcast 記錄座標（出局≈被處理位置、安打≈外野撿球位置）；
+// 太深的球沿同方向夾回視野邊緣
+function ballXY(b) {
+  const r = Math.hypot(b.x, b.y)
+  const k = r > MAX_R ? MAX_R / r : 1
+  return [b.x * k, b.y * k]
+}
 
 function LegendItem({ color, shape, label, y }) {
   const cx = SVG_W - PR + 14
@@ -113,10 +120,9 @@ export default function InfieldChart({ data, colorBy, probMin = 0, probMax = 1 }
 
   const tip = hovered ? (() => {
     const b = hovered
-    const rad = b.spray_deg * Math.PI / 180
-    const r = ballR(b.launch_speed)
+    const [bx, by] = ballXY(b)
     return {
-      x: tx(r * Math.sin(rad)), y: ty(r * Math.cos(rad)),
+      x: tx(bx), y: ty(by),
       lines: [
         `${b.is_out ? '出局' : '安打/失誤'}　EV ${b.launch_speed.toFixed(0)} mph`,
         `P(out) 平均 ${(b.p_out_league * 100).toFixed(0)}% → 最佳化 ${(b.p_out_opt * 100).toFixed(0)}%`,
@@ -146,13 +152,12 @@ export default function InfieldChart({ data, colorBy, probMin = 0, probMax = 1 }
       <polygon points={basePts(...B3)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
-      {/* 滾地球（沿 spray angle 的展示帶；滾地球無可靠落點座標，深度=擊球初速示意） */}
+      {/* 滾地球：畫在 Statcast 記錄座標（見 legend 下方說明） */}
       {shown.map((b, i) => {
-        const rad = b.spray_deg * Math.PI / 180
-        const r = ballR(b.launch_speed)
+        const [bx, by] = ballXY(b)
         return (
           <circle key={i}
-            cx={tx(r * Math.sin(rad))} cy={ty(r * Math.cos(rad))}
+            cx={tx(bx)} cy={ty(by)}
             r={hovered === b ? 6.5 : 4.5}
             fill={rdylgn(b[pKey])}
             stroke={b.is_out ? '#555' : 'white'} strokeWidth={b.is_out ? 1.2 : 0.7}
@@ -179,6 +184,11 @@ export default function InfieldChart({ data, colorBy, probMin = 0, probMax = 1 }
       <LegendItem color={rdylgn(0.1)} shape="circle" label="P(out) 低" y={PT + 70} />
       <text x={SVG_W - PR + 8} y={PT + 92} fontSize="8.5" fill="#999">
         {shown.length}/{balls.length} 球
+      </text>
+      <text x={SVG_W - PR + 8} y={PT + 110} fontSize="8" fill="#aaa">
+        <tspan x={SVG_W - PR + 8} dy="0">球點＝紀錄座標</tspan>
+        <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
+        <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>
       </text>
 
       {/* Tooltip */}
