@@ -110,7 +110,7 @@ def main(n_batters: int = 30) -> None:
               f"{med_gap:>18.1f}")
     neg = df[df["shortfall"] < -MISS_TOL]
     if len(neg):
-        print(f"\n⚠️ 有 {len(neg)} 列候選解優於參考解（參考解本身未收斂），"
+        print(f"\n[!] 有 {len(neg)} 列候選解優於參考解（參考解本身未收斂），"
               f"最大 {-neg['shortfall'].min():.5f}——參考 n_restarts 可能要再拉高")
 
 
