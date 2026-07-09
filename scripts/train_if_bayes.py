@@ -22,6 +22,7 @@ os.environ.setdefault("PYTENSOR_FLAGS", "optimizer_excluding=constant_folding")
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import arviz as az
@@ -43,6 +44,28 @@ MCMC_KWARGS = dict(draws=2000, tune=2000, chains=4, cores=4,
                    target_accept=0.95, nuts_sampler="pymc", random_seed=42)
 SMOKE_KWARGS = dict(draws=200, tune=200, chains=2, cores=2,
                     target_accept=0.9, nuts_sampler="pymc", random_seed=42)
+PROGRESS_LOG = OUT_DIR / "sampling_progress.log"
+
+
+def make_progress_logger(total_per_chain: int, every: int = 50):
+    """pm.sample 的 callback：進度條進不了重導向輸出，改逐 chain 寫檔。
+    callback 在主程序執行（worker 每回傳一個 draw 呼叫一次），寫檔安全。"""
+    counts: dict[int, int] = {}
+    t0 = time.time()
+
+    def cb(trace=None, draw=None, **kwargs):
+        chain = getattr(draw, "chain", 0)
+        counts[chain] = counts.get(chain, 0) + 1
+        n = counts[chain]
+        if n % every == 0 or n == total_per_chain:
+            done = sum(counts.values())
+            rate = done / max(time.time() - t0, 1)
+            with open(PROGRESS_LOG, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')}  chain {chain}: "
+                        f"{n}/{total_per_chain}  全體 {done} draws  "
+                        f"{rate:.2f} draws/s\n")
+
+    return cb
 
 
 def nearest_fielder_ids(df: pd.DataFrame) -> np.ndarray:
@@ -117,9 +140,13 @@ def main() -> None:
     model = build_model(X_tr, adz_tr, player_idx, players,
                         train["is_out"].to_numpy())
     kwargs = SMOKE_KWARGS if args.smoke else MCMC_KWARGS
-    print(f"MCMC 採樣 {kwargs} ...", flush=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    PROGRESS_LOG.unlink(missing_ok=True)
+    print(f"MCMC 採樣 {kwargs} ...（進度寫在 {PROGRESS_LOG}）", flush=True)
     with model:
-        trace = pm.sample(**kwargs)
+        trace = pm.sample(
+            **kwargs, progressbar=False,
+            callback=make_progress_logger(kwargs["draws"] + kwargs["tune"]))
 
     y_te = test["is_out"].to_numpy()
     p_grp = 1 / (1 + np.exp(-posterior_logit(trace, X_te, adz_te, None)))
