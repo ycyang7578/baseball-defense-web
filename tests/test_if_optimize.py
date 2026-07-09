@@ -4,8 +4,10 @@ import pandas as pd
 import pytest
 
 from src.if_dataset import HOME_X, HOME_Y, attach_features
-from src.if_optimize import (ANGLE_BOUNDS, MIN_DEPTH, POSITIONS, dirt_max_depth,
-                             expected_outs, geometry_features, optimize_infield,
+from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm
+from src.if_optimize import (ANGLE_BOUNDS, FRAC_BOUNDS, MIN_DEPTH, POSITIONS,
+                             _FastGLMObjective, dirt_max_depth, expected_outs,
+                             geometry_features, optimize_infield,
                              params_to_positions, positions_to_params)
 
 
@@ -81,3 +83,45 @@ def test_optimize_respects_constraints_and_beats_bad_start():
     bad = expected_outs(model, balls, np.array([40.0, 38.0, -40.0, -38.0]),
                         np.array([70.0, 70.0, 70.0, 70.0]))
     assert result["exp_outs"] >= bad
+
+
+def _fitted_glm():
+    """在合成資料上 fit 真的優化用 GLM pipeline（同 test_if_model 的作法）。"""
+    rng = np.random.default_rng(7)
+    n = 400
+    train = pd.DataFrame({
+        "ad_min": rng.uniform(0, 25, n),
+        "ball_time": rng.uniform(0.5, 2.5, n),
+        "launch_angle": rng.uniform(-60, 10, n),
+        "launch_speed": rng.uniform(60, 110, n),
+        "throw_dist": rng.uniform(20, 130, n),
+        "hp_to_1b": rng.uniform(4.0, 4.8, n),
+        "stand_R": rng.integers(0, 2, n),
+    })
+    p = 1 / (1 + np.exp(-(1.2 - 0.08 * train["ad_min"])))
+    y = (rng.uniform(size=n) < p).astype(int)
+    return make_optimizer_glm().fit(train[OPTIMIZER_FEATURES], y)
+
+
+def test_fast_objective_matches_pipeline():
+    """快速路徑的期望出局率必須跟走完整 pipeline 的通用路徑數值等價。"""
+    glm = _fitted_glm()
+    rng = np.random.default_rng(3)
+    balls = _balls(rng.uniform(-50, 50, 60), ev=rng.uniform(60, 110, 60))
+    fast = _FastGLMObjective(glm, balls)
+
+    lo = np.array([b[0] for b in ANGLE_BOUNDS + FRAC_BOUNDS])
+    hi = np.array([b[1] for b in ANGLE_BOUNDS + FRAC_BOUNDS])
+    for _ in range(20):
+        angles, depths = params_to_positions(lo + rng.uniform(size=8) * (hi - lo))
+        assert fast.expected_outs(angles, depths) == pytest.approx(
+            expected_outs(glm, balls, angles, depths), abs=1e-10)
+
+
+def test_optimize_with_pipeline_result_consistent():
+    """走快速路徑的 optimize 結果，用 pipeline 重算必須得到同樣的 exp_outs。"""
+    glm = _fitted_glm()
+    balls = _balls(np.array([-30.0, -12.0, 5.0, 18.0, 33.0] * 12))
+    result = optimize_infield(balls, glm, n_restarts=6, seed=1)
+    recomputed = expected_outs(glm, balls, result["angles"], result["depths"])
+    assert result["exp_outs"] == pytest.approx(recomputed, abs=1e-9)

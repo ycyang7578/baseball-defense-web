@@ -15,6 +15,8 @@
 已知限制：GLM 是在實際（賽季平均）站位附近的資料上訓練的，離常態很遠的
 候選站位屬外插，解讀時要保守。
 """
+import copy
+
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -134,16 +136,107 @@ def fetch_batter_gbs(batter_id: int, years: list[int]) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+class _FastGLMObjective:
+    """把優化用 GLM pipeline 展開成純 numpy 的期望出局率評估。
+
+    多起點優化的瓶頸在每次目標函數評估都要重建 DataFrame、重跑整條 sklearn
+    pipeline。這裡預先算好不隨站位變動的部分（launch_angle spline、
+    launch_speed/hp_to_1b 的 z 分數與其係數貢獻、stand_R、截距），每次評估
+    只重算隨站位變動的 ad_min / ball_time / throw_dist 相關項，logit 直接用
+    numpy 組出來。與 model.predict_proba 數值等價（tests/test_if_optimize.py
+    驗證到 1e-10）。欄位切段順序必須跟 FielderGeometryFeatures.transform 一致。
+    """
+
+    def __init__(self, model, balls: pd.DataFrame):
+        feats = model.named_steps["features"]
+        lr = model.named_steps["lr"]
+        # spline 是用 DataFrame fit 的；複製一份去掉 feature 名檢查，讓
+        # transform 能直接吃 ndarray（不然每次評估都觸發名稱驗證與警告）
+        self._spl_ad = copy.deepcopy(feats.splines_["ad_min"])
+        self._spl_bt = copy.deepcopy(feats.splines_["ball_time"])
+        for spl in (self._spl_ad, self._spl_bt):
+            if hasattr(spl, "feature_names_in_"):
+                del spl.feature_names_in_
+
+        spray = balls["spray_deg"].to_numpy(float)
+        rad = np.radians(spray)
+        self._spray = spray
+        self._sin_spray, self._cos_spray = np.sin(rad), np.cos(rad)
+        self._speed_fts = balls["launch_speed"].to_numpy(float) * MPH_TO_FTS
+        self._rows = np.arange(len(balls))
+
+        mean, scale = feats.scaler_.mean_, feats.scaler_.scale_
+        ev_z = (balls["launch_speed"].to_numpy(float) - mean[0]) / scale[0]
+        hp_z = (balls["hp_to_1b"].to_numpy(float) - mean[2]) / scale[2]
+        self._throw_mean, self._throw_scale = mean[1], scale[1]
+        self._ev_z, self._hp_z = ev_z, hp_z
+
+        la = feats.splines_["launch_angle"].transform(balls[["launch_angle"]])
+        k_a = self._spl_ad.n_features_out_
+        k_b = self._spl_bt.n_features_out_
+        k_la = la.shape[1]
+
+        coef = lr.coef_[0]
+        pos = 0
+
+        def take(k):
+            nonlocal pos
+            seg = coef[pos:pos + k]
+            pos += k
+            return seg
+
+        self._c_a, self._c_b, c_la = take(k_a), take(k_b), take(k_la)
+        c_ev, self._c_throw, c_hp = take(3)
+        c_stand = take(1)[0]
+        self._C_ab = take(k_a * k_b).reshape(k_a, k_b)
+        self._c_aev = take(k_a)
+        self._c_ht = take(1)[0]
+        self._c_hpb = take(k_b)
+        assert pos == len(coef), "係數切段與 FielderGeometryFeatures 欄位順序不符"
+
+        self._const = (la @ c_la + ev_z * c_ev + hp_z * c_hp
+                       + balls["stand_R"].to_numpy(float) * c_stand
+                       + lr.intercept_[0])
+
+    def expected_outs(self, angles, depths) -> float:
+        dtheta = np.abs(np.asarray(angles)[None, :] - self._spray[:, None])
+        nearest = dtheta.argmin(axis=1)
+        ad_min = dtheta[self._rows, nearest]
+        near_depth = np.asarray(depths)[nearest]
+        ball_time = near_depth / self._speed_fts
+        ix = near_depth * self._sin_spray
+        iy = near_depth * self._cos_spray
+        throw_z = (np.hypot(ix - _FIRST_BASE_XY[0], iy - _FIRST_BASE_XY[1])
+                   - self._throw_mean) / self._throw_scale
+        a = self._spl_ad.transform(ad_min[:, None])
+        b = self._spl_bt.transform(ball_time[:, None])
+        logit = (self._const + a @ self._c_a + b @ self._c_b
+                 + throw_z * self._c_throw
+                 + ((a @ self._C_ab) * b).sum(axis=1)
+                 + (a @ self._c_aev) * self._ev_z
+                 + self._c_ht * self._hp_z * throw_z
+                 + (b @ self._c_hpb) * self._hp_z)
+        return float(np.mean(1.0 / (1.0 + np.exp(-logit))))
+
+
+def _make_scorer(model, balls: pd.DataFrame):
+    """回傳 (angles, depths) → 期望出局率。GLM pipeline 走快速路徑，其他模型退回通用路徑。"""
+    if hasattr(model, "named_steps") and {"features", "lr"} <= set(model.named_steps):
+        return _FastGLMObjective(model, balls).expected_outs
+    return lambda angles, depths: expected_outs(model, balls, angles, depths)
+
+
 def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
                      seed: int = 42, extra_starts: list[np.ndarray] | None = None) -> dict:
     """LHS 多起點 + L-BFGS-B。回傳最佳站位與期望出局率。"""
     bounds = ANGLE_BOUNDS + FRAC_BOUNDS
     lo = np.array([b[0] for b in bounds])
     hi = np.array([b[1] for b in bounds])
+    score = _make_scorer(model, balls)
 
     def neg_exp_outs(x):
         angles, depths = params_to_positions(x)
-        return -expected_outs(model, balls, angles, depths)
+        return -score(angles, depths)
 
     sampler = qmc.LatinHypercube(d=8, seed=seed)
     starts = [lo + s * (hi - lo) for s in sampler.random(n_restarts)]
