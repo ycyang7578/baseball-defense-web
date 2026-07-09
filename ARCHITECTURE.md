@@ -305,10 +305,17 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   checkpoint `models/if_gb/convergence_rows.csv`
 - `scripts/precompute_if_optimize.py`：對每個 (打者, 年份)（2023–2025、該年 GB≥50，
   各年約 390 位）用 n_restarts=50 優化，寫入 `precomputed_if_positions`（站位+期望出局率）
-  與 `precomputed_if_gbs`（逐球 spray/EV/is_out/兩組站位下的 P(out)，前端上色用）。
-  逐 (打者, 年份) checkpoint（positions 列是 commit marker，續跑時清孤兒 balls 列）；
-  聯盟平均站位存 `data/precomputed/if_league_positions.json`（API startup 讀）。
-  `--target-dsn` 同 precompute_batter_balls 的雲端部署模式
+  與 `precomputed_if_gbs`（逐球 spray/ball_x/ball_y/EV/is_out/兩組站位下的 P(out)，
+  前端畫點與上色用）。逐 (打者, 年份) checkpoint（positions 列是 commit marker，
+  續跑時清孤兒 balls 列）；聯盟平均站位存 `data/precomputed/if_league_positions.json`
+  （API startup 讀）。`--target-dsn` 同 precompute_batter_balls 的雲端部署模式；
+  `--refresh-gbs` 只重算逐球表（沿用 DB 已存站位，約 30 分鐘）——改逐球表 schema 或
+  展示欄位時用，不必重跑 3 小時優化
+- **hc 座標語意（2026-07-09 查證）**：2024 滾地球出局且 hit_location=3~6 的球（n=36,547），
+  hc 換呎（×2.5）後深度中位 118 呎（內野手深度帶）、距歸責野手賽季平均站位中位 32 呎
+  （P10-P90 15~55）；一壘安打深度中位 224 呎（外野撿球帶）、P10=70 呎（內野安打）。
+  結論：hc ≈ 球被處理/撿起的位置附近（精確語意無法從資料分辨），但**確定是結果與守備的
+  函數**（同一顆球出局 vs 穿出去座標差一倍）→ 只能展示，不能拿來建打者分布（角度除外）
 - `scripts/precompute_if_model_oaa.py`：排名頁資料 → `if_model_oaa` 表（2025 樣本外，
   349 位）。計算邏輯與 evaluate_if_2025.py 共用 `src/if_eval.py`（GBM 評分＋hit_location
   歸責＋分位置中心化），重構後驗證所有評估數字不變（qualified R=0.525 等）
@@ -324,15 +331,26 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   - `/infield`（`pages/Infield.jsx`）— 鏡射主頁版型：年份 tabs → 打者搜尋 → 顯示按鈕（瞬間，
     無壘況/球場/守備員選項——模型範圍是無人在壘+Standard、滾地球與球場無關、GLM 無球員層參數）。
     `components/InfieldChart.jsx`：SVG 鑽石場地（土外緣弧=優化器同一公式）、聯盟平均（藍菱形）
-    vs 最佳化（紫星）、滾地球沿 spray angle 畫在土外緣外的展示帶（深度=EV 示意，
-    **不是落點**——滾地球 hc 是被處理位置，見上方內生性說明）、RdYlGn 按 P(out) 上色
+    vs 最佳化（紫星）、滾地球畫在 **Statcast 記錄座標**（ball_x/ball_y；出局≈處理位置、
+    安打≈撿球位置，legend 旁有說明文字，語意查證見上方「hc 座標語意」）、視野涵蓋到
+    撿球深度（±240×320 呎，更深的球沿同方向夾回邊緣）、RdYlGn 按 P(out) 上色
     （可切平均/最佳化站位）、P(out) 範圍滑桿、hover tooltip
   - `/if-rankings`（`pages/InfieldRankings.jsx`）— 鏡射排名頁版型（tabs ALL/1B/2B/3B/SS、
     球隊篩選、min balls 滑桿、可排序），欄位=模型機會/模型OAA/OAA/100+官方三欄
     （內野無星級概念，以官方 OAA 對照取代星級分解）；只有 2025（樣本外年），無多年趨勢 modal
   - `components/playerDisplay.jsx` — 從 Rankings.jsx 抽出的共用元件（頭像/隊徽/配色）
-- **部署（Neon）還需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
-  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用）。sync 方式見「部署上線」章節
+- **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
+  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪）。
+  sync 方式見「部署上線」章節。陷阱：nullable INTEGER 欄 pandas 會讀成 float，
+  COPY 前要轉 Int64
+- **訓練年份實驗（2026-07-09）**：使用者提議訓練改用 2021–2024（Standard 子集篩選下
+  shift 時代資料理論上可用）。實驗結果（同一 2025 樣本外）：GLM AUC 0.7531 vs 現行
+  0.7540、GBM 0.8165 vs 0.8150、球員評價 R 0.521 vs 0.525——資料翻倍後三指標全在
+  雜訊內，學習曲線已飽和、2021–22 的賽季平均站位污染（聯盟平均在 2022→2023 有
+  斷點：3B/SS 角度外移 2~3°、2B 深度縮 4 呎）幅度不大。**已決定正式改用 2021–24
+  （尚未執行）**——執行時：改 train_if_gb.py TRAIN_YEARS → 重訓 → 重跑 precompute
+  全下游 → Neon 再 sync。後續還計劃加壘況/出局數情境（階段A=RE24 加權+線上即時算
+  +無人在壘解 warm start；階段B=有人在壘 out 模型 force/DP/hold runner，屬新研究）
 
 ## 前端（React + Vite）
 
