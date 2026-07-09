@@ -107,7 +107,7 @@ def fetch_batter_gbs(batter_id: int, years: list[int]) -> pd.DataFrame:
     """打者的歷史滾地球（優化的樣本分布）＋他自己的 hp_to_1b。"""
     events = OUT_EVENTS + NONOUT_EVENTS
     sql = f"""
-        SELECT hc_x, hc_y, launch_speed, launch_angle, stand
+        SELECT hc_x, hc_y, launch_speed, launch_angle, stand, events
         FROM statcast
         WHERE bb_type = 'ground_ball' AND batter = %(b)s
           AND game_year = ANY(%(years)s)
