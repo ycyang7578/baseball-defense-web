@@ -69,3 +69,60 @@ class BatterInfo(BaseModel):
     batter_id: int
     name:      str
     n_balls:   int
+
+
+# ── 內野（結果全部離線預算，見 scripts/precompute_if_optimize.py）─────
+
+class IFBatterInfo(BaseModel):
+    batter_id: int
+    name:      str
+    n_gb:      int
+    stand:     str
+
+
+class IFPosition(BaseModel):
+    x:     float   # 呎，本壘原點，+x 朝一壘側
+    y:     float
+    angle: float   # 度，0=正對中外野，+朝一壘側
+    depth: float   # 呎
+
+
+class IFPositionSet(BaseModel):
+    positions: dict[str, IFPosition]   # keys: "1B"/"2B"/"3B"/"SS"
+    exp_outs:  float                   # 期望出局率（打者歷史滾地球平均 P(out)）
+
+
+class IFBallPoint(BaseModel):
+    spray_deg:    float
+    launch_speed: float
+    is_out:       bool
+    p_out_league: float
+    p_out_opt:    float
+
+
+class IFStats(BaseModel):
+    n_gb:         int
+    gain:         float   # exp_outs_opt − exp_outs_league
+    outs_per_450: float   # gain × 450（一季規模的滾地球數）
+    hp_to_1b:     float
+
+
+class IFResultResponse(BaseModel):
+    batter_id: int
+    name:      str
+    year:      int
+    stand:     str
+    league:    IFPositionSet
+    optimized: IFPositionSet
+    balls:     list[IFBallPoint]
+    stats:     IFStats
+
+
+class IFFielderInfo(BaseModel):
+    name:           str
+    player_id:      int
+    team_id:        int | None = None
+    oaa:            float          # model OAA（分位置中心化）
+    n_balls:        int
+    official_oaa:   int | None = None
+    official_n_opp: int | None = None

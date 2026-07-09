@@ -31,6 +31,8 @@ from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
+    IFBallPoint, IFBatterInfo, IFFielderInfo, IFPosition, IFPositionSet,
+    IFResultResponse, IFStats,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +72,54 @@ _batter_hitprobs_cache: dict[int, dict[int, object]] = {}  # year → batter_id 
 _fielders_cache: dict[int, dict[str, list[dict]]] = {}  # year → pos → list
 _model_names:    dict[int, dict[str, set]]        = {}  # year → pos → name set
 _team_map:       dict[int, dict[int, int]]        = {}  # year → player_id → team_id
+
+# ── 內野快取（結果全部離線預算，見 scripts/precompute_if_optimize.py）──
+IF_POSITIONS = ("1B", "2B", "3B", "SS")
+_if_years:          list[int] = []                       # precomputed_if_positions 有的年份
+_if_ranking_years:  list[int] = []                       # if_model_oaa 有的年份
+_if_batters_cache:  dict[int, list[dict]] = {}           # year → [{batter_id, name, n_gb, stand}]
+_if_league:         dict[int, dict[str, list[float]]] = {}  # year → pos → [angle, depth]
+_if_team_map:       dict[int, dict[int, int]] = {}       # year → player_id → team_id
+
+
+def _load_infield_caches() -> None:
+    """內野快取。資料表可能還沒建立/還沒 sync 到這顆 DB，缺了不中斷啟動，
+    內野端點會回空清單/404。"""
+    league_json = PRE_DIR / "if_league_positions.json"
+    if league_json.exists():
+        raw = json.loads(league_json.read_text(encoding="utf-8"))
+        _if_league.update({int(y): v for y, v in raw.items()})
+    try:
+        with psycopg2.connect(DSN) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('precomputed_if_positions')")
+                if cur.fetchone()[0] is None:
+                    logger.warning("precomputed_if_positions 不存在，內野端點停用")
+                    return
+                cur.execute("SELECT DISTINCT game_year FROM precomputed_if_positions ORDER BY 1")
+                _if_years.extend(y for (y,) in cur.fetchall())
+                for yr in _if_years:
+                    cur.execute(
+                        "SELECT batter, n_gb, stand FROM precomputed_if_positions "
+                        "WHERE game_year = %s ORDER BY n_gb DESC", (yr,))
+                    _if_batters_cache[yr] = [
+                        {"batter_id": b, "name": _name_map.get(b, f"#{b}"),
+                         "n_gb": n, "stand": s}
+                        for b, n, s in cur.fetchall()]
+                cur.execute("SELECT to_regclass('if_model_oaa')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute("SELECT DISTINCT year FROM if_model_oaa ORDER BY 1")
+                    _if_ranking_years.extend(y for (y,) in cur.fetchall())
+                    for yr in _if_ranking_years:
+                        cur.execute(
+                            "SELECT DISTINCT player_id FROM if_model_oaa "
+                            "WHERE year = %s AND player_name IS NOT NULL", (yr,))
+                        pids = [p for (p,) in cur.fetchall()]
+                        _if_team_map[yr] = _load_team_info(pids, season=yr)
+    except Exception as e:
+        logger.warning(f"內野快取載入失敗: {e}")
+    logger.info(f"內野: years={_if_years}, ranking years={_if_ranking_years}, "
+                + ", ".join(f"{y}={len(_if_batters_cache[y])} batters" for y in _if_years))
 
 
 def _load_fielders(year: int) -> dict[str, list[dict]]:
@@ -211,6 +261,8 @@ async def lifespan(app: FastAPI):
         _team_map[yr] = _load_team_info(all_pids, season=yr)
         logger.info(f"  {yr}: team info for {len(_team_map[yr])} players")
 
+    _load_infield_caches()
+
     yield
 
 
@@ -349,6 +401,107 @@ def get_star_stats(year: int = _DEFAULT_YEAR):
             "stars": stars,
             "all": {"opp": total_opp, "outs": total_out},
         }
+    return result
+
+
+# ── 內野端點（結果全部離線預算，查表即回，無運算）───────────────────
+
+@app.get("/api/if_years")
+def if_years():
+    return _if_years
+
+
+@app.get("/api/if_batters", response_model=list[IFBatterInfo])
+def if_batters(year: int | None = None):
+    if year is None and _if_years:
+        year = _if_years[-1]
+    return _if_batters_cache.get(year, [])
+
+
+def _if_position_set(pairs: dict[str, tuple[float, float]], exp_outs: float) -> IFPositionSet:
+    import math
+    positions = {}
+    for pos, (angle, depth) in pairs.items():
+        rad = math.radians(angle)
+        positions[pos] = IFPosition(x=round(depth * math.sin(rad), 1),
+                                    y=round(depth * math.cos(rad), 1),
+                                    angle=angle, depth=depth)
+    return IFPositionSet(positions=positions, exp_outs=exp_outs)
+
+
+@app.get("/api/if_result", response_model=IFResultResponse)
+def if_result(batter_id: int, year: int):
+    if year not in _if_years:
+        raise HTTPException(404, f"No infield data for year {year}. Available: {_if_years}")
+    if year not in _if_league:
+        raise HTTPException(500, f"if_league_positions.json 缺 {year}")
+    with psycopg2.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT stand, n_gb, hp_to_1b, exp_outs_league, exp_outs_opt, "
+                "       angle_1b, depth_1b, angle_2b, depth_2b, "
+                "       angle_3b, depth_3b, angle_ss, depth_ss "
+                "FROM precomputed_if_positions "
+                "WHERE batter = %s AND game_year = %s", (batter_id, year))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, f"Batter {batter_id} has no precomputed result in {year}")
+            cur.execute(
+                "SELECT spray_deg, launch_speed, is_out, p_out_league, p_out_opt "
+                "FROM precomputed_if_gbs "
+                "WHERE batter = %s AND game_year = %s", (batter_id, year))
+            ball_rows = cur.fetchall()
+
+    stand, n_gb, hp_to_1b, exp_league, exp_opt = row[:5]
+    opt_pairs = {pos: (row[5 + i * 2], row[6 + i * 2])
+                 for i, pos in enumerate(IF_POSITIONS)}
+    league_pairs = {pos: tuple(_if_league[year][pos]) for pos in IF_POSITIONS}
+    gain = exp_opt - exp_league
+    return IFResultResponse(
+        batter_id=batter_id,
+        name=_name_map.get(batter_id, f"#{batter_id}"),
+        year=year,
+        stand=stand,
+        league=_if_position_set(league_pairs, exp_league),
+        optimized=_if_position_set(opt_pairs, exp_opt),
+        balls=[IFBallPoint(spray_deg=s, launch_speed=ls, is_out=o,
+                           p_out_league=pl, p_out_opt=po)
+               for s, ls, o, pl, po in ball_rows],
+        stats=IFStats(n_gb=n_gb, gain=round(gain, 4),
+                      outs_per_450=round(gain * 450, 1), hp_to_1b=hp_to_1b),
+    )
+
+
+@app.get("/api/if_fielders", response_model=dict[str, list[IFFielderInfo]])
+def if_fielders(year: int = 2025, min_balls: int = 100):
+    if year not in _if_ranking_years:
+        raise HTTPException(404, f"No infield ranking data for year {year}. "
+                                 f"Available: {_if_ranking_years}")
+    _SQL = """
+        SELECT m.player_id, m.player_name, m.position, m.model_oaa, m.n_balls,
+               o.oaa, o.n_opp
+        FROM if_model_oaa m
+        LEFT JOIN if_oaa_leaderboard o
+               ON o.player_id = m.player_id AND o.year = m.year
+        WHERE m.year = %(year)s AND m.player_name IS NOT NULL
+          AND m.n_balls >= %(min_balls)s
+    """
+    with psycopg2.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(_SQL, {"year": year, "min_balls": min_balls})
+            rows = cur.fetchall()
+
+    yr_team_map = _if_team_map.get(year, {})
+    result: dict[str, list[dict]] = {}
+    for pos in IF_POSITIONS:
+        rows_pos = [r for r in rows if r[2] == pos]
+        rows_pos.sort(key=lambda r: float(r[3]) / r[4] if r[4] else 0, reverse=True)
+        result[pos] = [
+            {"name": name, "player_id": pid, "team_id": yr_team_map.get(pid),
+             "oaa": round(float(oaa), 2), "n_balls": n,
+             "official_oaa": off_oaa, "official_n_opp": off_n}
+            for pid, name, _, oaa, n, off_oaa, off_n in rows_pos
+        ]
     return result
 
 
