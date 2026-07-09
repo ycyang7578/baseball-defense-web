@@ -286,6 +286,54 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
 - 已知限制：站位仍是賽季平均（同外野的 OAA scale 問題，內野對站位誤差更敏感——反應時間
   僅 1–2 秒）；跑者速度用賽季平均 hp_to_1b（官方 OAA 也是用平均 sprint speed，做法一致）
 
+### 內野 web 整合（2026-07-09）
+
+**核心設計決策：內野優化全部離線預算，線上只查表**。外野 `/api/optimize` 能即時算是因為
+目標函數是向量化 numpy；內野 GLM 每次評估都過 sklearn pipeline，即使做了快速路徑
+（見下）本機 `n_restarts=20` 仍要 ~4 秒，Render 0.1 CPU 上不可行。
+
+- `src/if_optimize.py` 的 `_FastGLMObjective`：把 GLM pipeline 展開成純 numpy——
+  不隨站位變動的項（launch_angle spline、EV/hp_to_1b z 分數、stand、截距）每位打者算一次，
+  每次評估只重算 ad_min/ball_time/throw_dist 相關項。**加速約 10 倍**（n=20 從 43s → 4.2s）。
+  逐點與 `model.predict_proba` 等價到 1e-10（有測試）；`optimize_infield` 自動偵測
+  pipeline 走快速路徑，其他模型（如測試的 DummyModel）退回通用路徑。
+  ⚠️ 浮點最後一位的差異會讓 L-BFGS-B 在平坦地形偶爾走到不同局部解（6 組對照中 2 組
+  exp_outs 差 ~3e-5，遠低於 1e-4 容忍值），屬預期非 bug
+- 收斂穩定性測試（`scripts/test_if_convergence.py`，30 位打者、參考解 n_restarts=150）：
+  n=20 中位落後 0.00003、容忍 1e-3 時 miss 1/30；n=12 以下 miss rate 20%+。
+  結論：**離線預算用 50+，線上即時算（如果未來要做）n=20 是下限**。
+  checkpoint `models/if_gb/convergence_rows.csv`
+- `scripts/precompute_if_optimize.py`：對每個 (打者, 年份)（2023–2025、該年 GB≥50，
+  各年約 390 位）用 n_restarts=50 優化，寫入 `precomputed_if_positions`（站位+期望出局率）
+  與 `precomputed_if_gbs`（逐球 spray/EV/is_out/兩組站位下的 P(out)，前端上色用）。
+  逐 (打者, 年份) checkpoint（positions 列是 commit marker，續跑時清孤兒 balls 列）；
+  聯盟平均站位存 `data/precomputed/if_league_positions.json`（API startup 讀）。
+  `--target-dsn` 同 precompute_batter_balls 的雲端部署模式
+- `scripts/precompute_if_model_oaa.py`：排名頁資料 → `if_model_oaa` 表（2025 樣本外，
+  349 位）。計算邏輯與 evaluate_if_2025.py 共用 `src/if_eval.py`（GBM 評分＋hit_location
+  歸責＋分位置中心化），重構後驗證所有評估數字不變（qualified R=0.525 等）
+- API 端點（全部查表即回，無運算；startup 快取，缺表不中斷啟動——Neon 還沒 sync 時
+  內野端點回空/404）：
+  - `GET /api/if_years` — precomputed_if_positions 有的年份
+  - `GET /api/if_batters?year=` — 該年打者清單（batter_id/name/n_gb/stand，n_gb 降序）
+  - `GET /api/if_result?batter_id=&year=` — 聯盟平均+最佳化站位（角度/深度/xy）、
+    逐球資料、期望出局率與增益（gain×450 = 一季規模的出局數）
+  - `GET /api/if_fielders?year=2025&min_balls=100` — 排名（model OAA 已分位置中心化，
+    不需要外野那種跨位置校正），LEFT JOIN if_oaa_leaderboard 帶官方 OAA 對照欄
+- 前端（NavBar 四連結：外野站位/內野站位/外野排名/內野排名；連結多了在窄螢幕改橫向捲動）：
+  - `/infield`（`pages/Infield.jsx`）— 鏡射主頁版型：年份 tabs → 打者搜尋 → 顯示按鈕（瞬間，
+    無壘況/球場/守備員選項——模型範圍是無人在壘+Standard、滾地球與球場無關、GLM 無球員層參數）。
+    `components/InfieldChart.jsx`：SVG 鑽石場地（土外緣弧=優化器同一公式）、聯盟平均（藍菱形）
+    vs 最佳化（紫星）、滾地球沿 spray angle 畫在土外緣外的展示帶（深度=EV 示意，
+    **不是落點**——滾地球 hc 是被處理位置，見上方內生性說明）、RdYlGn 按 P(out) 上色
+    （可切平均/最佳化站位）、P(out) 範圍滑桿、hover tooltip
+  - `/if-rankings`（`pages/InfieldRankings.jsx`）— 鏡射排名頁版型（tabs ALL/1B/2B/3B/SS、
+    球隊篩選、min balls 滑桿、可排序），欄位=模型機會/模型OAA/OAA/100+官方三欄
+    （內野無星級概念，以官方 OAA 對照取代星級分解）；只有 2025（樣本外年），無多年趨勢 modal
+  - `components/playerDisplay.jsx` — 從 Rankings.jsx 抽出的共用元件（頭像/隊徽/配色）
+- **部署（Neon）還需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
+  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用）。sync 方式見「部署上線」章節
+
 ## 前端（React + Vite）
 
 路由（react-router-dom）：
