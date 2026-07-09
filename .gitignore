@@ -7,6 +7,10 @@ data/raw/sprint_speed/
 # 可由 scripts/precompute_model_oaa.py 重新生成的中間產物（真正的資料在 DB 的 model_oaa 表）
 data/precomputed/model_oaa_*.csv
 
+# 內野預算 checkpoint（scripts/precompute_if_optimize.py 可重生成，正式資料在 DB 兩張 precomputed_if_* 表）
+data/precomputed/if_positions_rows.csv
+data/precomputed/if_gbs_rows.csv
+
 # PyMC 後驗樣本（大型 .nc）
 models/**/*.nc
 
