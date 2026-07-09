@@ -36,6 +36,36 @@ export async function fetchStarStats(year = 2025) {
   return res.json()
 }
 
+// ── 內野（全部離線預算，查表即回）──────────────────────
+
+export async function fetchIfYears() {
+  const res = await fetch(`${BASE}/if_years`)
+  if (!res.ok) throw new Error('Failed to fetch infield years')
+  return res.json()
+}
+
+export async function fetchIfBatters(year) {
+  const res = await fetch(`${BASE}/if_batters?year=${year}`)
+  if (!res.ok) throw new Error('Failed to fetch infield batters')
+  return res.json()
+}
+
+export async function fetchIfResult(batterId, year) {
+  const res = await fetch(`${BASE}/if_result?batter_id=${batterId}&year=${year}`)
+  if (!res.ok) {
+    let detail = 'Failed to fetch infield result'
+    try { detail = (await res.json()).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function fetchIfFielders(minBalls = 100, year = 2025) {
+  const res = await fetch(`${BASE}/if_fielders?min_balls=${minBalls}&year=${year}`)
+  if (!res.ok) throw new Error('Failed to fetch infield fielders')
+  return res.json()
+}
+
 function _body({ batterId, year, on1b, on2b, on3b, outs, homeTeam, fielders }) {
   return JSON.stringify({
     batter_id: batterId,

@@ -8,8 +8,14 @@ export default function NavBar() {
         <NavLink to="/" end style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
           外野手站位最佳化
         </NavLink>
+        <NavLink to="/infield" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
+          內野手站位最佳化
+        </NavLink>
         <NavLink to="/rankings" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          守備排名
+          外野手排名
+        </NavLink>
+        <NavLink to="/if-rankings" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
+          內野手排名
         </NavLink>
       </div>
     </nav>
@@ -35,10 +41,14 @@ const s = {
     fontSize: 15,
     color: 'var(--slate-800)',
     marginRight: 8,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
   },
   links: {
     display: 'flex',
     gap: 4,
+    overflowX: 'auto',       // 連結變多後窄螢幕改為橫向捲動，不壓縮成直排文字
+    scrollbarWidth: 'none',
   },
   link: {
     padding: '6px 14px',
@@ -47,6 +57,8 @@ const s = {
     color: 'var(--slate-500)',
     textDecoration: 'none',
     transition: 'background 0.15s',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
   },
   active: {
     background: 'var(--slate-100)',
