@@ -5,6 +5,9 @@ p̂ 用評價用 GBM（spray+球質+跑者，無野手資訊 → 無循環論證
 逐球歸責給最近角距的內野手（對應官方「slice」概念）。
 球員 model OAA = Σ(is_out − p̂)。
 
+計算邏輯在 src/if_eval.py（與 web 排名預算 scripts/precompute_if_model_oaa.py
+共用同一份實作），此腳本負責對照官方數字的統計報表。
+
 已知的球群差異（會壓低相關係數，屬預期）：官方內野 OAA 另含觸擊、內野平飛等，
 且用逐球實際起始位置；我們只有非觸擊滾地球＋賽季平均站位。
 
@@ -19,50 +22,15 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
-from src.if_dataset import INFIELD_COLS, build_gb_dataset
-from src.if_model import DIFFICULTY_FEATURES, make_difficulty_gbm
+from src.if_eval import aggregate_players, score_test_year
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 
 
 def main() -> None:
-    train = build_gb_dataset(TRAIN_YEARS)
-    test = build_gb_dataset([TEST_YEAR])
-    print(f"全量滾地球: train n={len(train):,}, test n={len(test):,}")
-
-    gbm = make_difficulty_gbm()
-    gbm.fit(train[DIFFICULTY_FEATURES], train["is_out"])
-    test = test.copy()
-    test["p_hat"] = gbm.predict_proba(test[DIFFICULTY_FEATURES])[:, 1]
-
-    # 歸責：出局球給實際處理者（hit_location 3~6，對齊官方 credit）；
-    # 安打球與投手/捕手處理的球退回最近角距的內野手
-    pos_to_col = {v: k for k, v in INFIELD_COLS.items()}
-    nearest_ids = np.select(
-        [test["nearest_pos"] == p for p in pos_to_col],
-        [test[c] for c in (pos_to_col[p] for p in pos_to_col)])
-    loc = pd.to_numeric(test["hit_location"], errors="coerce")
-    use_loc = (test["is_out"] == 1) & loc.between(3, 6)
-    loc_ids = np.select(
-        [loc == int(c.split("_")[1]) for c in INFIELD_COLS],
-        [test[c] for c in INFIELD_COLS])
-    test["resp_fielder"] = np.where(use_loc, loc_ids, nearest_ids).astype(int)
-    loc_pos = loc.map({3: "1B", 4: "2B", 5: "3B", 6: "SS"})
-    test["resp_pos"] = np.where(use_loc, loc_pos, test["nearest_pos"])
-    print(f"出局球以 hit_location 歸責的比例: {use_loc[test['is_out'] == 1].mean():.1%}"
-          f"（其中與最近角距不同者 "
-          f"{(use_loc & (loc_ids != nearest_ids)).sum() / max(use_loc.sum(), 1):.1%}）")
-    test["oaa_play"] = test["is_out"] - test["p_hat"]
-    # 分位置中心化：官方 OAA 是「跟同位置平均比」，p̂ 是全聯盟 lane 平均，位置間有
-    # 系統性偏移（例如 1B）會拖低合併相關。每球減去該位置的平均後，各位置總和歸零。
-    test["oaa_play_c"] = (test["oaa_play"]
-                          - test.groupby("resp_pos")["oaa_play"].transform("mean"))
-
-    model = (test.groupby("resp_fielder")
-             .agg(model_oaa=("oaa_play_c", "sum"), model_oaa_raw=("oaa_play", "sum"),
-                  n_balls=("oaa_play", "size"))
-             .reset_index())
+    test = score_test_year(TRAIN_YEARS, TEST_YEAR)
+    model = aggregate_players(test)
 
     with psycopg2.connect(DSN) as conn:
         official = pd.read_sql(
@@ -89,11 +57,6 @@ def main() -> None:
               f"Spearman={rho:.3f}  每球率 R={r_rate:.3f}")
 
     # 分位置相關（歸責球最多的位置當作該球員的位置）
-    pos_mode = (test.groupby(["resp_fielder", "resp_pos"]).size()
-                .rename("n").reset_index()
-                .sort_values("n", ascending=False)
-                .drop_duplicates("resp_fielder"))
-    merged = merged.merge(pos_mode[["resp_fielder", "resp_pos"]], on="resp_fielder")
     print("\n分位置（n_balls >= 100）：")
     for pos in ("1B", "2B", "3B", "SS"):
         sub = merged[(merged["resp_pos"] == pos) & (merged["n_balls"] >= 100)]
@@ -108,7 +71,7 @@ def main() -> None:
     m2 = (empty.groupby("resp_fielder")
           .agg(model_oaa_e=("oaa_play", "sum"), n_e=("oaa_play", "size"))
           .reset_index().merge(official, left_on="resp_fielder", right_on="player_id")
-          .merge(pos_mode[["resp_fielder", "resp_pos"]], on="resp_fielder"))
+          .merge(model[["resp_fielder", "resp_pos"]], on="resp_fielder"))
     print("\n無人在壘子集，分位置（n_e >= 60）：")
     for pos in ("1B", "2B", "3B", "SS"):
         sub = m2[(m2["resp_pos"] == pos) & (m2["n_e"] >= 60)]
