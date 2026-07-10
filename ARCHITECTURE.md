@@ -344,11 +344,33 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     球隊篩選、min balls 滑桿、可排序），欄位=模型機會/模型OAA/OAA/100+官方三欄
     （內野無星級概念，以官方 OAA 對照取代星級分解）；只有 2025（樣本外年），無多年趨勢 modal
   - `components/playerDisplay.jsx` — 從 Rankings.jsx 抽出的共用元件（頭像/隊徽/配色）
+- **個人化站位（2026-07-10，貝葉斯球員層上線）**：
+  - 生產優化器 = `models/if_gb/bayes/if_bayes_group_pipeline.joblib`（貝葉斯後驗平均
+    塞 sklearn 殼；precompute 與 validate 腳本都改載這個），球員效應表
+    `IF_player_effects.csv`（578 位野手 alpha/g）
+  - `GET /api/if_fielder_options?year=` — 各位置野手選單（來源 `fielder_positioning`
+    表，**部署時要新增 sync 這張表到 Neon**）
+  - `GET /api/if_result_custom?batter_id=&year=&fielder_1b=..&fielder_ss=` —
+    **錨定式**個人化：從 precomputed 零效應最佳解 warm start、`n_restarts=0` 單起點
+    局部優化（位移只反映球員效應拉力，避免平坦地形的等值漂移假差異）。球資料從
+    `precomputed_if_gbs`＋positions 列重建（spray/EV/LA＋hp_to_1b/stand），
+    **雲端無 statcast 表也能算**；本機實測 0.2s，套用 `_optimize_semaphore`
+  - 前端內野頁：四位置野手 SearchSelect（預設聯盟平均），有指定就打 custom 端點，
+    標題列顯示指定陣容；Playwright E2E 驗證過 1440px/375px
+  - 啟動載入：`_load_if_bayes()`，資產缺失不中斷啟動（個人化端點回 503/404）
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
   `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪，
-  逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）。
+  逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）、
+  **`fielder_positioning`（2026-07-10 起野手選單需要，尚未 sync）**。
   sync 方式見「部署上線」章節。陷阱：nullable INTEGER 欄 pandas 會讀成 float，
   COPY 前要轉 Int64
+- **pipeline 現況（2026-07-10 暫停點）**：貝葉斯 pipeline 的全量 precompute 跑到
+  2023 年 ~70/391 暫停（checkpoint 在 data/precomputed/if_*_rows.csv，模型不再變、
+  續跑有效：直接重跑 `python scripts/precompute_if_optimize.py`）。**本機與 Neon 的
+  precomputed 表目前仍是 2026-07-09 的舊 GLM 結果**（自身一致，網站可用）。
+  待辦順序：precompute 續跑完（灌本機）→ 清 `models/if_gb/validation_rows_2025.csv`
+  （GLM 舊 checkpoint）重跑 validate_if_positioning → Neon sync（含 fielder_positioning）
+  → 線上驗證 /infield 野手選單與 custom 端點
 - **訓練年份實驗（2026-07-09）**：使用者提議訓練改用 2021–2024（Standard 子集篩選下
   shift 時代資料理論上可用）。實驗結果（同一 2025 樣本外）：GLM AUC 0.7531 vs 現行
   0.7540、GBM 0.8165 vs 0.8150、球員評價 R 0.521 vs 0.525——資料翻倍後三指標全在
