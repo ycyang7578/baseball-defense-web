@@ -90,8 +90,9 @@ def geometry_features(balls: pd.DataFrame, angles, depths) -> pd.DataFrame:
     })
 
 
-def expected_outs(model, balls: pd.DataFrame, angles, depths,
-                  player_effects: dict | None = None) -> float:
+def predict_p_out(model, balls: pd.DataFrame, angles, depths,
+                  player_effects: dict | None = None) -> np.ndarray:
+    """逐球 P(out)。player_effects 時把 alpha/g 加在最近野手身上（logit 空間）。"""
     feats = geometry_features(balls, angles, depths)
     p = model.predict_proba(feats)[:, 1]
     if player_effects is not None:
@@ -103,7 +104,12 @@ def expected_outs(model, balls: pd.DataFrame, angles, depths,
                  + np.asarray(player_effects["alpha"])[nearest]
                  + np.asarray(player_effects["g"])[nearest] * ad_z)
         p = 1.0 / (1.0 + np.exp(-logit))
-    return float(p.mean())
+    return p
+
+
+def expected_outs(model, balls: pd.DataFrame, angles, depths,
+                  player_effects: dict | None = None) -> float:
+    return float(predict_p_out(model, balls, angles, depths, player_effects).mean())
 
 
 def league_average_positions(years: list[int]) -> tuple[np.ndarray, np.ndarray]:

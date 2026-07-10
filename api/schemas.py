@@ -128,3 +128,26 @@ class IFFielderInfo(BaseModel):
     n_balls:        int
     official_oaa:   int | None = None
     official_n_opp: int | None = None
+
+
+class IFFielderOption(BaseModel):
+    """野手選單項（個人化站位用）。has_effects=False 表示無球員層估計，
+    選了等同聯盟平均。"""
+    player_id:   int
+    name:        str
+    has_effects: bool
+
+
+class IFCustomResultResponse(BaseModel):
+    """指定野手陣容的個人化結果。optimized 為錨定式解（從零效應最佳解
+    warm start），balls 的 p_out_* 皆在該陣容效應下評估。"""
+    batter_id:         int
+    name:              str
+    year:              int
+    stand:             str
+    fielders:          dict[str, str | None]   # pos → 野手名（None=聯盟平均）
+    league:            IFPositionSet           # 聯盟平均站位（陣容效應下評估）
+    optimized:         IFPositionSet           # 錨定式個人化最佳解
+    baseline_exp_outs: float                   # 零效應最佳站位在陣容效應下的期望出局率
+    balls:             list[IFBallPoint]
+    stats:             IFStats

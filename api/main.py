@@ -28,11 +28,14 @@ from src.config import DSN
 from src.hit_prob import predict_hit_probs_batch, load_hit_prob
 from src.re24 import load_re24
 from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall_ball
+from src.if_optimize import (expected_outs as if_expected_outs,
+                             optimize_infield, positions_to_params,
+                             predict_p_out)
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
-    IFBallPoint, IFBatterInfo, IFFielderInfo, IFPosition, IFPositionSet,
-    IFResultResponse, IFStats,
+    IFBallPoint, IFBatterInfo, IFCustomResultResponse, IFFielderInfo,
+    IFFielderOption, IFPosition, IFPositionSet, IFResultResponse, IFStats,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -80,6 +83,11 @@ _if_ranking_years:  list[int] = []                       # if_model_oaa 有的�
 _if_batters_cache:  dict[int, list[dict]] = {}           # year → [{batter_id, name, n_gb, stand}]
 _if_league:         dict[int, dict[str, list[float]]] = {}  # year → pos → [angle, depth]
 _if_team_map:       dict[int, dict[int, int]] = {}       # year → player_id → team_id
+# 個人化站位（貝葉斯球員層，見 scripts/train_if_bayes.py / export_if_bayes.py）
+_if_bayes_model = None                                    # 群體層 pipeline（joblib）
+_if_effects:        dict[int, tuple[float, float]] = {}  # player_id → (alpha, g)
+_if_ad_norm:        tuple[float, float] | None = None    # (ad_mean, ad_std)
+_if_fielder_opts:   dict[int, dict[str, list[dict]]] = {}  # year → pos → options
 
 
 def _load_infield_caches() -> None:
@@ -118,8 +126,53 @@ def _load_infield_caches() -> None:
                         _if_team_map[yr] = _load_team_info(pids, season=yr)
     except Exception as e:
         logger.warning(f"內野快取載入失敗: {e}")
+    _load_if_bayes()
     logger.info(f"內野: years={_if_years}, ranking years={_if_ranking_years}, "
+                f"bayes={'on' if _if_bayes_model is not None else 'off'}, "
                 + ", ".join(f"{y}={len(_if_batters_cache[y])} batters" for y in _if_years))
+
+
+def _load_if_bayes() -> None:
+    """個人化站位資產：貝葉斯群體層 pipeline＋球員效應＋野手選單。缺了不中斷
+    啟動，/api/if_fielder_options 與 /api/if_result_custom 回 404/503。"""
+    global _if_bayes_model, _if_ad_norm
+    import joblib
+    import pandas as pd
+
+    bayes_dir = BASE / "models" / "if_gb" / "bayes"
+    try:
+        _if_bayes_model = joblib.load(bayes_dir / "if_bayes_group_pipeline.joblib")
+        meta = json.loads((bayes_dir / "IF_meta.json").read_text(encoding="utf-8"))
+        _if_ad_norm = (meta["ad_mean"], meta["ad_std"])
+        eff = pd.read_csv(bayes_dir / "IF_player_effects.csv")
+        _if_effects.update({int(r.player_id): (float(r.alpha), float(r.g))
+                            for r in eff.itertuples()})
+    except Exception as e:
+        logger.warning(f"貝葉斯個人化資產載入失敗，個人化端點停用: {e}")
+        _if_bayes_model = None
+        return
+    try:
+        with psycopg2.connect(DSN) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('fielder_positioning')")
+                if cur.fetchone()[0] is None:
+                    logger.warning("fielder_positioning 不存在，野手選單停用")
+                    return
+                cur.execute(
+                    "SELECT DISTINCT season, position, fielder_id "
+                    "FROM fielder_positioning WHERE position IN %s "
+                    "ORDER BY season, position", (IF_POSITIONS,))
+                for season, pos, fid in cur.fetchall():
+                    (_if_fielder_opts.setdefault(int(season), {})
+                     .setdefault(pos, []).append({
+                         "player_id": int(fid),
+                         "name": _name_map.get(int(fid), f"#{fid}"),
+                         "has_effects": int(fid) in _if_effects}))
+        for year in _if_fielder_opts.values():
+            for opts in year.values():
+                opts.sort(key=lambda o: (not o["has_effects"], o["name"]))
+    except Exception as e:
+        logger.warning(f"野手選單載入失敗: {e}")
 
 
 def _load_fielders(year: int) -> dict[str, list[dict]]:
@@ -468,6 +521,101 @@ def if_result(batter_id: int, year: int):
         balls=[IFBallPoint(spray_deg=s, x=bx, y=by, launch_speed=ls, is_out=o,
                            p_out_league=pl, p_out_opt=po)
                for s, bx, by, ls, o, pl, po in ball_rows],
+        stats=IFStats(n_gb=n_gb, gain=round(gain, 4),
+                      outs_per_450=round(gain * 450, 1), hp_to_1b=hp_to_1b),
+    )
+
+
+@app.get("/api/if_fielder_options", response_model=dict[str, list[IFFielderOption]])
+def if_fielder_options(year: int = 2025):
+    """個人化站位的野手選單（該年有站位資料的野手，依位置分組）。"""
+    if _if_bayes_model is None:
+        raise HTTPException(503, "個人化模型未載入")
+    if year not in _if_fielder_opts:
+        raise HTTPException(404, f"No fielder options for year {year}")
+    return _if_fielder_opts[year]
+
+
+@app.get("/api/if_result_custom", response_model=IFCustomResultResponse)
+def if_result_custom(batter_id: int, year: int,
+                     fielder_1b: int | None = None, fielder_2b: int | None = None,
+                     fielder_3b: int | None = None, fielder_ss: int | None = None):
+    """指定野手陣容的個人化站位（錨定式：從零效應最佳解 warm start 局部優化，
+    位移只反映球員效應的拉力，不是平坦地形的等值漂移——見 ARCHITECTURE.md
+    「內野貝葉斯球員層」）。未指定的位置視為聯盟平均野手（效應 0）。"""
+    import numpy as np
+    import pandas as pd
+
+    if _if_bayes_model is None:
+        raise HTTPException(503, "個人化模型未載入")
+    if year not in _if_years:
+        raise HTTPException(404, f"No infield data for year {year}. Available: {_if_years}")
+    with psycopg2.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT stand, n_gb, hp_to_1b, "
+                "       angle_1b, depth_1b, angle_2b, depth_2b, "
+                "       angle_3b, depth_3b, angle_ss, depth_ss "
+                "FROM precomputed_if_positions "
+                "WHERE batter = %s AND game_year = %s", (batter_id, year))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, f"Batter {batter_id} has no precomputed result in {year}")
+            cur.execute(
+                "SELECT spray_deg, ball_x, ball_y, launch_speed, launch_angle, is_out "
+                "FROM precomputed_if_gbs "
+                "WHERE batter = %s AND game_year = %s", (batter_id, year))
+            ball_rows = cur.fetchall()
+
+    stand, n_gb, hp_to_1b = row[:3]
+    opt_angles = np.array([row[3], row[5], row[7], row[9]], dtype=float)
+    opt_depths = np.array([row[4], row[6], row[8], row[10]], dtype=float)
+
+    balls = pd.DataFrame(ball_rows, columns=[
+        "spray_deg", "ball_x", "ball_y", "launch_speed", "launch_angle", "is_out"])
+    balls["launch_angle"] = pd.to_numeric(balls["launch_angle"], errors="coerce")
+    balls["launch_angle"] = balls["launch_angle"].fillna(balls["launch_angle"].median())
+    balls["launch_speed"] = balls["launch_speed"].astype(float)
+    balls["hp_to_1b"] = float(hp_to_1b)
+    balls["stand_R"] = int(stand == "R")
+
+    fids = {"1B": fielder_1b, "2B": fielder_2b, "3B": fielder_3b, "SS": fielder_ss}
+    alpha = np.array([_if_effects.get(fids[p], (0.0, 0.0))[0] if fids[p] else 0.0
+                      for p in IF_POSITIONS])
+    g = np.array([_if_effects.get(fids[p], (0.0, 0.0))[1] if fids[p] else 0.0
+                  for p in IF_POSITIONS])
+    pe = {"alpha": alpha, "g": g,
+          "ad_mean": _if_ad_norm[0], "ad_std": _if_ad_norm[1]}
+
+    warm = positions_to_params(opt_angles, opt_depths)
+    with _optimize_semaphore:
+        res = optimize_infield(balls, _if_bayes_model, n_restarts=0,
+                               extra_starts=[warm], player_effects=pe)
+
+    league_pairs = {pos: tuple(_if_league[year][pos]) for pos in IF_POSITIONS}
+    lg_angles = np.array([league_pairs[p][0] for p in IF_POSITIONS])
+    lg_depths = np.array([league_pairs[p][1] for p in IF_POSITIONS])
+    exp_league = if_expected_outs(_if_bayes_model, balls, lg_angles, lg_depths, pe)
+    baseline = if_expected_outs(_if_bayes_model, balls, opt_angles, opt_depths, pe)
+    p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths, pe)
+    p_custom = predict_p_out(_if_bayes_model, balls, res["angles"], res["depths"], pe)
+
+    custom_pairs = {pos: (round(float(a), 2), round(float(d), 2))
+                    for pos, a, d in zip(IF_POSITIONS, res["angles"], res["depths"])}
+    gain = res["exp_outs"] - exp_league
+    return IFCustomResultResponse(
+        batter_id=batter_id,
+        name=_name_map.get(batter_id, f"#{batter_id}"),
+        year=year, stand=stand,
+        fielders={p: (_name_map.get(fids[p], f"#{fids[p]}") if fids[p] else None)
+                  for p in IF_POSITIONS},
+        league=_if_position_set(league_pairs, round(exp_league, 6)),
+        optimized=_if_position_set(custom_pairs, round(res["exp_outs"], 6)),
+        baseline_exp_outs=round(baseline, 6),
+        balls=[IFBallPoint(spray_deg=r[0], x=r[1], y=r[2], launch_speed=r[3],
+                           is_out=r[5], p_out_league=round(float(pl), 4),
+                           p_out_opt=round(float(pc), 4))
+               for r, pl, pc in zip(ball_rows, p_league, p_custom)],
         stats=IFStats(n_gb=n_gb, gain=round(gain, 4),
                       outs_per_450=round(gain * 450, 1), hp_to_1b=hp_to_1b),
     )
