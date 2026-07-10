@@ -125,3 +125,46 @@ def test_optimize_with_pipeline_result_consistent():
     result = optimize_infield(balls, glm, n_restarts=6, seed=1)
     recomputed = expected_outs(glm, balls, result["angles"], result["depths"])
     assert result["exp_outs"] == pytest.approx(recomputed, abs=1e-9)
+
+
+def _effects(alpha, g):
+    return {"alpha": np.asarray(alpha, float), "g": np.asarray(g, float),
+            "ad_mean": 6.0, "ad_std": 5.0}
+
+
+def test_fast_objective_matches_pipeline_with_player_effects():
+    """帶球員效應時，快速路徑與通用路徑仍須數值等價。"""
+    glm = _fitted_glm()
+    rng = np.random.default_rng(11)
+    balls = _balls(rng.uniform(-50, 50, 60), ev=rng.uniform(60, 110, 60))
+    pe = _effects([0.2, -0.1, 0.05, -0.3], [0.15, 0.0, -0.2, 0.1])
+    fast = _FastGLMObjective(glm, balls, pe)
+
+    lo = np.array([b[0] for b in ANGLE_BOUNDS + FRAC_BOUNDS])
+    hi = np.array([b[1] for b in ANGLE_BOUNDS + FRAC_BOUNDS])
+    for _ in range(20):
+        angles, depths = params_to_positions(lo + rng.uniform(size=8) * (hi - lo))
+        assert fast.expected_outs(angles, depths) == pytest.approx(
+            expected_outs(glm, balls, angles, depths, pe), abs=1e-10)
+
+
+def test_zero_effects_equal_league_average():
+    """全零效應必須跟不帶效應完全一樣（聯盟平均野手）。"""
+    glm = _fitted_glm()
+    balls = _balls(np.array([-30.0, -12.0, 5.0, 18.0, 33.0] * 4))
+    pe = _effects([0.0] * 4, [0.0] * 4)
+    angles = np.array([30.0, 15.0, -30.0, -15.0])
+    depths = np.array([110.0, 145.0, 115.0, 140.0])
+    assert expected_outs(glm, balls, angles, depths, pe) == pytest.approx(
+        expected_outs(glm, balls, angles, depths), abs=1e-12)
+
+
+def test_personalized_optimize_keeps_slot_assignment():
+    """個人化時槽位綁定野手：好 range 的 SS（g 大）該分到較大的覆蓋責任，
+    且結果不做角落重排（angles 順序即 POSITIONS 槽位）。"""
+    glm = _fitted_glm()
+    balls = _balls(np.array([-35.0, -25.0, -15.0, -5.0, 10.0, 25.0] * 10))
+    pe = _effects([0.0] * 4, [0.0, 0.0, -0.4, 0.4])   # SS range 好、3B 差
+    result = optimize_infield(balls, glm, n_restarts=6, seed=2, player_effects=pe)
+    assert result["exp_outs"] == pytest.approx(
+        expected_outs(glm, balls, result["angles"], result["depths"], pe), abs=1e-9)

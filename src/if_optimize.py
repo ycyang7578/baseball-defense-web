@@ -12,6 +12,13 @@
 打者分布直接用歷史球（角度不受站位污染，見 src/if_dataset.py docstring），
 不需要重建 KDE。
 
+球員個人化（貝葉斯球員層，見 scripts/train_if_bayes.py）：`player_effects`
+指定四個位置野手的 (alpha_j, g_j) 後驗平均，逐球加到最近野手身上：
+logit += alpha_j + g_j × ad_z。個人化時同側標籤不再可互換（槽位綁定特定
+野手），因此不做角落正規化。格式：
+{"alpha": ndarray(4), "g": ndarray(4), "ad_mean": float, "ad_std": float}
+（依 POSITIONS 順序；聯盟平均野手 = alpha=g=0）。
+
 已知限制：GLM 是在實際（賽季平均）站位附近的資料上訓練的，離常態很遠的
 候選站位屬外插，解讀時要保守。
 """
@@ -83,9 +90,20 @@ def geometry_features(balls: pd.DataFrame, angles, depths) -> pd.DataFrame:
     })
 
 
-def expected_outs(model, balls: pd.DataFrame, angles, depths) -> float:
+def expected_outs(model, balls: pd.DataFrame, angles, depths,
+                  player_effects: dict | None = None) -> float:
     feats = geometry_features(balls, angles, depths)
-    return float(model.predict_proba(feats)[:, 1].mean())
+    p = model.predict_proba(feats)[:, 1]
+    if player_effects is not None:
+        spray = balls["spray_deg"].to_numpy(float)
+        nearest = np.abs(np.asarray(angles)[None, :] - spray[:, None]).argmin(axis=1)
+        ad_z = ((feats["ad_min"].to_numpy()
+                 - player_effects["ad_mean"]) / player_effects["ad_std"])
+        logit = (np.log(p / (1.0 - p))
+                 + np.asarray(player_effects["alpha"])[nearest]
+                 + np.asarray(player_effects["g"])[nearest] * ad_z)
+        p = 1.0 / (1.0 + np.exp(-logit))
+    return float(p.mean())
 
 
 def league_average_positions(years: list[int]) -> tuple[np.ndarray, np.ndarray]:
@@ -147,7 +165,15 @@ class _FastGLMObjective:
     驗證到 1e-10）。欄位切段順序必須跟 FielderGeometryFeatures.transform 一致。
     """
 
-    def __init__(self, model, balls: pd.DataFrame):
+    def __init__(self, model, balls: pd.DataFrame,
+                 player_effects: dict | None = None):
+        if player_effects is not None:
+            self._pe_alpha = np.asarray(player_effects["alpha"], dtype=float)
+            self._pe_g = np.asarray(player_effects["g"], dtype=float)
+            self._pe_admean = float(player_effects["ad_mean"])
+            self._pe_adstd = float(player_effects["ad_std"])
+        else:
+            self._pe_alpha = None
         feats = model.named_steps["features"]
         lr = model.named_steps["lr"]
         # spline 是用 DataFrame fit 的；複製一份去掉 feature 名檢查，讓
@@ -216,23 +242,28 @@ class _FastGLMObjective:
                  + (a @ self._c_aev) * self._ev_z
                  + self._c_ht * self._hp_z * throw_z
                  + (b @ self._c_hpb) * self._hp_z)
+        if self._pe_alpha is not None:
+            ad_z = (ad_min - self._pe_admean) / self._pe_adstd
+            logit = logit + self._pe_alpha[nearest] + self._pe_g[nearest] * ad_z
         return float(np.mean(1.0 / (1.0 + np.exp(-logit))))
 
 
-def _make_scorer(model, balls: pd.DataFrame):
+def _make_scorer(model, balls: pd.DataFrame, player_effects: dict | None = None):
     """回傳 (angles, depths) → 期望出局率。GLM pipeline 走快速路徑，其他模型退回通用路徑。"""
     if hasattr(model, "named_steps") and {"features", "lr"} <= set(model.named_steps):
-        return _FastGLMObjective(model, balls).expected_outs
-    return lambda angles, depths: expected_outs(model, balls, angles, depths)
+        return _FastGLMObjective(model, balls, player_effects).expected_outs
+    return lambda angles, depths: expected_outs(model, balls, angles, depths,
+                                                player_effects)
 
 
 def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
-                     seed: int = 42, extra_starts: list[np.ndarray] | None = None) -> dict:
+                     seed: int = 42, extra_starts: list[np.ndarray] | None = None,
+                     player_effects: dict | None = None) -> dict:
     """LHS 多起點 + L-BFGS-B。回傳最佳站位與期望出局率。"""
     bounds = ANGLE_BOUNDS + FRAC_BOUNDS
     lo = np.array([b[0] for b in bounds])
     hi = np.array([b[1] for b in bounds])
-    score = _make_scorer(model, balls)
+    score = _make_scorer(model, balls, player_effects)
 
     def neg_exp_outs(x):
         angles, depths = params_to_positions(x)
@@ -250,10 +281,12 @@ def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
             best_x, best_val = res.x, res.fun
 
     angles, depths = params_to_positions(best_x)
-    # 同側兩人的標籤在模型裡可互換，正規化成慣例：角落位置（1B/3B）靠邊線
-    right = np.argsort(-angles[:2])          # 角度大者為 1B
-    left = 2 + np.argsort(angles[2:])        # 角度最負者為 3B
-    order = np.concatenate([right, left])
-    angles, depths = angles[order], depths[order]
+    if player_effects is None:
+        # 同側兩人的標籤在模型裡可互換，正規化成慣例：角落位置（1B/3B）靠邊線。
+        # 個人化時槽位綁定特定野手，不可重排。
+        right = np.argsort(-angles[:2])          # 角度大者為 1B
+        left = 2 + np.argsort(angles[2:])        # 角度最負者為 3B
+        order = np.concatenate([right, left])
+        angles, depths = angles[order], depths[order]
     return {"angles": angles, "depths": depths, "exp_outs": -best_val,
             "positions": dict(zip(POSITIONS, zip(angles.round(1), depths.round(1))))}
