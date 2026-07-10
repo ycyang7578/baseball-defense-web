@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { fetchIfBatters, fetchIfResult, fetchIfYears } from '../api'
+import { fetchIfBatters, fetchIfFielderOptions, fetchIfResult,
+         fetchIfResultCustom, fetchIfYears } from '../api'
 import SearchSelect from '../components/SearchSelect'
 import InfieldChart from '../components/InfieldChart'
 
@@ -17,6 +18,8 @@ export default function Infield() {
   const [colorBy, setColorBy]       = useState('optimized')
   const [probMin, setProbMin]       = useState(0)
   const [probMax, setProbMax]       = useState(1)
+  const [fielderOpts, setFielderOpts] = useState(null)   // pos → options（null=功能未啟用）
+  const [fielders, setFielders]       = useState({ '1B': '', '2B': '', '3B': '', SS: '' })
 
   useEffect(() => {
     fetchIfYears().then(ys => {
@@ -28,14 +31,20 @@ export default function Infield() {
   useEffect(() => {
     if (year === null) return
     fetchIfBatters(year).then(data => { setBatters(data); setBatterId('') }).catch(console.error)
+    setFielders({ '1B': '', '2B': '', '3B': '', SS: '' })
+    fetchIfFielderOptions(year).then(setFielderOpts).catch(() => setFielderOpts(null))
   }, [year])
+
+  const anyFielder = IF_POSITIONS.some(p => fielders[p])
 
   async function handleShow() {
     if (!batterId) return
     setLoading(true)
     setError(null)
     try {
-      setData(await fetchIfResult(Number(batterId), year))
+      setData(anyFielder
+        ? await fetchIfResultCustom(Number(batterId), year, fielders)
+        : await fetchIfResult(Number(batterId), year))
     } catch (e) {
       setError(e.message)
     } finally {
@@ -76,6 +85,29 @@ export default function Infield() {
               括號內為該年滾地球數。站位限制依禁趨位規則：二壘兩側各兩人、不可換邊、站在內野土上
             </div>
           </Sec>
+
+          {fielderOpts && (
+            <Sec title="野手（預設聯盟平均）">
+              {IF_POSITIONS.map(pos => (
+                <div key={pos} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--slate-500)', width: 22 }}>{pos}</span>
+                  <div style={{ flex: 1 }}>
+                    <SearchSelect
+                      options={(fielderOpts[pos] || []).map(f => ({
+                        value: String(f.player_id), label: displayName(f.name),
+                      }))}
+                      value={fielders[pos]}
+                      onChange={v => setFielders(prev => ({ ...prev, [pos]: v }))}
+                      placeholder="聯盟平均"
+                    />
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 4, lineHeight: 1.6 }}>
+                指定野手時以該球員的守備參數微調站位（從最佳解出發局部調整）
+              </div>
+            </Sec>
+          )}
 
           <div style={s.panelFooter}>
             <button
@@ -144,6 +176,13 @@ function TitleBar({ data }) {
       </div>
       <div style={{ fontSize: 11, color: 'var(--slate-400)', marginTop: 2 }}>
         無人在壘・Standard 佈陣・{data.stats.n_gb} 顆滾地球
+        {data.fielders && (
+          <span style={{ color: 'var(--blue-600)', fontWeight: 600 }}>
+            {'　'}
+            {IF_POSITIONS.filter(p => data.fielders[p])
+              .map(p => `${p} ${displayName(data.fielders[p])}`).join('・')}
+          </span>
+        )}
       </div>
     </div>
   )

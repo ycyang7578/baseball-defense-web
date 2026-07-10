@@ -66,6 +66,27 @@ export async function fetchIfFielders(minBalls = 100, year = 2025) {
   return res.json()
 }
 
+export async function fetchIfFielderOptions(year) {
+  const res = await fetch(`${BASE}/if_fielder_options?year=${year}`)
+  if (!res.ok) throw new Error('Failed to fetch infield fielder options')
+  return res.json()
+}
+
+export async function fetchIfResultCustom(batterId, year, fielderIds) {
+  const params = new URLSearchParams({ batter_id: batterId, year })
+  const keys = { '1B': 'fielder_1b', '2B': 'fielder_2b', '3B': 'fielder_3b', SS: 'fielder_ss' }
+  for (const [pos, key] of Object.entries(keys)) {
+    if (fielderIds[pos]) params.set(key, fielderIds[pos])
+  }
+  const res = await fetch(`${BASE}/if_result_custom?${params}`)
+  if (!res.ok) {
+    let detail = 'Failed to fetch custom infield result'
+    try { detail = (await res.json()).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
 function _body({ batterId, year, on1b, on2b, on3b, outs, homeTeam, fielders }) {
   return JSON.stringify({
     batter_id: batterId,
