@@ -34,7 +34,7 @@ TEST_YEAR = 2025
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb"
 OUT_PATH = _MODEL_DIR / "validation_2025.json"
 ROWS_PATH = _MODEL_DIR / "validation_rows_2025.csv"   # checkpoint：逐打者落盤，可續跑
-MODEL = _MODEL_DIR / "if_gb_optimizer_glm.joblib"
+MODEL = _MODEL_DIR / "bayes" / "if_bayes_group_pipeline.joblib"   # 群體層＝生產優化器
 
 
 def qualifying_batters(min_train: int, min_test: int) -> pd.DataFrame:

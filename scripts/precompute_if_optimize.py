@@ -46,7 +46,9 @@ PRE_DIR = BASE / "data" / "precomputed"
 POS_CSV = PRE_DIR / "if_positions_rows.csv"
 GBS_CSV = PRE_DIR / "if_gbs_rows.csv"
 LEAGUE_JSON = PRE_DIR / "if_league_positions.json"
-MODEL = BASE / "models" / "if_gb" / "if_gb_optimizer_glm.joblib"
+# 2026-07-10 起優化器 = 貝葉斯群體層 pipeline（後驗平均，介面同 GLM；
+# 見 scripts/export_if_bayes.py）。此處預算零效應（聯盟平均野手）解
+MODEL = BASE / "models" / "if_gb" / "bayes" / "if_bayes_group_pipeline.joblib"
 SEED = 42
 
 POS_COLS = ["batter", "game_year", "stand", "n_gb", "hp_to_1b",

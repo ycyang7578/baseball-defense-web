@@ -269,9 +269,13 @@ def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
         angles, depths = params_to_positions(x)
         return -score(angles, depths)
 
-    sampler = qmc.LatinHypercube(d=8, seed=seed)
-    starts = [lo + s * (hi - lo) for s in sampler.random(n_restarts)]
+    starts = []
+    if n_restarts > 0:
+        sampler = qmc.LatinHypercube(d=8, seed=seed)
+        starts = [lo + s * (hi - lo) for s in sampler.random(n_restarts)]
     starts += [np.clip(s, lo, hi) for s in (extra_starts or [])]
+    if not starts:
+        raise ValueError("n_restarts=0 時必須提供 extra_starts（錨定式優化）")
 
     best_x, best_val = None, np.inf
     for x0 in starts:
