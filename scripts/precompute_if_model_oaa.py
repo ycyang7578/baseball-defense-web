@@ -1,7 +1,7 @@
 """生成排名頁用的 if_model_oaa 表（2025 樣本外內野手 model OAA）。
 
-計算邏輯與 scripts/evaluate_if_2025.py 共用 src/if_eval.py（GBM 2023–2024 訓練、
-2025 評分、hit_location 歸責、分位置中心化），這裡只負責落表。
+計算邏輯與 scripts/evaluate_if_2025.py 共用 src/if_eval.py（難度 GLM 2023–2024
+訓練、2025 評分、hit_location 歸責、分位置中心化），這裡只負責落表。
 球員姓名從 if_oaa_leaderboard 帶入（對不上官方 leaderboard 者為 NULL，
 排名頁不顯示）。
 

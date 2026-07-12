@@ -4,7 +4,7 @@ import pandas as pd
 
 from src.if_model import (DIFFICULTY_FEATURES, OPTIMIZER_FEATURES,
                           FielderGeometryFeatures, make_difficulty_gbm,
-                          make_optimizer_glm)
+                          make_difficulty_glm, make_optimizer_glm)
 
 
 def _synthetic(n=400, seed=7):
@@ -52,3 +52,25 @@ def test_difficulty_gbm_probability_range():
     gbm = make_difficulty_gbm().fit(df[DIFFICULTY_FEATURES], df["is_out"])
     p = gbm.predict_proba(df[DIFFICULTY_FEATURES])[:, 1]
     assert ((p >= 0) & (p <= 1)).all()
+
+
+def test_difficulty_glm_probability_range_and_determinism():
+    df = _synthetic()
+    glm = make_difficulty_glm().fit(df[DIFFICULTY_FEATURES], df["is_out"])
+    p1 = glm.predict_proba(df[DIFFICULTY_FEATURES])[:, 1]
+    p2 = glm.predict_proba(df[DIFFICULTY_FEATURES])[:, 1]
+    assert ((p1 > 0) & (p1 < 1)).all()
+    assert np.array_equal(p1, p2)
+
+
+def test_difficulty_glm_spray_mirroring():
+    """左打鏡像：左右打在「各自拉打側」同角度的球應拿到相近的難度形狀。"""
+    df = _synthetic()
+    glm = make_difficulty_glm().fit(df[DIFFICULTY_FEATURES], df["is_out"])
+    ball = df[DIFFICULTY_FEATURES].iloc[[0]].copy()
+    rhb_pull = ball.assign(stand_R=1, spray_deg=-20.0)   # 右打拉向三壘側
+    lhb_pull = ball.assign(stand_R=0, spray_deg=20.0)    # 左打拉向一壘側
+    p_r = glm.predict_proba(rhb_pull)[0, 1]
+    p_l = glm.predict_proba(lhb_pull)[0, 1]
+    # 鏡像後兩者只差 stand_R 主效應，不應該差出天際
+    assert abs(p_r - p_l) < 0.2

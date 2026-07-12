@@ -249,7 +249,8 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
   - **2026-07-12 現行結果（訓練 2023–2024、GLM 移除 stand_R，n_train=39,354、
     n_test=18,404）**：優化用 GLM AUC=0.7530、Brier=0.163、校準最大偏差 0.024；
-    評價用 GBM AUC=0.8145、Brier=0.140、校準最大偏差 0.024（GBM 保留 stand_R）
+    評價用難度 GLM（主範圍子集）AUC=0.7637、校準 0.043（全量球群上為 0.770/0.026，
+    見難度 GLM 條目）；GBM benchmark AUC=0.8145、校準 0.024（不進生產）
   - （歷史對照 2026-07-09，訓練 2021–2024 含 stand_R：GLM AUC=0.7531/校準 0.031；
     GBM AUC=0.8165/校準 0.020）
   - （歷史對照 2026-07-06，訓練 2023–2024：GLM AUC=0.754/校準 0.029；GBM AUC=0.815/
@@ -261,12 +262,13 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     跟最近角距不同——改用 hit_location 讓 qualified R 從 0.48 → 0.53）；安打球與投手/
     捕手處理的球退回最近角距內野手
   - 分位置中心化（官方是「跟同位置平均比」）：每球 oaa_play 減去歸責位置的平均
-  - **2026-07-12 現行結果（訓練 2023–2024，2025 樣本外，qualified n=158）**：Pearson R=0.525、
-    Spearman=0.562、每球率 R=0.591；分位置（n≥100）1B 0.68 / 2B 0.63 / 3B 0.64 / **SS 0.34**
-    （SS 對實際起始位置最敏感，賽季平均站位在此損失最大）；scale 健康（model SD 8.4 vs
-    官方 6.9，不像外野 2–3 倍——因為 p̂ 是聯盟平均難度不是站位相依接殺率）；
-    與 2026-07-06 同配置數字完全重現（一致性檢查）。
-    （歷史對照 2026-07-09，訓練 2021–2024：R=0.521/Spearman 0.555/每球率 0.585）
+  - **2026-07-12 現行結果（難度 GLM，訓練 2023–2024，2025 樣本外，qualified n=158）**：
+    Pearson R=0.514、Spearman=0.549、每球率 R=0.586；分位置（n≥100）1B 0.70 / 2B 0.64 /
+    3B 0.62 / **SS 0.31**（SS 對實際起始位置最敏感，賽季平均站位在此損失最大）；
+    scale 健康（model SD 8.3 vs 官方 6.9，不像外野 2–3 倍——因為 p̂ 是聯盟平均難度
+    不是站位相依接殺率）。
+    （GBM benchmark 對照：R=0.525/Spearman 0.562/每球率 0.591、1B 0.68/2B 0.63/
+    3B 0.64/SS 0.34——可解釋性的代價 ≈ 0.011 R，見難度 GLM 決策條目）
     陷阱：結尾的前 10 名列印在 stdout 重導向（cp950）下會因球員名帶重音字元
     UnicodeEncodeError，統計本體不受影響
   - （歷史對照 2026-07-06，訓練 2023–2024：R=0.525/Spearman 0.562/每球率 0.591，
@@ -449,6 +451,16 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   區域訊號。教訓：**內生性篩查要看函數形式的自由度，不只看特徵名單**。
   launch_speed spline 形狀合理（71.5 mph 單峰，軟=內野安打風險/硬=穿越）但
   增益僅 +0.002，為 fast path 簡潔不採
+- **評價用難度模型改為可解釋 GLM（2026-07-12，使用者決定：不用無法說明的模型）**：
+  `scripts/exp_if_difficulty_glm.py` → `make_difficulty_glm()` 進生產（if_model.py），
+  GBM 降為 benchmark。特徵：spray 左打鏡像（Melville 同款）+ spray(8 節點)/LA/EV/hp
+  splines + spray×EV、spray×hp 交互——評價不搬野手、無反事實需求，內生性禁令不適用，
+  spray 與彈性形狀在此全部合法。實測（全量球群 2023-24→2025）：逐球 AUC 0.770 vs
+  GBM 0.824，但**評價是數百球加總，qualified R 只差 0.011**（0.514 vs 0.525、
+  Spearman 0.549 vs 0.562），scale 同樣健康（8.3 vs 官方 6.9）。spray×EV 交互對
+  校準必要（無它 cal 0.043→有它 0.026）。score_test_year 增加 model_factory 參數
+  （預設難度 GLM），train_if_gb 產出 if_gb_difficulty_glm.joblib（舊 GBM joblib
+  已移除），測試 72/72 過（新增機率範圍/確定性/鏡像三條）
 
 ## 前端（React + Vite）
 

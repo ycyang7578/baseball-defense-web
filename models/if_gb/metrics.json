@@ -21,7 +21,21 @@
       "calibration_max_dev": 0.0243
     }
   },
-  "difficulty_gbm": {
+  "difficulty_glm": {
+    "features": [
+      "spray_deg",
+      "launch_angle",
+      "launch_speed",
+      "hp_to_1b",
+      "stand_R"
+    ],
+    "metrics": {
+      "auc": 0.7637,
+      "brier": 0.158,
+      "calibration_max_dev": 0.0427
+    }
+  },
+  "difficulty_gbm_benchmark": {
     "features": [
       "spray_deg",
       "launch_angle",

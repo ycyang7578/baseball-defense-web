@@ -5,8 +5,16 @@
    spray_deg 項：spray 的位置特定出局率模式反映的是「現在聯盟都站在哪」（內生性），
    搬動野手之後那些模式不會保留；混入會讓優化器重複計算（例如把 SS 移進 5.5 洞後，
    spray 項仍預測那裡出局率低）。
-2. make_difficulty_gbm() — 球員評價用（階段 2 的 p̂）。
-   位置固定情境下的聯盟平均難度模型（xBA 式），spray 位置模式合法且應該用。
+2. make_difficulty_glm() — 球員評價用（階段 2 的 p̂）。
+   位置固定情境下的聯盟平均難度模型（xBA 式），spray 位置模式合法且應該用；
+   評價不搬野手、無反事實需求，內生性禁令（raw spray/彈性形狀）不適用。
+   **2026-07-12 起改用可解釋的 spline GLM 取代 GBM**（使用者決定：不用無法
+   說明的模型，接受準確度代價）。實測代價（exp_if_difficulty_glm.py，
+   全量滾地球 2023-24→2025）：逐球 AUC 0.770 vs GBM 0.824，但評價是數百球
+   加總，qualified R 僅 0.525→0.514、scale 同樣健康（SD 8.3 vs 官方 6.9）。
+   特徵工程：spray 左打鏡像（Melville 同款）+ spray/LA/EV/hp splines +
+   spray×EV、spray×hp 交互（spray×EV 對校準是必要的：無交互 cal 0.043→0.026）。
+3. make_difficulty_gbm() — GBM benchmark（保留供對照，不進生產）。
    2023→2024 驗證：AUC 0.807，只用球質+跑者+spray，加野手特徵無增益（+0.001）——
    證據：Standard 佈陣下賽季平均站位近似 spray 的確定函數。
 
@@ -70,6 +78,50 @@ class FielderGeometryFeatures(BaseEstimator, TransformerMixin):
 
 def make_optimizer_glm() -> Pipeline:
     return Pipeline([("features", FielderGeometryFeatures()),
+                     ("lr", LogisticRegression(max_iter=8000, C=1.0))])
+
+
+class DifficultyGLMFeatures(BaseEstimator, TransformerMixin):
+    """評價用難度 GLM 的設計矩陣（無野手資訊）。
+
+    spray 先做左打鏡像（負=拉打側，左右打共享形狀，Melville §2 同款），
+    上 8 節點 spline（要容納四守位的 lane 結構）；LA/EV/hp 各 6 節點。
+    交互：spray×EV（強襲穿洞）、spray×hp（慢滾內野安打的方向性）。
+    """
+
+    def __init__(self, spray_ev=True, spray_hp=True):
+        self.spray_ev = spray_ev
+        self.spray_hp = spray_hp
+
+    @staticmethod
+    def _spray_rel(X):
+        sign = np.where(X["stand_R"].to_numpy(float) == 1, 1.0, -1.0)
+        return (X["spray_deg"].to_numpy(float) * sign)[:, None]
+
+    def fit(self, X, y=None):
+        self.spl_spray_ = SplineTransformer(n_knots=8, degree=3).fit(
+            self._spray_rel(X))
+        self.spl_ = {c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
+                     for c in ("launch_angle", "launch_speed", "hp_to_1b")}
+        self.scaler_ = StandardScaler().fit(X[["launch_speed", "hp_to_1b"]])
+        return self
+
+    def transform(self, X):
+        s = self.spl_spray_.transform(self._spray_rel(X))
+        la = self.spl_["launch_angle"].transform(X[["launch_angle"]])
+        ev = self.spl_["launch_speed"].transform(X[["launch_speed"]])
+        hp = self.spl_["hp_to_1b"].transform(X[["hp_to_1b"]])
+        z = self.scaler_.transform(X[["launch_speed", "hp_to_1b"]])
+        parts = [s, la, ev, hp, X[["stand_R"]].to_numpy(float)]
+        if self.spray_ev:
+            parts.append(s * z[:, [0]])
+        if self.spray_hp:
+            parts.append(s * z[:, [1]])
+        return np.hstack(parts)
+
+
+def make_difficulty_glm(**kw) -> Pipeline:
+    return Pipeline([("features", DifficultyGLMFeatures(**kw)),
                      ("lr", LogisticRegression(max_iter=8000, C=1.0))])
 
 

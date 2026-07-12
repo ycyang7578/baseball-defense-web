@@ -2,7 +2,8 @@
 
 兩個模型、兩種角色（詳見 src/if_model.py 的 docstring）：
 - 優化用 GLM：野手相對幾何（可反事實——搬動野手預測會跟著變）
-- 評價用 GBM：spray+球質+跑者的聯盟平均難度模型（位置固定情境的 p̂）
+- 評價用難度 GLM：spray+球質+跑者的聯盟平均難度模型（位置固定情境的 p̂；
+  2026-07-12 起取代 GBM，可解釋性優先；GBM 續留當 benchmark 指標）
 
 訓練 2023–2024（禁令後，賽季平均站位不混 shift 佈陣；2021–22 的整季平均混入
 shift 球——2B 深度/3B 角度有系統性偏差——Melville 2024 同理只用禁令後資料。
@@ -25,7 +26,8 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.if_dataset import build_gb_dataset
 from src.if_model import (DIFFICULTY_FEATURES, OPTIMIZER_FEATURES,
-                          make_difficulty_gbm, make_optimizer_glm)
+                          make_difficulty_gbm, make_difficulty_glm,
+                          make_optimizer_glm)
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
@@ -60,32 +62,36 @@ def main() -> None:
           f"(out率 {test['is_out'].mean():.3f})")
 
     glm = make_optimizer_glm()
-    gbm = make_difficulty_gbm()
+    dglm = make_difficulty_glm()
+    gbm = make_difficulty_gbm()  # benchmark，不進生產
     report = {
         "train_years": TRAIN_YEARS, "test_year": TEST_YEAR,
         "n_train": len(train), "n_test": len(test),
         "optimizer_glm": {"features": OPTIMIZER_FEATURES},
-        "difficulty_gbm": {"features": DIFFICULTY_FEATURES},
+        "difficulty_glm": {"features": DIFFICULTY_FEATURES},
+        "difficulty_gbm_benchmark": {"features": DIFFICULTY_FEATURES},
     }
     report["optimizer_glm"]["metrics"] = evaluate(
         "優化用 GLM", glm, OPTIMIZER_FEATURES, train, test)
-    report["difficulty_gbm"]["metrics"] = evaluate(
-        "評價用 GBM", gbm, DIFFICULTY_FEATURES, train, test)
+    report["difficulty_glm"]["metrics"] = evaluate(
+        "評價用難度 GLM", dglm, DIFFICULTY_FEATURES, train, test)
+    report["difficulty_gbm_benchmark"]["metrics"] = evaluate(
+        "GBM benchmark", gbm, DIFFICULTY_FEATURES, train, test)
 
     print("\n優化用 GLM 校準（2025 十分位）：")
     p = glm.predict_proba(test[OPTIMIZER_FEATURES])[:, 1]
     print(calibration_table(test["is_out"].to_numpy(), p).round(3).to_string())
-    print("\n評價用 GBM 校準（2025 十分位）：")
-    p = gbm.predict_proba(test[DIFFICULTY_FEATURES])[:, 1]
+    print("\n評價用難度 GLM 校準（2025 十分位）：")
+    p = dglm.predict_proba(test[DIFFICULTY_FEATURES])[:, 1]
     print(calibration_table(test["is_out"].to_numpy(), p).round(3).to_string())
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(glm, MODEL_DIR / "if_gb_optimizer_glm.joblib")
-    joblib.dump(gbm, MODEL_DIR / "if_gb_difficulty_gbm.joblib")
+    joblib.dump(dglm, MODEL_DIR / "if_gb_difficulty_glm.joblib")
     (MODEL_DIR / "metrics.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[saved] {MODEL_DIR}\\if_gb_optimizer_glm.joblib / "
-          f"if_gb_difficulty_gbm.joblib / metrics.json")
+          f"if_gb_difficulty_glm.joblib / metrics.json")
 
 
 if __name__ == "__main__":
