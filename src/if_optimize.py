@@ -165,7 +165,7 @@ class _FastGLMObjective:
 
     多起點優化的瓶頸在每次目標函數評估都要重建 DataFrame、重跑整條 sklearn
     pipeline。這裡預先算好不隨站位變動的部分（launch_angle spline、
-    launch_speed/hp_to_1b 的 z 分數與其係數貢獻、stand_R、截距），每次評估
+    launch_speed/hp_to_1b 的 z 分數與其係數貢獻、截距），每次評估
     只重算隨站位變動的 ad_min / ball_time / throw_dist 相關項，logit 直接用
     numpy 組出來。與 model.predict_proba 數值等價（tests/test_if_optimize.py
     驗證到 1e-10）。欄位切段順序必須跟 FielderGeometryFeatures.transform 一致。
@@ -219,7 +219,6 @@ class _FastGLMObjective:
 
         self._c_a, self._c_b, c_la = take(k_a), take(k_b), take(k_la)
         c_ev, self._c_throw, c_hp = take(3)
-        c_stand = take(1)[0]
         self._C_ab = take(k_a * k_b).reshape(k_a, k_b)
         self._c_aev = take(k_a)
         self._c_ht = take(1)[0]
@@ -227,7 +226,6 @@ class _FastGLMObjective:
         assert pos == len(coef), "係數切段與 FielderGeometryFeatures 欄位順序不符"
 
         self._const = (la @ c_la + ev_z * c_ev + hp_z * c_hp
-                       + balls["stand_R"].to_numpy(float) * c_stand
                        + lr.intercept_[0])
 
     def expected_outs(self, angles, depths) -> float:

@@ -1,12 +1,10 @@
 {
   "train_years": [
-    2021,
-    2022,
     2023,
     2024
   ],
   "test_year": 2025,
-  "n_train": 73379,
+  "n_train": 39354,
   "n_test": 18404,
   "optimizer_glm": {
     "features": [
@@ -15,13 +13,12 @@
       "launch_angle",
       "launch_speed",
       "throw_dist",
-      "hp_to_1b",
-      "stand_R"
+      "hp_to_1b"
     ],
     "metrics": {
-      "auc": 0.7531,
-      "brier": 0.1623,
-      "calibration_max_dev": 0.0313
+      "auc": 0.753,
+      "brier": 0.1625,
+      "calibration_max_dev": 0.0243
     }
   },
   "difficulty_gbm": {
@@ -33,9 +30,9 @@
       "stand_R"
     ],
     "metrics": {
-      "auc": 0.8165,
-      "brier": 0.139,
-      "calibration_max_dev": 0.0202
+      "auc": 0.8145,
+      "brier": 0.1399,
+      "calibration_max_dev": 0.0238
     }
   }
 }
