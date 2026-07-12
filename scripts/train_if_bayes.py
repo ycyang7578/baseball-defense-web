@@ -148,19 +148,35 @@ def main() -> None:
             **kwargs, progressbar=False,
             callback=make_progress_logger(kwargs["draws"] + kwargs["tune"]))
 
+    # 取樣後**立即存檔**再做評估與列印——長跑產出不可被後續任何錯誤毀掉
+    # （2026-07-13 事故：print 裡的 ≈ 在 stdout 重導向 cp950 下 UnicodeEncodeError，
+    #  3.1 小時 trace 因存檔在列印之後而全數丟失）
+    sum_grp = az.summary(trace, var_names=["beta0", "sigma_alpha", "sigma_g"])
+    sum_ply = az.summary(trace, var_names=["alpha", "g"])
+    if not args.smoke:
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        az.to_netcdf(trace, OUT_DIR / "IF_trace.nc")
+        joblib.dump(feat, OUT_DIR / "IF_features.joblib")
+        sum_grp.to_csv(OUT_DIR / "IF_summary_group.csv", encoding="utf-8-sig")
+        sum_ply.to_csv(OUT_DIR / "IF_summary_players.csv", encoding="utf-8-sig")
+        (OUT_DIR / "IF_meta.json").write_text(json.dumps({
+            "train_years": TRAIN_YEARS, "test_year": TEST_YEAR,
+            "n_train": len(train), "n_players": len(players),
+            "ad_mean": ad_mean, "ad_std": ad_std,
+            "players": [int(p) for p in players]}, indent=2), encoding="utf-8")
+        print(f"[saved] {OUT_DIR}", flush=True)
+
     y_te = test["is_out"].to_numpy()
     p_grp = 1 / (1 + np.exp(-posterior_logit(trace, X_te, adz_te, None)))
     p_ply = 1 / (1 + np.exp(-posterior_logit(trace, X_te, adz_te, te_idx)))
-    print(f"\n2025 樣本外（GLM 基準 AUC=0.7531 / logloss≈0.4967）：")
+    print("\n2025 樣本外（GLM 基準 AUC=0.7531 / logloss~0.4967）：")
     print(f"  群體層 only   : AUC={roc_auc_score(y_te, p_grp):.4f}  "
           f"logloss={log_loss(y_te, p_grp):.5f}")
     print(f"  ＋球員層      : AUC={roc_auc_score(y_te, p_ply):.4f}  "
           f"logloss={log_loss(y_te, p_ply):.5f}")
 
-    sum_grp = az.summary(trace, var_names=["beta0", "sigma_alpha", "sigma_g"])
     print("\n=== 超參數 ===")
     print(sum_grp.to_string())
-    sum_ply = az.summary(trace, var_names=["alpha", "g"])
     for p in ("alpha", "g"):
         rows = sum_ply[sum_ply.index.str.startswith(p + "[")]
         print(f"{p:<6} 跨球員SD={rows['mean'].std():.4f}  "
@@ -173,18 +189,6 @@ def main() -> None:
 
     if args.smoke:
         print("[smoke] 不儲存產出")
-        return
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    az.to_netcdf(trace, OUT_DIR / "IF_trace.nc")
-    joblib.dump(feat, OUT_DIR / "IF_features.joblib")
-    sum_grp.to_csv(OUT_DIR / "IF_summary_group.csv", encoding="utf-8-sig")
-    sum_ply.to_csv(OUT_DIR / "IF_summary_players.csv", encoding="utf-8-sig")
-    (OUT_DIR / "IF_meta.json").write_text(json.dumps({
-        "train_years": TRAIN_YEARS, "test_year": TEST_YEAR,
-        "n_train": len(train), "n_players": len(players),
-        "ad_mean": ad_mean, "ad_std": ad_std,
-        "players": [int(p) for p in players]}, indent=2), encoding="utf-8")
-    print(f"[saved] {OUT_DIR}")
 
 
 if __name__ == "__main__":
