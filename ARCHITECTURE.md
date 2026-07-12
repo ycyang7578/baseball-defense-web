@@ -245,7 +245,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     不是 AUC
   - 交互作用配置用 train 2023→val 2024 選定（tensor ad×bt、ad×EV、hp×throw、hp×bt），
     2025 只在最終評估碰一次
-- `scripts/train_if_gb.py` — 訓練（2021–2024）＋樣本外評估（2025）→ `models/if_gb/`
+- `scripts/train_if_gb.py` — 訓練（2023–2024，見下方「訓練年份實驗」的改回紀錄）＋樣本外評估（2025）→ `models/if_gb/`
   - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
   - **2026-07-09 現行結果（訓練改 2021–2024，n_train=73,379、n_test=18,404）**：優化用 GLM
     AUC=0.7531、Brier=0.162、校準最大偏差 0.031；評價用 GBM AUC=0.8165、Brier=0.139、
@@ -380,6 +380,14 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   TRAIN_YEARS 同步改（後兩者是內部重訓 GBM，不載 joblib）→ 重訓（數字與實驗一致）→
   重跑 precompute 全下游 → Neon 再 sync。跨年驗證（validate_if_positioning.py）的
   TRAIN_YEARS 是打者分布年份（驗證設計），維持 2023–24 不隨訓練年份改。
+  **2026-07-12 改回 2023–24**：逐篇精讀站位文獻後決定（Melville 2024 同理只用禁令後
+  資料訓練出局模型），並用 fielder_positioning 重新量化污染幅度——同球員配對
+  2022→2023 跳動：2B 深度中位 −4 呎（P90 7.2 呎）、3B 角度中位 −3°（P90 7°）、
+  SS 角度 P90 5°，皆為正常年（2023→2024）的 2~4 倍；離散度 P10–P90 在禁令後全面
+  收窄近半。效能面兩配置等價（見上方實驗），取方法論乾淨者，論文可防禦。
+  四處 TRAIN_YEARS 同步改（train_if_gb / evaluate_if_2025 / precompute_if_model_oaa /
+  train_if_bayes）。**下游尚未重跑**：GLM/GBM 重訓 → 貝葉斯 7hr MCMC 重訓 →
+  precompute 重跑（71/391 舊 checkpoint 作廢）→ validate → Neon sync。
   後續還計劃加壘況/出局數情境（階段A=RE24 加權+線上即時算
   +無人在壘解 warm start；階段B=有人在壘 out 模型 force/DP/hold runner，屬新研究）
 - **內野球員層（野手個人化站位）驗證為無訊號，已收案（2026-07-10）**：目標是對齊外野的

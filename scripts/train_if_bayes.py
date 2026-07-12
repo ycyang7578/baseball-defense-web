@@ -10,7 +10,7 @@
   也 <1（beta_dist 0.65）——預期 g_j 會被 shrink 到很小，靠 shrinkage 當安全網，
   這是使用者知情後的方向決定
 
-範圍與年份同 train_if_gb.py：無人在壘＋Standard，2021–2024 訓練、2025 樣本外。
+範圍與年份同 train_if_gb.py：無人在壘＋Standard，2023–2024 訓練、2025 樣本外。
 產出 models/if_gb/bayes/：trace、群體/球員摘要 CSV、特徵 transformer、metadata。
 
 執行：python scripts/train_if_bayes.py [--smoke]（smoke=小抽樣快速驗證可跑）
@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.if_dataset import INFIELD_COLS, build_gb_dataset
 from src.if_model import OPTIMIZER_FEATURES, FielderGeometryFeatures
 
-TRAIN_YEARS = [2021, 2022, 2023, 2024]
+TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 OUT_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb" / "bayes"
 

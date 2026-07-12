@@ -1,7 +1,7 @@
 """階段 2：內野手球員評價 —— model OAA 對照官方內野 OAA（2025 樣本外）。
 
 p̂ 用評價用 GBM（spray+球質+跑者，無野手資訊 → 無循環論證），在全量滾地球
-（不限壘況/佈陣）上以 2021–2024 訓練、2025 評分，跟官方球群（所有情境）對齊。
+（不限壘況/佈陣）上以 2023–2024 訓練、2025 評分，跟官方球群（所有情境）對齊。
 逐球歸責給最近角距的內野手（對應官方「slice」概念）。
 球員 model OAA = Σ(is_out − p̂)。
 
@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 from src.if_eval import aggregate_players, score_test_year
 
-TRAIN_YEARS = [2021, 2022, 2023, 2024]
+TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 
 

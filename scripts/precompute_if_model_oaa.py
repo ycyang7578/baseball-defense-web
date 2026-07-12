@@ -1,6 +1,6 @@
 """生成排名頁用的 if_model_oaa 表（2025 樣本外內野手 model OAA）。
 
-計算邏輯與 scripts/evaluate_if_2025.py 共用 src/if_eval.py（GBM 2021–2024 訓練、
+計算邏輯與 scripts/evaluate_if_2025.py 共用 src/if_eval.py（GBM 2023–2024 訓練、
 2025 評分、hit_location 歸責、分位置中心化），這裡只負責落表。
 球員姓名從 if_oaa_leaderboard 帶入（對不上官方 leaderboard 者為 NULL，
 排名頁不顯示）。
@@ -23,7 +23,7 @@ from src.config import DSN
 from src.if_eval import aggregate_players, score_test_year
 
 SQL_DIR = Path(__file__).resolve().parent / "sql"
-TRAIN_YEARS = [2021, 2022, 2023, 2024]
+TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 COLS = ["player_id", "player_name", "position", "year", "model_oaa", "n_balls"]
 

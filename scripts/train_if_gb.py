@@ -4,8 +4,10 @@
 - 優化用 GLM：野手相對幾何（可反事實——搬動野手預測會跟著變）
 - 評價用 GBM：spray+球質+跑者的聯盟平均難度模型（位置固定情境的 p̂）
 
-訓練 2021–2024（2021-22 為 shift 時代，但主範圍限定 Standard 佈陣，幾何同代；
-與 2023-24 訓練相比，2025 樣本外三指標差異皆在雜訊內），測試 2025（樣本外）。
+訓練 2023–2024（禁令後，賽季平均站位不混 shift 佈陣；2021–22 的整季平均混入
+shift 球——2B 深度/3B 角度有系統性偏差——Melville 2024 同理只用禁令後資料。
+2026-07-09 實驗確認兩種年份配置 2025 樣本外三指標差異皆在雜訊內，取乾淨者），
+測試 2025（樣本外）。
 交互作用配置是先用 train 2023 → validate 2024 選定的，2025 只在這裡碰一次。
 主範圍：無人在壘 + Standard 佈陣（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）。
 
@@ -25,7 +27,7 @@ from src.if_dataset import build_gb_dataset
 from src.if_model import (DIFFICULTY_FEATURES, OPTIMIZER_FEATURES,
                           make_difficulty_gbm, make_optimizer_glm)
 
-TRAIN_YEARS = [2021, 2022, 2023, 2024]
+TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb"
 
