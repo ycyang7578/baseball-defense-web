@@ -418,6 +418,17 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   web 呈現建議用零效應解 warm start 的錨定式個人化（位移只反映效應的真實拉力）。
   v1 教訓：**不同效應設定的 exp_outs 不可直接相減**（g 的 ad_z 中心化整體平移水準，
   會出現好陣容期望出局率反而低的假象），要在同一效應模型內比較
+- **Tango 競速結構特徵實驗（2026-07-12，backlog 關案：零增益）**：
+  `scripts/exp_if_structural_features.py`（訓練 2023–24、2025 樣本外）。
+  race_margin = hp_to_1b − (c·ball_time + throw_dist/v)，c/v 訓練集 grid search；
+  required_speed = lat_ft/ball_time。結果：①加在現行 GLM 上 +0.0001 AUC（採納線
+  0.003，關案）——spline+tensor 交互已吸收全部競速結構訊號；②純結構 2–4 特徵版
+  AUC 0.588–0.696、校準偏差 0.15（不可用，勿用精簡特徵組當貝葉斯群體層）；
+  ③**無條件 race_margin 是反向指標**：margin<0 的球出局率 0.827 > margin[+1,+2) 的
+  0.698——EV 通道汙染（強襲球 ball_time 小→margin 漂亮但最會穿越；慢滾球 margin 負
+  但多為例行出局），c=3.0/v=140 撞 grid 邊界即症狀。官方三段結構成立的前提是逐球
+  實測時間且競速條件於「已攔到」，公開資料無條件迴歸重建不出來（論文可用的負結果）。
+  同時確認 margin<0 剔除訓練集的想法不可行（那群球 82.7% 是出局）
 
 ## 前端（React + Vite）
 
