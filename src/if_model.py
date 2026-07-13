@@ -128,3 +128,73 @@ def make_difficulty_glm(**kw) -> Pipeline:
 def make_difficulty_gbm() -> HistGradientBoostingClassifier:
     return HistGradientBoostingClassifier(max_iter=400, learning_rate=0.06,
                                           early_stopping=True, random_state=42)
+
+
+# ── 階段B：一壘有人（<2 出局）的兩段式優化用 GLM ──────────────────
+# E[outs] = P(≥1 出局) × (1 + P(雙殺 | ≥1 出局))，兩段皆 counterfactual
+# （只用野手相對幾何＋球質＋跑速，排除 raw spray，同 make_optimizer_glm 的紀律）。
+
+ON1B_OUT_FEATURES = OPTIMIZER_FEATURES + ["throw_dist_2b"]
+ON1B_DP_FEATURES = ["ad_min", "ball_time", "launch_speed", "hp_to_1b",
+                    "runner_hp_to_1b", "pivot_dist", "throw_dist_2b"]
+
+
+class On1bOutFeatures(FielderGeometryFeatures):
+    """階段1 P(≥1 出局)：基準幾何設計矩陣＋throw_dist_2b 線性項。
+
+    一壘有人時最近的 force 目標是二壘，throw_dist（到一壘）之外補傳二壘距離；
+    與 throw_dist 同理**維持線性**（攔截幾何的確定函數，彈性形狀=raw spray 後門）。
+    """
+
+    def fit(self, X, y=None):
+        super().fit(X, y)
+        self.scaler_2b_ = StandardScaler().fit(X[["throw_dist_2b"]])
+        return self
+
+    def transform(self, X):
+        return np.hstack([super().transform(X),
+                          self.scaler_2b_.transform(X[["throw_dist_2b"]])])
+
+
+class On1bDPFeatures(BaseEstimator, TransformerMixin):
+    """階段2 P(雙殺 | ≥1 出局) 的設計矩陣。
+
+    spline：ad_min、ball_time（正面接到快球才來得及轉傳）。
+    線性：launch_speed、hp_to_1b（打者到一壘＝雙殺第二個 out 的競速）、
+    runner_hp_to_1b（跑者到二壘＝force 的競速）、pivot_dist（軸心幾何）、
+    throw_dist_2b——幾何項一律線性（函數形式內生性紀律）。
+    interactions=True 加 hp_to_1b×spline(ball_time)（跑者速度只在 close play
+    起作用，沿用階段1 的結論；是否採用由 2023→2024 驗證決定）。
+    """
+
+    def __init__(self, interactions=True):
+        self.interactions = interactions
+
+    _LINEAR = ["launch_speed", "hp_to_1b", "runner_hp_to_1b",
+               "pivot_dist", "throw_dist_2b"]
+
+    def fit(self, X, y=None):
+        self.splines_ = {c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
+                         for c in ("ad_min", "ball_time")}
+        self.scaler_ = StandardScaler().fit(X[self._LINEAR])
+        return self
+
+    def transform(self, X):
+        a = self.splines_["ad_min"].transform(X[["ad_min"]])
+        b = self.splines_["ball_time"].transform(X[["ball_time"]])
+        z = self.scaler_.transform(X[self._LINEAR])
+        parts = [a, b, z]
+        if self.interactions:
+            hp = z[:, [self._LINEAR.index("hp_to_1b")]]
+            parts.append(hp * b)
+        return np.hstack(parts)
+
+
+def make_on1b_out_glm() -> Pipeline:
+    return Pipeline([("features", On1bOutFeatures()),
+                     ("lr", LogisticRegression(max_iter=8000, C=1.0))])
+
+
+def make_on1b_dp_glm(**kw) -> Pipeline:
+    return Pipeline([("features", On1bDPFeatures(**kw)),
+                     ("lr", LogisticRegression(max_iter=8000, C=1.0))])

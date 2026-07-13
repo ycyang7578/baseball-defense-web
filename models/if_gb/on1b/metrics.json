@@ -1,0 +1,55 @@
+{
+  "train_years": [
+    2023,
+    2024
+  ],
+  "test_year": 2025,
+  "n_train": 9668,
+  "n_test": 4427,
+  "selection_2023_to_2024": {
+    "stage1_base_auc": 0.7474,
+    "stage1_plus_2b_auc": 0.7501,
+    "use_throw_dist_2b": true,
+    "stage2_base_auc": 0.7329,
+    "stage2_interact_auc": 0.733,
+    "use_interactions": true
+  },
+  "stage1_out": {
+    "features": [
+      "ad_min",
+      "ball_time",
+      "launch_angle",
+      "launch_speed",
+      "throw_dist",
+      "hp_to_1b",
+      "throw_dist_2b"
+    ],
+    "metrics": {
+      "auc": 0.7582,
+      "brier": 0.1726,
+      "calibration_max_dev": 0.0667
+    }
+  },
+  "stage2_dp": {
+    "features": [
+      "ad_min",
+      "ball_time",
+      "launch_speed",
+      "hp_to_1b",
+      "runner_hp_to_1b",
+      "pivot_dist",
+      "throw_dist_2b"
+    ],
+    "interactions": true,
+    "metrics": {
+      "auc": 0.7518,
+      "brier": 0.2025,
+      "calibration_max_dev": 0.0514
+    }
+  },
+  "e_outs_2025": {
+    "pred_mean": 1.0557,
+    "actual_mean": 1.0456,
+    "decile_max_dev": 0.064
+  }
+}
