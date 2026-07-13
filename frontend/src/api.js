@@ -87,6 +87,26 @@ export async function fetchIfResultCustom(batterId, year, fielderIds) {
   return res.json()
 }
 
+// ── 內野線上優化（外野 optimize 的內野鏡像：壘況＋野手＋run-value 計價）──
+
+export async function ifOptimize({ batterId, year, on1b, on2b, on3b, outs, fielders }) {
+  const res = await fetch(`${BASE}/if_optimize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      batter_id: batterId, year: year || 2025,
+      on_1b: on1b, on_2b: on2b, on_3b: on3b, outs,
+      fielders: fielders && Object.keys(fielders).length ? fielders : null,
+    }),
+  })
+  if (!res.ok) {
+    let detail = 'Infield optimization failed'
+    try { detail = (await res.json()).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
 // ── 內外野整合（外野線上優化＋內野錨定式精修，計算需時間）─────────
 
 export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, outs }) {
