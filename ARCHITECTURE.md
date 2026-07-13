@@ -442,6 +442,10 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     結構）是貨真價實的一階效應。⚠️ 口徑注意：同模型自評、絕對量級承襲本專案
     模型 scale 偏大的已知傾向（見 OAA scale 條目），+32.5 分/450GB 引用時要
     帶此保留；淨 DP 貢獻 +0.9 分屬邊際、不宜當賣點
+  - **接 web 的待辦與決策（2026-07-13 使用者指示）**：內野頁 `/api/if_optimize`
+    在「僅一壘有人」壘況切換到 DP 優化（釘 1B＋optimize_infield_dp），**UI 只顯示
+    最佳站位，不顯示雙殺機率**；其他壘況維持現行 run-value 精修。部署前提：
+    Neon sync `fielder_positioning_on1b`、Render 環境有 models/if_gb/on1b/ 資產
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
   `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪，
   逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）、
