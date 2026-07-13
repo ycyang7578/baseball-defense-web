@@ -426,6 +426,13 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   web 呈現建議用零效應解 warm start 的錨定式個人化（位移只反映效應的真實拉力）。
   v1 教訓：**不同效應設定的 exp_outs 不可直接相減**（g 的 ad_z 中心化整體平移水準，
   會出現好陣容期望出局率反而低的假象），要在同一效應模型內比較
+  - **2026-07-13 重訓（訓練 2023–24、無 stand_R 設計矩陣 108 欄）**：39k 球、
+    3.0hr MCMC、r_hat max=1.000/ess_bulk min=2821；2025 樣本外群體層 AUC 0.7528
+    （≈GLM 0.7530，品質無損）、+球員層 0.7536/logloss −0.0008（訊號量級同前版）；
+    shrinkage α 0.45/g 0.57（資料減半收縮略強）；export 等價 2.2e-16、424 位野手。
+    事故記錄：首次執行取樣成功但 print 的 ≈ 在背景重導向 cp950 下炸掉、trace 未存
+    先毀（3.1hr 全失）——已改為**取樣後立即存檔再列印**（b68de4f），長跑腳本啟動
+    一律帶 PYTHONIOENCODING=utf-8
 - **Tango 競速結構特徵實驗（2026-07-12，backlog 關案：零增益）**：
   `scripts/exp_if_structural_features.py`（訓練 2023–24、2025 樣本外）。
   race_margin = hp_to_1b − (c·ball_time + throw_dist/v)，c/v 訓練集 grid search；
