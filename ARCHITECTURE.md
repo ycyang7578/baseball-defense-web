@@ -461,6 +461,24 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   區域訊號。教訓：**內生性篩查要看函數形式的自由度，不只看特徵名單**。
   launch_speed spline 形狀合理（71.5 mph 單峰，軟=內野安打風險/硬=穿越）但
   增益僅 +0.002，為 fast path 簡潔不採
+- **內外野整合路線 + run-value 目標地基（2026-07-13，使用者定案「最終目標=內外野
+  整合」）**：整合的核心=統一計價貨幣（期望失分）。設計決策：
+  ①**目標統一**：外野已是 objective_re24（Σ(1−p̂)×w_j），內野現行是期望出局率——
+  階段A 把內野換成同一種語言，兩邊共用 data/precomputed 的 RE24/delta_re 表；
+  ②**優化可分離**：滾地球歸內野、飛球歸外野，塊對角目標→分開優化、失分相加即
+  聯合最優。唯一共管區=德州安打帶（hit_distance 180–220 呎，出局率 0.546→liners
+  6.4%，自家資料證實無站位槓桿），不付七人聯合優化的複雜度；
+  ③**打者分布不需新層**：兩邊都用打者歷史球，按 bb_type 分流即隱含型態頻率。
+  已落地的地基（commit `6a5945b`）：`optimize_infield(ball_weights=)` 加權目標
+  （快速/通用路徑等價 1e-10、weights=None 完全回溯相容）；`src/if_runvalue.py`
+  = P(長打|滾地安打) logistic（**絕對** spray spline——兩條邊線都是二壘打區，
+  場地幾何不隨打者鏡像）+ w_j 計價（對齊外野 compute_w_j 慣例）+ ΔRE(out)
+  跑者不推進近似（無人在壘精確）。E[ΔRE] = mean(w_j) − mean(p×(w_j−ΔRE_out))，
+  optimize 傳 ball_weights = w_j−ΔRE_out。
+  進行中：`exp_if_runvalue_objective.py` = Melville「wOBA 目標連出局都更好」的
+  跨年重現（212 位驗證打者、兩目標各自優化、2025 球上比出局率與失分兩指標）。
+  剩餘整合工作：整合頁面（打者+壘況→七人站位+總省分）、驗證升級為失分口徑；
+  階段B（有人在壘 out 模型 force/DP）另立研究
 - **評價用難度模型改為可解釋 GLM（2026-07-12，使用者決定：不用無法說明的模型）**：
   `scripts/exp_if_difficulty_glm.py` → `make_difficulty_glm()` 進生產（if_model.py），
   GBM 降為 benchmark。特徵：spray 左打鏡像（Melville 同款）+ spray(8 節點)/LA/EV/hp
