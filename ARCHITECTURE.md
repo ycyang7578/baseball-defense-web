@@ -402,6 +402,34 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     滑桿保留。`GET /api/if_result`（純查表）與 custom 端點續存，頁面已不用
   - Playwright E2E 驗證：單張（壘況 1--/1out＋SS Abrams，省分 +1.2 分與 API 一致）
     ＋比較模式（A−B 差異表、SS 座標差）
+- **階段B：一壘有人雙殺情境的站位優化（2026-07-13 開工，研究階段、未接 web）**：
+  - **資料 spike 結論（開工依據）**：Savant position_data 有 runner-state 切分
+    （無人/1B Only/Other；**參數陷阱：batSide+firstBase+shift 三個都帶過濾才生效**，
+    只帶 firstBase 被忽略、只帶 shift 回異常小子集）；聯盟實際調整＝1B hold runner
+    （−26~−35 呎貼線）、2B/SS 雙殺深度（−3~−4.4 呎）；一壘有人 <2 出局滾地球
+    E[outs]≈1.07/GB vs 無人在壘 0.735——雙殺讓一球值兩個出局，現行模型在此情境
+    系統性失真＝階段B 的價值來源
+  - **B1 資料**：`fetch_positioning.py --on1b`＋`fielder_positioning_on1b` 表
+    （L/R 分抓 PA 加權合併；2023–25 各 ~640 野手；**Neon 部署要 sync 這張表**）
+  - **B2 資料集**：`build_gb_on1b_dataset`（一壘有人僅一壘、<2 出局、Standard、
+    幾何代理用 on1b 切分）；標籤 n_outs∈{0,1,2}——`fielders_choice` 逐筆 des 抽驗
+    ＝**無出局**（0）；新特徵 throw_dist_2b（攔截點到二壘 force 目標）、pivot_dist
+    （2B/SS 距壘包較小者）、runner_hp_to_1b（跑者速度代理）。train 23–24 n=9,668、
+    test 25 n=4,427
+  - **B3 模型**：兩段式 GLM，E[outs] = P(≥1 出局)×(1+P(DP|≥1 出局))，同優化用
+    GLM 的反事實紀律（幾何線性、無 raw spray）。結構 2023→2024 選定
+    （throw_dist_2b +0.003 AUC 採用）；2025 樣本外：階段1 AUC 0.7582、DP 段
+    AUC 0.7518、E[outs] 十分位校準 ≤0.06。DP 係數方向全對（EV +0.89 最大、
+    打者/跑者速度 +、pivot_dist −、throw_dist_2b −0.21）＝站位槓桿存在
+  - **B4 優化器**：`src/if_dp_optimize.py`——**1B 釘死在聯盟 hold-runner 位置**
+    （壘上跑者的規則性行為，非自由變數），優化 2B/3B/SS（6 維，禁趨位 bounds 同
+    現行）；目標 E[ΔRE]=(1−p1)w＋p1(1−p2)d1＋p1p2·d2（w=XB 計價漏接、d1=force/
+    at-1st 實證混合 FORCE_SHARE=0.579、d2=雙殺清壘/1 出局時半局結束）。
+    DPScorer numpy 快速路徑（同 _FastGLMObjective 模式，等價 1e-10，10×加速）。
+    demo（樣本內）：DP 解比無壘況最佳解再省 0.012–0.024 分/GB，中線野手自動
+    分工＝一人錨壘包後方當軸心、一人放去拉打區
+  - **B5 跨年驗證**：`scripts/validate_if_dp.py`（212 位、一壘有人 0 出局、皆評
+    2025 球；對照組=無壘況最佳解在 DP 世界的表現，差＝情境優化的額外增益）
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
   `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪，
   逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）、
