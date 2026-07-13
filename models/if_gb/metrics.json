@@ -48,5 +48,17 @@
       "brier": 0.1399,
       "calibration_max_dev": 0.0238
     }
+  },
+  "gb_xb_model": {
+    "features": [
+      "spray_deg",
+      "launch_speed",
+      "hp_to_1b"
+    ],
+    "metrics": {
+      "auc": 0.9167,
+      "n_train_hits": 26361,
+      "n_test_hits": 13221
+    }
   }
 }

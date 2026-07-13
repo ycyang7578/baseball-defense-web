@@ -28,6 +28,7 @@ from src.if_dataset import build_gb_dataset
 from src.if_model import (DIFFICULTY_FEATURES, OPTIMIZER_FEATURES,
                           make_difficulty_gbm, make_difficulty_glm,
                           make_optimizer_glm)
+from src.if_runvalue import XB_FEATURES, fetch_gb_hits, make_gb_xb_model
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
@@ -85,13 +86,29 @@ def main() -> None:
     p = dglm.predict_proba(test[DIFFICULTY_FEATURES])[:, 1]
     print(calibration_table(test["is_out"].to_numpy(), p).round(3).to_string())
 
+    # 安打類型模型（P(長打|滾地安打)，run-value 計價用——見 src/if_runvalue.py。
+    # 訓練域是聯盟滾地安打（不限壘況/佈陣），與 out 模型的主範圍限制無關）
+    hits_tr = fetch_gb_hits(TRAIN_YEARS)
+    hits_te = fetch_gb_hits([TEST_YEAR])
+    xb = make_gb_xb_model().fit(hits_tr[XB_FEATURES], hits_tr["is_xb"])
+    p = xb.predict_proba(hits_te[XB_FEATURES])[:, 1]
+    xb_auc = roc_auc_score(hits_te["is_xb"], p)
+    print(f"\n  {'安打類型模型 (XB)':<24} AUC={xb_auc:.4f}  "
+          f"(train hits={len(hits_tr):,}, XB率 {hits_tr['is_xb'].mean():.3f})")
+    report["gb_xb_model"] = {
+        "features": XB_FEATURES,
+        "metrics": {"auc": round(xb_auc, 4), "n_train_hits": len(hits_tr),
+                    "n_test_hits": len(hits_te)},
+    }
+
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(glm, MODEL_DIR / "if_gb_optimizer_glm.joblib")
     joblib.dump(dglm, MODEL_DIR / "if_gb_difficulty_glm.joblib")
+    joblib.dump(xb, MODEL_DIR / "if_gb_xb_model.joblib")
     (MODEL_DIR / "metrics.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[saved] {MODEL_DIR}\\if_gb_optimizer_glm.joblib / "
-          f"if_gb_difficulty_glm.joblib / metrics.json")
+          f"if_gb_difficulty_glm.joblib / if_gb_xb_model.joblib / metrics.json")
 
 
 if __name__ == "__main__":
