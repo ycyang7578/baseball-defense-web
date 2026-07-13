@@ -127,6 +127,26 @@ def test_optimize_with_pipeline_result_consistent():
     assert result["exp_outs"] == pytest.approx(recomputed, abs=1e-9)
 
 
+def test_ball_weights_fast_path_matches_pipeline():
+    """加權目標（run-value 用）：快速路徑 = 通用路徑；weights=1 = 無權重。"""
+    glm = _fitted_glm()
+    rng = np.random.default_rng(11)
+    balls = _balls(rng.uniform(-50, 50, 60), ev=rng.uniform(60, 110, 60))
+    w = rng.uniform(0.2, 1.5, len(balls))
+    fast_w = _FastGLMObjective(glm, balls, ball_weights=w)
+    fast_1 = _FastGLMObjective(glm, balls, ball_weights=np.ones(len(balls)))
+    fast_0 = _FastGLMObjective(glm, balls)
+
+    lo = np.array([b[0] for b in ANGLE_BOUNDS + FRAC_BOUNDS])
+    hi = np.array([b[1] for b in ANGLE_BOUNDS + FRAC_BOUNDS])
+    for _ in range(10):
+        angles, depths = params_to_positions(lo + rng.uniform(size=8) * (hi - lo))
+        assert fast_w.expected_outs(angles, depths) == pytest.approx(
+            expected_outs(glm, balls, angles, depths, ball_weights=w), abs=1e-10)
+        assert fast_1.expected_outs(angles, depths) == pytest.approx(
+            fast_0.expected_outs(angles, depths), abs=1e-12)
+
+
 def _effects(alpha, g):
     return {"alpha": np.asarray(alpha, float), "g": np.asarray(g, float),
             "ad_mean": 6.0, "ad_std": 5.0}

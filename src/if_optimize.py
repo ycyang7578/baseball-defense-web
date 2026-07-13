@@ -108,8 +108,17 @@ def predict_p_out(model, balls: pd.DataFrame, angles, depths,
 
 
 def expected_outs(model, balls: pd.DataFrame, angles, depths,
-                  player_effects: dict | None = None) -> float:
-    return float(predict_p_out(model, balls, angles, depths, player_effects).mean())
+                  player_effects: dict | None = None,
+                  ball_weights: np.ndarray | None = None) -> float:
+    """ball_weights=None → 期望出局率（現行）；給權重 → mean(p×w)。
+
+    run-value 目標（階段A）用權重版：w_j = miss_cost_j − ΔRE(out)（皆 >0），
+    E[ΔRE] = mean(miss_cost) − mean(p×w)，最大化 mean(p×w) ⇔ 最小化期望失分。
+    見 src/if_runvalue.py。"""
+    p = predict_p_out(model, balls, angles, depths, player_effects)
+    if ball_weights is None:
+        return float(p.mean())
+    return float((p * np.asarray(ball_weights, dtype=float)).mean())
 
 
 def league_average_positions(years: list[int]) -> tuple[np.ndarray, np.ndarray]:
@@ -172,7 +181,10 @@ class _FastGLMObjective:
     """
 
     def __init__(self, model, balls: pd.DataFrame,
-                 player_effects: dict | None = None):
+                 player_effects: dict | None = None,
+                 ball_weights: np.ndarray | None = None):
+        self._bw = (np.asarray(ball_weights, dtype=float)
+                    if ball_weights is not None else None)
         if player_effects is not None:
             self._pe_alpha = np.asarray(player_effects["alpha"], dtype=float)
             self._pe_g = np.asarray(player_effects["g"], dtype=float)
@@ -249,25 +261,35 @@ class _FastGLMObjective:
         if self._pe_alpha is not None:
             ad_z = (ad_min - self._pe_admean) / self._pe_adstd
             logit = logit + self._pe_alpha[nearest] + self._pe_g[nearest] * ad_z
-        return float(np.mean(1.0 / (1.0 + np.exp(-logit))))
+        p = 1.0 / (1.0 + np.exp(-logit))
+        if self._bw is not None:
+            return float(np.mean(p * self._bw))
+        return float(np.mean(p))
 
 
-def _make_scorer(model, balls: pd.DataFrame, player_effects: dict | None = None):
-    """回傳 (angles, depths) → 期望出局率。GLM pipeline 走快速路徑，其他模型退回通用路徑。"""
+def _make_scorer(model, balls: pd.DataFrame, player_effects: dict | None = None,
+                 ball_weights: np.ndarray | None = None):
+    """回傳 (angles, depths) → 期望出局率（或加權分數，見 expected_outs docstring）。
+    GLM pipeline 走快速路徑，其他模型退回通用路徑。"""
     if hasattr(model, "named_steps") and {"features", "lr"} <= set(model.named_steps):
-        return _FastGLMObjective(model, balls, player_effects).expected_outs
+        return _FastGLMObjective(model, balls, player_effects,
+                                 ball_weights).expected_outs
     return lambda angles, depths: expected_outs(model, balls, angles, depths,
-                                                player_effects)
+                                                player_effects, ball_weights)
 
 
 def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
                      seed: int = 42, extra_starts: list[np.ndarray] | None = None,
-                     player_effects: dict | None = None) -> dict:
-    """LHS 多起點 + L-BFGS-B。回傳最佳站位與期望出局率。"""
+                     player_effects: dict | None = None,
+                     ball_weights: np.ndarray | None = None) -> dict:
+    """LHS 多起點 + L-BFGS-B。回傳最佳站位與期望出局率。
+
+    ball_weights 給定時目標改為 mean(p×w)（run-value 目標，權重與失分的換算
+    見 src/if_runvalue.py），回傳 dict 的 exp_outs 即該加權分數。"""
     bounds = ANGLE_BOUNDS + FRAC_BOUNDS
     lo = np.array([b[0] for b in bounds])
     hi = np.array([b[1] for b in bounds])
-    score = _make_scorer(model, balls, player_effects)
+    score = _make_scorer(model, balls, player_effects, ball_weights)
 
     def neg_exp_outs(x):
         angles, depths = params_to_positions(x)
