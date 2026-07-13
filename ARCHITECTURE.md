@@ -114,6 +114,8 @@ PostgreSQL 資料表：
     - 計價統一為期望失分：外野 `Σ(1−p̂)×w_j`、內野 `E[ΔRE]×n_gb`（`src/if_runvalue.py`），
       兩側各自 vs 同壘況聯盟平均站位，省分相加＝聯合口徑（優化可分離）
     - 需要 `models/if_gb/if_gb_xb_model.joblib`（train_if_gb.py 產出），缺了回 503
+  - `POST /api/if_optimize` — 內野頁主端點（外野 optimize 的內野鏡像），詳見
+    「內野 web 整合」章節「內野頁改版為外野頁鏡像」條目
 
 ## 站位優化管線（需先 precompute，再 optimize）
 1. `scripts/precompute_model_oaa.py` — 對 `is_official` 子集逐球算 `oaa_play=caught−catch_prob`（用群體層 mu_*），按球員加總後寫入 `data/precomputed/model_oaa_2025.csv`，再 UPSERT 進 `model_oaa` 表。執行：`python scripts/precompute_model_oaa.py`
@@ -377,6 +379,22 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   - 前端內野頁：四位置野手 SearchSelect（預設聯盟平均），有指定就打 custom 端點，
     標題列顯示指定陣容；Playwright E2E 驗證過 1440px/375px
   - 啟動載入：`_load_if_bayes()`，資產缺失不中斷啟動（個人化端點回 503/404）
+- **內野頁改版為外野頁鏡像（2026-07-13，使用者要求控制面板「一模一樣」）**：
+  - `POST /api/if_optimize`（`IFOptimizeRequest`）＝外野 `/api/optimize` 的內野對應：
+    打者＋壘況＋指定野手（player_id）→ 聯盟平均 vs 最佳化站位。站位從離線出局率
+    最佳解 warm start、以該壘況 run-value 權重精修（`n_restarts=0`，兩目標等價
+    結論背書）＋錨定式球員效應；回傳出局率＋預期失分（E[ΔRE]×n_gb）＋省分。
+    共用 `_load_if_batter()`/`_if_player_effects()` helper（custom/integrated 同源）
+  - `if_fielder_options` 選項加 `oaa`/`n_balls`（if_model_oaa JOIN，None=無評價紀錄）
+    ——前端「最低守備次數」滑桿與 OAA/100 標籤用
+  - `pages/Infield.jsx` 重寫成 App.jsx 版型：年份 tabs／打者／比賽狀況
+    （GameStateForm）／球場（**僅顯示於標題，標註內野站位不受球場影響**——內野
+    場地標準化、模型無球場效應，使用者選擇照放但標註）／內野手（min 滑桿＋
+    四位置 SearchSelect，標籤 OAA/100）／比較模式（A/B 獨立球場與陣容、並排圖
+    ＋ CompareStats 差異表：出局率/預期失分/座標差）。舊 colorBy 切換與 P(out)
+    滑桿保留。`GET /api/if_result`（純查表）與 custom 端點續存，頁面已不用
+  - Playwright E2E 驗證：單張（壘況 1--/1out＋SS Abrams，省分 +1.2 分與 API 一致）
+    ＋比較模式（A−B 差異表、SS 座標差）
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
   `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪，
   逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）、
