@@ -52,6 +52,23 @@ def load_fielder_positioning(conn) -> None:
         print(f"[loaded] fielder_positioning {year}: {len(df):,} rows")
 
 
+def load_fielder_positioning_on1b(conn) -> None:
+    """一壘有人切分（{year}_on1b.parquet，2023 起才有；階段B 雙殺模型用）。"""
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE fielder_positioning_on1b;")
+    conn.commit()
+    for year in YEARS:
+        path = DATA_DIR / "positioning" / f"{year}_on1b.parquet"
+        if not path.exists():
+            continue
+        df = pd.read_parquet(path)
+        df = df.sort_values("pa", ascending=False).drop_duplicates(
+            subset=["fielder_id", "season", "position"], keep="first"
+        )
+        _copy(conn, "fielder_positioning_on1b", df)
+        print(f"[loaded] fielder_positioning_on1b {year}: {len(df):,} rows")
+
+
 def load_sprint_speed(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("TRUNCATE sprint_speed;")
@@ -79,11 +96,18 @@ def load_savant_fielding(conn) -> None:
 
 
 if __name__ == "__main__":
+    # 無參數=全部重載；帶表名（如 `on1b`）只載該表，避免為單表跑全量 TRUNCATE 重灌
+    _LOADERS = {
+        "statcast": load_statcast,
+        "positioning": load_fielder_positioning,
+        "on1b": load_fielder_positioning_on1b,
+        "sprint_speed": load_sprint_speed,
+        "savant_fielding": load_savant_fielding,
+    }
+    targets = sys.argv[1:] or list(_LOADERS)
     conn = psycopg2.connect(DSN)
     try:
-        load_statcast(conn)
-        load_fielder_positioning(conn)
-        load_sprint_speed(conn)
-        load_savant_fielding(conn)
+        for t in targets:
+            _LOADERS[t](conn)
     finally:
         conn.close()
