@@ -1,0 +1,19 @@
+{
+  "n_batters": 212,
+  "min_train_gb": 150,
+  "min_test_gb": 80,
+  "state": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "mean_gain_cross_outs": 0.010673,
+  "mean_gain_cross_runs": 0.010733,
+  "mean_gain_same": 0.016339,
+  "runs_per_450gb_cross_outs": 4.803,
+  "retention": 0.6533,
+  "share_positive": 0.967,
+  "t_stat": 22.007,
+  "p_value": 1.511e-56
+}

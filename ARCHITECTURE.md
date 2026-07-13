@@ -492,7 +492,13 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   **已落地（2026-07-13）**：XB 模型進 train_if_gb.py cascade（if_gb_xb_model.joblib，
   2025 AUC 0.9167）；`POST /api/optimize_integrated`＋前端 `/integrated` 頁（見
   API/前端章節）；跨年驗證失分口徑＝`scripts/validate_if_runvalue.py`
-  （validation_runvalue_2025.json）。階段B（有人在壘 out 模型 force/DP）另立研究
+  （validation_runvalue_2025.json）。
+  **失分口徑跨年驗證結果（2026-07-13，n=212、皆評 2025 球）**：跨年增益
+  +0.01067 分/GB（**450 GB≈+4.80 分**）、正增益 96.7%、t=22.01（p≈1.5e-56）、
+  保留率 65.3%、左打 +0.01203 > 右打 +0.00994——與出局率口徑（+0.0156/GB、
+  63.6%、95.3%、t=20.75、左>右）全面一致；run 目標站位 +4.83 分/450GB vs
+  outs 目標 +4.80，再次確認兩目標等價。
+  階段B（有人在壘 out 模型 force/DP）另立研究
 - **評價用難度模型改為可解釋 GLM（2026-07-12，使用者決定：不用無法說明的模型）**：
   `scripts/exp_if_difficulty_glm.py` → `make_difficulty_glm()` 進生產（if_model.py），
   GBM 降為 benchmark。特徵：spray 左打鏡像（Melville 同款）+ spray(8 節點)/LA/EV/hp
