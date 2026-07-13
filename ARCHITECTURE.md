@@ -447,13 +447,21 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     跨年驗證＝LHS 8＋無壘況最佳解＋聯盟站位，勿在未重做收斂測試前調低）。
     **UI 只顯示最佳站位、不顯示雙殺機率**——回應的 exp_outs / p_out_* /
     gain_outs 一律是 P(≥1 出局)（口徑同「出局率」，前端零改動直接相容），
-    runs 仍是雙殺感知 E[ΔRE]×n_gb。其他壘況維持現行 run-value 精修；階段B
-    模型無球員層，此壘況指定野手不影響站位（回應仍回野手名）。聯盟一壘有人
+    runs 仍是雙殺感知 E[ΔRE]×n_gb。其他壘況維持現行 run-value 精修。
+    **球員層（2026-07-14 補）**：指定野手時把無人在壘貝葉斯層的 (α_j, g_j)
+    移植到階段1 P(≥1 出局) 的 logit（野手轉換力是截距性質、不隨壘況變；
+    階段2 雙殺轉換無球員層資料不掛），錨定式：零效應 DP 解 warm start 精修。
+    ⚠️ 陷阱：零效應解常同時壓在多個 bound 與最近野手 argmin 交界的 kink 上，
+    L-BFGS-B 從該點起步數值梯度失效、line search ABNORMAL 原地不動（實測
+    連旁邊 −4.5e-5 的小改善都撿不到）——精修起點用 `anchored_starts`（錨點
+    ＋8 個小抖動：角度 ±0.75°、frac ±0.05），維持錨定語意同時避開 kink。
+    1B 效應仍參與逐球評估（他附近的球還是他處理），但站位釘死不動。聯盟一壘有人
     站位＋跑者中位速度改走離線常數 JSON（scripts/precompute_if_on1b_constants.py
     → data/precomputed/if_on1b_constants.json，startup 讀、缺了退回無壘況精修）
     ——**雲端因此不需要 `fielder_positioning_on1b`／`sprint_speed` 表**，部署
     前提只剩 models/if_gb/on1b/ 兩支 GLM（已入 git）。本機實測 DP 分支
-    2.1~2.6s（n_gb=264），估 Render 0.1 CPU 約 20~26s、與 OF 端點同量級
+    2.1~2.6s、帶野手 4.8s（n_gb=264），估 Render 0.1 CPU 約 20~48s、
+    與 OF 端點同量級
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
   `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用）、`fielder_positioning`
   （野手選單）。**2026-07-14 查核：以上全部在 Neon 且與本機一致**

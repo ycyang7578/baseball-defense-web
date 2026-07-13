@@ -118,16 +118,29 @@ class DPScorer:
     幾何相關項。與 predict_proba 數值等價（tests/test_if_dp_optimize.py
     驗證到 1e-10）。係數切段順序必須跟 On1bOutFeatures / On1bDPFeatures
     的 transform 一致。
+
+    player_effects：格式與語意同 if_optimize（{"alpha","g","ad_mean","ad_std"}，
+    依 ("1B","2B","3B","SS") 順序，逐球加在最近野手身上：logit += α_j + g_j×ad_z）。
+    效應來自無人在壘的貝葉斯球員層（scripts/train_if_bayes.py）——野手轉換力
+    是截距性質、不隨壘況變，移植到階段1 的 P(≥1 出局)；階段2（雙殺轉換）
+    沒有球員層資料，不掛。
     """
 
     def __init__(self, out_model, dp_model, balls: pd.DataFrame,
                  pinned_1b: tuple[float, float], w: np.ndarray,
-                 d1: float, d2: float):
+                 d1: float, d2: float, player_effects: dict | None = None):
         import copy
 
         self._1b = (float(pinned_1b[0]), float(pinned_1b[1]))
         self._w = np.asarray(w, dtype=float)
         self._d1, self._d2 = float(d1), float(d2)
+        if player_effects is not None:
+            self._pe_alpha = np.asarray(player_effects["alpha"], dtype=float)
+            self._pe_g = np.asarray(player_effects["g"], dtype=float)
+            self._pe_admean = float(player_effects["ad_mean"])
+            self._pe_adstd = float(player_effects["ad_std"])
+        else:
+            self._pe_alpha = None
 
         spray = balls["spray_deg"].to_numpy(float)
         rad = np.radians(spray)
@@ -229,6 +242,10 @@ class DPScorer:
                   + self._s1_c_ht * self._s1_hp_z * throw_z
                   + (b1 @ self._s1_c_hpb) * self._s1_hp_z
                   + t2b1_z * self._s1_c_2b)
+        if self._pe_alpha is not None:
+            ad_z = (ad_min - self._pe_admean) / self._pe_adstd
+            logit1 = (logit1 + self._pe_alpha[nearest]
+                      + self._pe_g[nearest] * ad_z)
         p1 = 1.0 / (1.0 + np.exp(-logit1))
 
         a2 = self._s2_spl_ad.transform(ad_min[:, None])
@@ -277,23 +294,47 @@ def positions_to_params_dp(angles3, depths3) -> np.ndarray:
     return np.concatenate([angles3, np.clip(fracs, 0.0, 1.0)])
 
 
+def anchored_starts(anchor: np.ndarray, n_jitter: int = 8,
+                    seed: int = 42) -> list[np.ndarray]:
+    """錨定精修的起點：錨點本身＋周圍小抖動。
+
+    零效應最佳解常同時壓在多個 bound 與最近野手 argmin 交界的 kink 上，
+    L-BFGS-B 的數值梯度在該點會 line search 失敗（ABNORMAL）原地不動，
+    連旁邊的小改善都撿不到；從錨點附近起步就正常。抖動幅度小
+    （角度 ±0.75°、深度比例 ±0.05）維持錨定語意——位移只反映球員效應
+    的拉力，不做全域重找。
+    """
+    bounds = [ANGLE_BOUNDS[1], ANGLE_BOUNDS[2], ANGLE_BOUNDS[3]] + FRAC_BOUNDS[:3]
+    lo = np.array([b[0] for b in bounds])
+    hi = np.array([b[1] for b in bounds])
+    rng = np.random.default_rng(seed)
+    scale = np.array([0.75, 0.75, 0.75, 0.05, 0.05, 0.05])
+    anchor = np.asarray(anchor, dtype=float)
+    return [anchor] + [np.clip(anchor + rng.uniform(-1, 1, 6) * scale, lo, hi)
+                       for _ in range(n_jitter)]
+
+
 def optimize_infield_dp(balls: pd.DataFrame, out_model, dp_model,
                         pinned_1b: tuple[float, float], w: np.ndarray,
                         d1: float, d2: float, n_restarts: int = 16,
                         seed: int = 42,
                         extra_starts: list[np.ndarray] | None = None,
-                        objective: str = "re") -> dict:
+                        objective: str = "re",
+                        player_effects: dict | None = None) -> dict:
     """LHS 多起點 + L-BFGS-B，最小化 E[ΔRE]（objective="re"，預設）。
 
     objective="p1"：改最大化 P(≥1 出局)——「懂釘死 1B 的幾何但不懂雙殺計價」，
     只作為分解實驗的中間基準（隔離補洞效果 vs 雙殺感知，勿用於生產）。
     bounds：2B 角度 [1°,44°]（右側，不與釘死的 1B 換邊）、3B/SS [-44°,-1°]，
     深度重參數化同 if_optimize（內野土約束）。
+    player_effects：見 DPScorer docstring；個人化時 3B/SS 槽位綁定特定野手，
+    不做標籤正規化（同 if_optimize 慣例）。
     """
     bounds = [ANGLE_BOUNDS[1], ANGLE_BOUNDS[2], ANGLE_BOUNDS[3]] + FRAC_BOUNDS[:3]
     lo = np.array([b[0] for b in bounds])
     hi = np.array([b[1] for b in bounds])
-    scorer = DPScorer(out_model, dp_model, balls, pinned_1b, w, d1, d2)
+    scorer = DPScorer(out_model, dp_model, balls, pinned_1b, w, d1, d2,
+                      player_effects)
 
     if objective == "re":
         def obj(x):
@@ -322,8 +363,9 @@ def optimize_infield_dp(balls: pd.DataFrame, out_model, dp_model,
             best_x, best_val = res.x, res.fun
 
     angles, depths = params_to_positions_dp(best_x)
-    # 3B/SS 標籤可互換，正規化：角度最負者為 3B（2B 單獨在右側無此問題）
-    if angles[1] > angles[2]:
+    # 3B/SS 標籤可互換，正規化：角度最負者為 3B（2B 單獨在右側無此問題）。
+    # 個人化時槽位綁定特定野手，不可重排。
+    if player_effects is None and angles[1] > angles[2]:
         angles[[1, 2]] = angles[[2, 1]]
         depths[[1, 2]] = depths[[2, 1]]
     return {"angles": angles, "depths": depths, "exp_re": float(best_val),

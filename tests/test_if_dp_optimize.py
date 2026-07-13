@@ -112,6 +112,134 @@ def test_dp_scorer_fast_path_matches_pipelines():
     assert ((p1_public >= 0) & (p1_public <= 1)).all()
 
 
+def _real_models():
+    from pathlib import Path
+
+    import joblib
+
+    model_dir = Path(__file__).resolve().parent.parent / "models" / "if_gb" / "on1b"
+    return (joblib.load(model_dir / "if_on1b_out_glm.joblib"),
+            joblib.load(model_dir / "if_on1b_dp_glm.joblib"))
+
+
+def _rand_balls(n=60, seed=7):
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame({
+        "spray_deg": rng.uniform(-50, 50, n),
+        "launch_speed": rng.uniform(60, 110, n),
+        "launch_angle": rng.uniform(-40, 5, n),
+        "hp_to_1b": rng.uniform(4.0, 5.0, n),
+        "runner_hp_to_1b": np.full(n, 4.44),
+        "stand_R": rng.integers(0, 2, n).astype(float),
+    }), rng
+
+
+def test_dp_scorer_zero_player_effects_equal_baseline():
+    """全零效應必須跟不帶效應完全一樣（聯盟平均野手）。"""
+    from src.if_dp_optimize import DPScorer
+
+    out_model, dp_model = _real_models()
+    balls, rng = _rand_balls()
+    w = rng.uniform(0.3, 0.9, len(balls))
+    pinned = (40.6, 88.0)
+    pe = {"alpha": np.zeros(4), "g": np.zeros(4), "ad_mean": 6.0, "ad_std": 5.0}
+    base = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77)
+    with_pe = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77, pe)
+
+    angles3 = np.array([12.0, -33.0, -12.0])
+    depths3 = np.array([148.0, 118.0, 146.0])
+    np.testing.assert_allclose(with_pe.per_ball_p1(angles3, depths3),
+                               base.per_ball_p1(angles3, depths3), atol=1e-12)
+    assert with_pe.expected_re(angles3, depths3) == pytest.approx(
+        base.expected_re(angles3, depths3), abs=1e-12)
+
+
+def test_dp_scorer_player_effects_shift_stage1_logit_only():
+    """效應＝最近野手的 α_j + g_j×ad_z 加在階段1 logit（階段2 不掛），
+    與不帶效應的 p1 手算對照。"""
+    from src.if_dp_optimize import DPScorer
+
+    out_model, dp_model = _real_models()
+    balls, rng = _rand_balls(seed=13)
+    w = rng.uniform(0.3, 0.9, len(balls))
+    pinned = (40.6, 88.0)
+    pe = {"alpha": np.array([0.2, -0.1, 0.05, -0.3]),
+          "g": np.array([0.15, 0.0, -0.2, 0.1]),
+          "ad_mean": 6.0, "ad_std": 5.0}
+    base = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77)
+    with_pe = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77, pe)
+
+    angles3 = np.array([20.0, -30.0, -8.0])
+    depths3 = np.array([150.0, 120.0, 140.0])
+    angles4 = np.concatenate([[pinned[0]], angles3])
+    depths4 = np.concatenate([[pinned[1]], depths3])
+    spray = balls["spray_deg"].to_numpy(float)
+    nearest = np.abs(angles4[None, :] - spray[:, None]).argmin(axis=1)
+    ad_min = dp_geometry(balls, angles4, depths4)["ad_min"].to_numpy()
+    ad_z = (ad_min - pe["ad_mean"]) / pe["ad_std"]
+
+    p1_base = base.per_ball_p1(angles3, depths3)
+    logit = np.log(p1_base / (1 - p1_base)) + pe["alpha"][nearest] + pe["g"][nearest] * ad_z
+    np.testing.assert_allclose(with_pe.per_ball_p1(angles3, depths3),
+                               1 / (1 + np.exp(-logit)), atol=1e-10)
+    # 階段2 不掛效應：p2 必須不變
+    np.testing.assert_allclose(with_pe._probs(angles3, depths3)[1],
+                               base._probs(angles3, depths3)[1], atol=1e-12)
+
+
+def test_dp_optimize_personalized_keeps_slot_assignment():
+    """個人化時 3B/SS 槽位綁定野手、不做標籤重排，且回傳分數與帶效應
+    scorer 一致。"""
+    from src.if_dp_optimize import DPScorer, optimize_infield_dp
+
+    out_model, dp_model = _real_models()
+    balls, rng = _rand_balls(seed=21)
+    w = rng.uniform(0.3, 0.9, len(balls))
+    pinned = (40.6, 88.0)
+    pe = {"alpha": np.array([0.0, 0.0, -0.4, 0.4]),
+          "g": np.array([0.0, 0.0, -0.3, 0.3]),
+          "ad_mean": 6.0, "ad_std": 5.0}
+    res = optimize_infield_dp(balls, out_model, dp_model, pinned, w,
+                              -0.29, -0.77, n_restarts=4, seed=2,
+                              player_effects=pe)
+    scorer = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77, pe)
+    assert res["exp_re"] == pytest.approx(
+        scorer.expected_re(res["angles"], res["depths"]), abs=1e-9)
+    # bounds 仍須成立（2B 右側、3B/SS 左側）
+    assert 1.0 <= res["angles"][0] <= 44.0
+    assert all(-44.0 <= a <= -1.0 for a in res["angles"][1:])
+
+
+def test_dp_anchored_refine_never_worse_than_anchor():
+    """個人化錨定精修（anchored_starts：錨點＋抖動）必須 ≥ 錨點本身的分數——
+    零效應解常卡在 kink 上讓 L-BFGS-B 原地失敗，抖動起點要能撿到附近的改善。"""
+    from src.if_dp_optimize import (DPScorer, anchored_starts,
+                                    optimize_infield_dp,
+                                    positions_to_params_dp)
+
+    out_model, dp_model = _real_models()
+    balls, rng = _rand_balls(n=120, seed=5)
+    w = rng.uniform(0.3, 0.9, len(balls))
+    pinned = (40.6, 88.0)
+    base = optimize_infield_dp(balls, out_model, dp_model, pinned, w,
+                               -0.29, -0.77, n_restarts=6, seed=3)
+    pe = {"alpha": np.array([0.0, 0.1, -0.15, 0.09]),
+          "g": np.array([0.0, -0.1, 0.05, -0.3]),
+          "ad_mean": 6.0, "ad_std": 5.0}
+    anchor = positions_to_params_dp(base["angles"], base["depths"])
+    starts = anchored_starts(anchor)
+    assert len(starts) == 9 and np.allclose(starts[0], anchor)
+    res = optimize_infield_dp(balls, out_model, dp_model, pinned, w,
+                              -0.29, -0.77, n_restarts=0,
+                              extra_starts=starts, player_effects=pe)
+    scorer = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77, pe)
+    f_anchor = scorer.expected_re(base["angles"], base["depths"])
+    assert res["exp_re"] <= f_anchor + 1e-12
+    # 錨定語意：位移該是小幅修正，不是跳去別的解家族
+    assert np.abs(res["angles"] - base["angles"]).max() < 5.0
+    assert np.abs(res["depths"] - base["depths"]).max() < 15.0
+
+
 def test_on1b_constants_json_complete_for_deploy():
     """/api/if_optimize DP 分支的離線常數（scripts/precompute_if_on1b_constants.py）
     必須在 repo 裡且欄位齊全——雲端沒有 fielder_positioning_on1b / sprint_speed，

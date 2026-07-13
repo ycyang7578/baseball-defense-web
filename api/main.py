@@ -28,8 +28,9 @@ from src.config import DSN
 from src.hit_prob import predict_hit_probs_batch, load_hit_prob
 from src.re24 import load_re24
 from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall_ball
-from src.if_dp_optimize import (DP_POSITIONS, DPScorer, dp_delta_re,
-                                optimize_infield_dp, positions_to_params_dp)
+from src.if_dp_optimize import (DP_POSITIONS, DPScorer, anchored_starts,
+                                dp_delta_re, optimize_infield_dp,
+                                positions_to_params_dp)
 from src.if_optimize import (expected_outs as if_expected_outs,
                              optimize_infield, positions_to_params,
                              predict_p_out)
@@ -756,9 +757,12 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     平均站位（fielder_positioning_on1b 切分的離線常數）。UI 決策（2026-07-13）：
     只顯示站位——exp_outs / p_out_* / gain_outs 一律是 P(≥1 出局)（口徑同
     「出局率」），不回傳雙殺機率；runs 仍是雙殺感知的 E[ΔRE]×n_gb。
-    階段B 模型無球員層，指定野手在此壘況不影響站位（回應仍回野手名）。
-    起點配置同跨年驗證（scripts/validate_if_dp.py）：LHS 8＋無壘況最佳解＋
-    聯盟站位，勿在未重做收斂測試前調低。
+    指定野手時掛球員層效應（無人在壘貝葉斯層移植到階段1，見 DPScorer
+    docstring），錨定式：從零效應 DP 最佳解 warm start 精修，同
+    /api/if_result_custom 模式。1B 效應仍參與逐球評估（他附近的球還是他處理），
+    但站位釘死不隨效應動。
+    零效應解的起點配置同跨年驗證（scripts/validate_if_dp.py）：LHS 8＋
+    無壘況最佳解＋聯盟站位，勿在未重做收斂測試前調低。
     """
     import math
 
@@ -770,6 +774,9 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls = \
         _load_if_batter(req.batter_id, year)
     balls["runner_hp_to_1b"] = _if_on1b_runner_hp
+
+    fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
+    pe = _if_player_effects(fids) if any(fids.values()) else None
 
     w = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
     d1, d2 = dp_delta_re(_re24_table, _delta_re, req.outs)
@@ -783,8 +790,16 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
         res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
                                   pinned_1b, w, d1, d2, n_restarts=8, seed=42,
                                   extra_starts=starts)
+        if pe is not None:
+            # 錨點常卡在 kink 上（見 anchored_starts docstring），加小抖動起點
+            anchor = positions_to_params_dp(res["angles"], res["depths"])
+            res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
+                                      pinned_1b, w, d1, d2, n_restarts=0,
+                                      extra_starts=anchored_starts(anchor),
+                                      player_effects=pe)
 
-    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w, d1, d2)
+    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w,
+                      d1, d2, pe)
 
     def eval_set(angles3, depths3) -> tuple[np.ndarray, float, float]:
         """(逐球 p1, 平均 p1, E[ΔRE]×n_gb)。"""
@@ -809,13 +824,13 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     lg_angles4 = np.concatenate([[pinned_1b[0]], lg3_angles])
     lg_depths4 = np.concatenate([[pinned_1b[1]], lg3_depths])
 
-    fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
     gain_outs = eo_opt - eo_lg
     runs_saved = runs_lg - runs_opt
     raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
     logger.info(f"[timing] if_optimize(DP) TOTAL: "
                 f"{time.perf_counter() - t_start:.2f}s "
-                f"(batter={req.batter_id}, year={year}, outs={req.outs})")
+                f"(batter={req.batter_id}, year={year}, outs={req.outs}, "
+                f"fielders={any(fids.values())})")
 
     return IFOptimizeResponse(
         batter_id=req.batter_id,
