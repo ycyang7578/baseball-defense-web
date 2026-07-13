@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from api.schemas import BallPoint, OptimizeRequest
+from api.schemas import (BallPoint, IntegratedRequest, IntegratedSet,
+                         OptimizeRequest, PositionXY)
 
 
 def test_optimize_request_accepts_defaults():
@@ -36,3 +37,21 @@ def test_optimize_request_accepts_boundary_outs():
 def test_ball_point_responsible_defaults_to_none():
     ball = BallPoint(x=1.0, y=2.0, catch_prob=0.5, is_wall_ball=False)
     assert ball.responsible is None
+
+
+def test_integrated_request_accepts_defaults_and_bounds():
+    req = IntegratedRequest(batter_id=123)
+    assert (req.on_1b, req.on_2b, req.on_3b, req.outs) == (0, 0, 0, 0)
+    with pytest.raises(ValidationError):
+        IntegratedRequest(batter_id=123, outs=3)
+    with pytest.raises(ValidationError):
+        IntegratedRequest(batter_id=123, on_2b=2)
+
+
+def test_integrated_set_holds_seven_positions():
+    xy = PositionXY(x=0.0, y=100.0)
+    s = IntegratedSet(
+        positions={p: xy for p in ("LF", "CF", "RF", "1B", "2B", "3B", "SS")},
+        runs_of=10.0, runs_if=5.0, runs_total=15.0)
+    assert len(s.positions) == 7
+    assert s.runs_total == s.runs_of + s.runs_if

@@ -31,11 +31,13 @@ from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall
 from src.if_optimize import (expected_outs as if_expected_outs,
                              optimize_infield, positions_to_params,
                              predict_p_out)
+from src.if_runvalue import runvalue_ball_weights
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
     IFBallPoint, IFBatterInfo, IFCustomResultResponse, IFFielderInfo,
     IFFielderOption, IFPosition, IFPositionSet, IFResultResponse, IFStats,
+    IntegratedRequest, IntegratedResponse, IntegratedSet, IntegratedStats,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +61,7 @@ _DEFAULT_YEAR = _AVAILABLE_YEARS[-1] if _AVAILABLE_YEARS else 2025
 
 # ── 啟動快取 ──────────────────────────────────────────────────────
 _name_map:    dict[int, str]  = {}
+_re24_table = None
 _delta_re   = None
 _hit_bundle = None
 
@@ -88,6 +91,8 @@ _if_bayes_model = None                                    # 群體層 pipeline�
 _if_effects:        dict[int, tuple[float, float]] = {}  # player_id → (alpha, g)
 _if_ad_norm:        tuple[float, float] | None = None    # (ad_mean, ad_std)
 _if_fielder_opts:   dict[int, dict[str, list[dict]]] = {}  # year → pos → options
+# 安打類型模型（run-value 計價，內外野整合頁用，見 src/if_runvalue.py）
+_if_xb_model = None
 
 
 def _load_infield_caches() -> None:
@@ -127,9 +132,22 @@ def _load_infield_caches() -> None:
     except Exception as e:
         logger.warning(f"內野快取載入失敗: {e}")
     _load_if_bayes()
+    _load_if_xb()
     logger.info(f"內野: years={_if_years}, ranking years={_if_ranking_years}, "
                 f"bayes={'on' if _if_bayes_model is not None else 'off'}, "
+                f"xb={'on' if _if_xb_model is not None else 'off'}, "
                 + ", ".join(f"{y}={len(_if_batters_cache[y])} batters" for y in _if_years))
+
+
+def _load_if_xb() -> None:
+    """安打類型模型（P(長打|滾地安打)）。缺了不中斷啟動，整合端點回 503。"""
+    global _if_xb_model
+    import joblib
+    try:
+        _if_xb_model = joblib.load(BASE / "models" / "if_gb" / "if_gb_xb_model.joblib")
+    except Exception as e:
+        logger.warning(f"安打類型模型載入失敗，整合端點停用: {e}")
+        _if_xb_model = None
 
 
 def _load_if_bayes() -> None:
@@ -274,7 +292,7 @@ def _load_batters(year: int) -> list[dict]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _delta_re, _hit_bundle
+    global _re24_table, _delta_re, _hit_bundle
 
     # 名稱快取
     name_path = BASE / "data" / "reference" / "batter_names.json"
@@ -284,7 +302,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Loaded {len(_name_map)} batter names")
 
     # 預計算資料（RE24 / hit prob KDE — 年份無關）
-    _, _delta_re = load_re24(PRE_DIR)
+    _re24_table, _delta_re = load_re24(PRE_DIR)
     _hit_bundle  = load_hit_prob(PRE_DIR)
     logger.info("Preloaded RE24, KDE")
 
@@ -664,6 +682,177 @@ def if_fielders(year: int = 2025, min_balls: int = 100):
             for pid, name, _, oaa, n, off_oaa, off_n in rows_pos
         ]
     return result
+
+
+# ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──
+
+@app.post("/api/optimize_integrated", response_model=IntegratedResponse)
+def optimize_integrated(req: IntegratedRequest):
+    """打者＋壘況 → 七人站位與總省分。
+
+    計價統一為期望失分：外野 = Σ(1−p̂)×w_j（現行 objective_re24）、內野 =
+    E[ΔRE]×n_gb（run-value 權重，src/if_runvalue.py）。優化可分離（滾地歸內野、
+    飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位，省分相加即聯合口徑。
+    內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
+    （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
+    通用球場（不指定 home_team）、聯盟平均野手。
+    """
+    import math
+
+    import numpy as np
+    import pandas as pd
+
+    if _if_bayes_model is None or _if_xb_model is None:
+        raise HTTPException(503, "整合模型未載入")
+    if req.year not in _AVAILABLE_YEARS:
+        raise HTTPException(422, f"No OF model for year {req.year}. Available: {_AVAILABLE_YEARS}")
+    if req.year not in _if_years:
+        raise HTTPException(404, f"No infield data for year {req.year}. Available: {_if_years}")
+    if req.year not in _if_league:
+        raise HTTPException(500, f"if_league_positions.json 缺 {req.year}")
+
+    t_start = time.perf_counter()
+    year = req.year
+    state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
+
+    # ── 外野側（同 /api/optimize 一般模式；共用打者球快取）──────────
+    yr_balls_cache = _batter_balls_cache.setdefault(year, {})
+    yr_hprob_cache = _batter_hitprobs_cache.setdefault(year, {})
+    if req.batter_id not in yr_balls_cache:
+        try:
+            balls_of = prepare_batter_balls(req.batter_id, [year], DSN)
+        except Exception as e:
+            raise HTTPException(422, str(e))
+        if balls_of.empty:
+            raise HTTPException(422, f"Batter {req.batter_id} has no qualifying OF balls in {year}")
+        yr_balls_cache[req.batter_id] = balls_of
+        yr_hprob_cache[req.batter_id] = predict_hit_probs_batch(_hit_bundle, balls_of)
+    balls_of = yr_balls_cache[req.batter_id]
+    hit_probs = yr_hprob_cache[req.batter_id]
+
+    w_j = compute_w_j(balls_of, _hit_bundle, _delta_re,
+                      req.on_1b, req.on_2b, req.on_3b, req.outs, hit_probs=hit_probs)
+    of_mask = w_j > 0
+    if not of_mask.any():
+        raise HTTPException(422, "No balls with positive w_j for this game state")
+
+    models_dir = BASE / "models" / str(year)
+    with _optimize_semaphore:
+        opt_of = optimize_positions(
+            batter_id=req.batter_id,
+            on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
+            years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
+            home_team=None, dsn=DSN, balls=balls_of, hit_probs=hit_probs,
+            n_restarts=10,
+        )
+    pos_of_opt = {p: opt_of[p] for p in POSITIONS}
+    try:
+        pos_of_league = get_league_avg_positions(year, DSN)
+    except Exception:
+        pos_of_league = {"LF": (-130.0, 250.0), "CF": (0.0, 310.0), "RF": (130.0, 250.0)}
+
+    def of_runs(pos_dict):
+        probs = np.asarray(compute_ball_catch_probs(
+            pos_dict, balls_of, _scalers.get(year, {}), _mus.get(year, {})), dtype=float)
+        return probs, float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask]))
+
+    probs_of_opt, runs_of_opt = of_runs(pos_of_opt)
+    _, runs_of_league = of_runs(pos_of_league)
+
+    # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修）──
+    with psycopg2.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT stand, n_gb, hp_to_1b, "
+                "       angle_1b, depth_1b, angle_2b, depth_2b, "
+                "       angle_3b, depth_3b, angle_ss, depth_ss "
+                "FROM precomputed_if_positions "
+                "WHERE batter = %s AND game_year = %s", (req.batter_id, year))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    404, f"Batter {req.batter_id} has no precomputed infield result in {year}")
+            cur.execute(
+                "SELECT spray_deg, ball_x, ball_y, launch_speed, launch_angle, is_out "
+                "FROM precomputed_if_gbs "
+                "WHERE batter = %s AND game_year = %s", (req.batter_id, year))
+            ball_rows = cur.fetchall()
+
+    stand, _, hp_to_1b = row[:3]
+    warm_angles = np.array([row[3], row[5], row[7], row[9]], dtype=float)
+    warm_depths = np.array([row[4], row[6], row[8], row[10]], dtype=float)
+
+    balls_if = pd.DataFrame(ball_rows, columns=[
+        "spray_deg", "ball_x", "ball_y", "launch_speed", "launch_angle", "is_out"])
+    balls_if["launch_angle"] = pd.to_numeric(balls_if["launch_angle"], errors="coerce")
+    balls_if["launch_angle"] = balls_if["launch_angle"].fillna(balls_if["launch_angle"].median())
+    balls_if["launch_speed"] = balls_if["launch_speed"].astype(float)
+    balls_if["hp_to_1b"] = float(hp_to_1b)
+    balls_if["stand_R"] = int(stand == "R")
+
+    bw, mean_w = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table, _delta_re, state)
+    warm = positions_to_params(warm_angles, warm_depths)
+    with _optimize_semaphore:
+        res = optimize_infield(balls_if, _if_bayes_model, n_restarts=0,
+                               extra_starts=[warm], ball_weights=bw)
+
+    lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
+    lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
+    # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)
+    e_if_opt = mean_w - res["exp_outs"]
+    e_if_league = mean_w - if_expected_outs(
+        _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=bw)
+    runs_if_opt = e_if_opt * len(balls_if)
+    runs_if_league = e_if_league * len(balls_if)
+
+    p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths)
+    p_if_opt = predict_p_out(_if_bayes_model, balls_if, res["angles"], res["depths"])
+
+    # ── 組裝（七人站位共用 PositionXY；內野 angle/depth → x/y）──────
+    def if_xy(angle: float, depth: float) -> PositionXY:
+        rad = math.radians(angle)
+        return PositionXY(x=round(depth * math.sin(rad), 1),
+                          y=round(depth * math.cos(rad), 1))
+
+    def pack(pos_of, if_angles, if_depths, runs_of, runs_if) -> IntegratedSet:
+        positions = {p: PositionXY(x=round(float(pos_of[p][0]), 1),
+                                   y=round(float(pos_of[p][1]), 1))
+                     for p in POSITIONS}
+        positions.update({p: if_xy(float(a), float(d))
+                          for p, a, d in zip(IF_POSITIONS, if_angles, if_depths)})
+        return IntegratedSet(positions=positions,
+                             runs_of=round(runs_of, 3), runs_if=round(runs_if, 3),
+                             runs_total=round(runs_of + runs_if, 3))
+
+    raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
+    bases = (("1" if req.on_1b else "-") + ("2" if req.on_2b else "-")
+             + ("3" if req.on_3b else "-"))
+    logger.info(f"[timing] optimize_integrated TOTAL: {time.perf_counter() - t_start:.2f}s "
+                f"(batter={req.batter_id}, year={year}, state={state})")
+
+    return IntegratedResponse(
+        batter_id=req.batter_id,
+        name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
+        year=year, stand=stand,
+        situation=f"{bases}  {req.outs} out",
+        league=pack(pos_of_league, lg_angles, lg_depths, runs_of_league, runs_if_league),
+        optimized=pack(pos_of_opt, res["angles"], res["depths"], runs_of_opt, runs_if_opt),
+        of_balls=[BallPoint(x=float(balls_of.iloc[i]["ball_x"]),
+                            y=float(balls_of.iloc[i]["ball_y"]),
+                            catch_prob=float(probs_of_opt[i]), is_wall_ball=False)
+                  for i in range(len(balls_of))],
+        if_balls=[IFBallPoint(spray_deg=r[0], x=r[1], y=r[2], launch_speed=r[3],
+                              is_out=r[5], p_out_league=round(float(pl), 4),
+                              p_out_opt=round(float(po), 4))
+                  for r, pl, po in zip(ball_rows, p_if_league, p_if_opt)],
+        stats=IntegratedStats(
+            n_of_balls=len(balls_of), n_gb=len(balls_if),
+            re_state=round(float(_re24_table.get(state, 0.0)), 4),
+            runs_saved_of=round(runs_of_league - runs_of_opt, 3),
+            runs_saved_if=round(runs_if_league - runs_if_opt, 3),
+            runs_saved_total=round((runs_of_league - runs_of_opt)
+                                   + (runs_if_league - runs_if_opt), 3)),
+    )
 
 
 @app.get("/api/park_boundary/{team}", response_model=list[ParkCoord] | None)

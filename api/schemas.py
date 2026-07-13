@@ -138,6 +138,50 @@ class IFFielderOption(BaseModel):
     has_effects: bool
 
 
+# ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──
+
+class IntegratedRequest(BaseModel):
+    batter_id: int
+    year: int = 2025
+    on_1b: int = Field(0, ge=0, le=1)
+    on_2b: int = Field(0, ge=0, le=1)
+    on_3b: int = Field(0, ge=0, le=1)
+    outs:  int = Field(0, ge=0, le=2)
+
+
+class IntegratedSet(BaseModel):
+    """一組七人站位與其期望失分（打者該季擊球加總，越低越好）。
+
+    runs_of = Σ(1−p̂)×w_j（外野球）；runs_if = E[ΔRE]×n_gb（滾地球）。
+    優化可分離（滾地歸內野/飛球歸外野），runs_total = 兩側相加即聯合口徑。"""
+    positions:  dict[str, PositionXY]   # keys: LF/CF/RF/1B/2B/3B/SS
+    runs_of:    float
+    runs_if:    float
+    runs_total: float
+
+
+class IntegratedStats(BaseModel):
+    n_of_balls:       int
+    n_gb:             int
+    re_state:         float
+    runs_saved_of:    float   # league − optimized（正=最佳化較省分）
+    runs_saved_if:    float
+    runs_saved_total: float
+
+
+class IntegratedResponse(BaseModel):
+    batter_id: int
+    name:      str
+    year:      int
+    stand:     str
+    situation: str
+    league:    IntegratedSet
+    optimized: IntegratedSet
+    of_balls:  list[BallPoint]     # catch_prob 為最佳化站位下的接殺機率
+    if_balls:  list[IFBallPoint]
+    stats:     IntegratedStats
+
+
 class IFCustomResultResponse(BaseModel):
     """指定野手陣容的個人化結果。optimized 為錨定式解（從零效應最佳解
     warm start），balls 的 p_out_* 皆在該陣容效應下評估。"""
