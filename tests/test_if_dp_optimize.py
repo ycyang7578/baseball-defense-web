@@ -104,3 +104,26 @@ def test_dp_scorer_fast_path_matches_pipelines():
     p2_ref = dp_model.predict_proba(feats)[:, 1]
     np.testing.assert_allclose(p1_fast, p1_ref, atol=1e-10)
     np.testing.assert_allclose(p2_fast, p2_ref, atol=1e-10)
+
+    # web 端點用的逐球 P(≥1 出局)：與 _probs 的 p1 一致、平均=expected_p1
+    p1_public = scorer.per_ball_p1(angles3, depths3)
+    np.testing.assert_allclose(p1_public, p1_fast)
+    assert scorer.expected_p1(angles3, depths3) == pytest.approx(p1_public.mean())
+    assert ((p1_public >= 0) & (p1_public <= 1)).all()
+
+
+def test_on1b_constants_json_complete_for_deploy():
+    """/api/if_optimize DP 分支的離線常數（scripts/precompute_if_on1b_constants.py）
+    必須在 repo 裡且欄位齊全——雲端沒有 fielder_positioning_on1b / sprint_speed，
+    這個檔缺了 DP 分支會靜默退回無壘況精修。"""
+    import json
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parent.parent
+            / "data" / "precomputed" / "if_on1b_constants.json")
+    const = json.loads(path.read_text(encoding="utf-8"))
+    assert const["train_years"] == [2023, 2024]   # 須同階段B 模型訓練年
+    assert set(const["positions"]) == {"1B", "2B", "3B", "SS"}
+    for angle, depth in const["positions"].values():
+        assert -50 <= angle <= 50 and 60 <= depth <= 160
+    assert 4.0 <= const["runner_hp_to_1b"] <= 5.0

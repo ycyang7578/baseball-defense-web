@@ -28,10 +28,12 @@ from src.config import DSN
 from src.hit_prob import predict_hit_probs_batch, load_hit_prob
 from src.re24 import load_re24
 from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall_ball
+from src.if_dp_optimize import (DP_POSITIONS, DPScorer, dp_delta_re,
+                                optimize_infield_dp, positions_to_params_dp)
 from src.if_optimize import (expected_outs as if_expected_outs,
                              optimize_infield, positions_to_params,
                              predict_p_out)
-from src.if_runvalue import runvalue_ball_weights
+from src.if_runvalue import gb_miss_costs, runvalue_ball_weights
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
@@ -94,6 +96,11 @@ _if_ad_norm:        tuple[float, float] | None = None    # (ad_mean, ad_std)
 _if_fielder_opts:   dict[int, dict[str, list[dict]]] = {}  # year → pos → options
 # 安打類型模型（run-value 計價，內外野整合頁用，見 src/if_runvalue.py）
 _if_xb_model = None
+# 階段B：一壘有人 DP 優化資產（models/if_gb/on1b/，見 src/if_dp_optimize.py）
+_if_dp_out_model = None                                   # 兩段 GLM：P(≥1 出局)
+_if_dp_model = None                                       # 兩段 GLM：P(DP|≥1 出局)
+_if_on1b_league: dict[str, tuple[float, float]] = {}      # pos → (angle, depth)
+_if_on1b_runner_hp: float | None = None                   # 聯盟跑者 hp_to_1b 中位數
 
 
 def _load_infield_caches() -> None:
@@ -134,9 +141,11 @@ def _load_infield_caches() -> None:
         logger.warning(f"內野快取載入失敗: {e}")
     _load_if_bayes()
     _load_if_xb()
+    _load_if_dp()
     logger.info(f"內野: years={_if_years}, ranking years={_if_ranking_years}, "
                 f"bayes={'on' if _if_bayes_model is not None else 'off'}, "
                 f"xb={'on' if _if_xb_model is not None else 'off'}, "
+                f"dp={'on' if _if_dp_out_model is not None else 'off'}, "
                 + ", ".join(f"{y}={len(_if_batters_cache[y])} batters" for y in _if_years))
 
 
@@ -149,6 +158,27 @@ def _load_if_xb() -> None:
     except Exception as e:
         logger.warning(f"安打類型模型載入失敗，整合端點停用: {e}")
         _if_xb_model = None
+
+
+def _load_if_dp() -> None:
+    """階段B（一壘有人 DP 優化）資產：兩段 GLM＋離線常數（聯盟一壘有人站位、
+    跑者中位速度，scripts/precompute_if_on1b_constants.py 產）。缺了不中斷啟動，
+    /api/if_optimize 在該壘況退回現行無壘況 run-value 精修。"""
+    global _if_dp_out_model, _if_dp_model, _if_on1b_runner_hp
+    import joblib
+    try:
+        on1b_dir = BASE / "models" / "if_gb" / "on1b"
+        const = json.loads((PRE_DIR / "if_on1b_constants.json")
+                           .read_text(encoding="utf-8"))
+        out_model = joblib.load(on1b_dir / "if_on1b_out_glm.joblib")
+        dp_model = joblib.load(on1b_dir / "if_on1b_dp_glm.joblib")
+    except Exception as e:
+        logger.warning(f"階段B DP 資產載入失敗，一壘有人壘況退回無壘況精修: {e}")
+        return
+    _if_on1b_league.update({p: (float(a), float(d))
+                            for p, (a, d) in const["positions"].items()})
+    _if_on1b_runner_hp = float(const["runner_hp_to_1b"])
+    _if_dp_out_model, _if_dp_model = out_model, dp_model
 
 
 def _load_if_bayes() -> None:
@@ -719,6 +749,98 @@ def if_fielders(year: int = 2025, min_balls: int = 100):
 
 # ── 內野線上優化（外野 /api/optimize 的內野鏡像）──────────────────
 
+def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
+    """僅一壘有人（<2 出局）：階段B DP 優化（src/if_dp_optimize.py）。
+
+    1B 釘死在聯盟 hold-runner 位置、只優化 2B/3B/SS；對照基準＝聯盟一壘有人
+    平均站位（fielder_positioning_on1b 切分的離線常數）。UI 決策（2026-07-13）：
+    只顯示站位——exp_outs / p_out_* / gain_outs 一律是 P(≥1 出局)（口徑同
+    「出局率」），不回傳雙殺機率；runs 仍是雙殺感知的 E[ΔRE]×n_gb。
+    階段B 模型無球員層，指定野手在此壘況不影響站位（回應仍回野手名）。
+    起點配置同跨年驗證（scripts/validate_if_dp.py）：LHS 8＋無壘況最佳解＋
+    聯盟站位，勿在未重做收斂測試前調低。
+    """
+    import math
+
+    import numpy as np
+
+    t_start = time.perf_counter()
+    year = req.year
+    state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
+    stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls = \
+        _load_if_batter(req.batter_id, year)
+    balls["runner_hp_to_1b"] = _if_on1b_runner_hp
+
+    w = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
+    d1, d2 = dp_delta_re(_re24_table, _delta_re, req.outs)
+    pinned_1b = _if_on1b_league["1B"]
+    lg3_angles = np.array([_if_on1b_league[p][0] for p in DP_POSITIONS])
+    lg3_depths = np.array([_if_on1b_league[p][1] for p in DP_POSITIONS])
+
+    starts = [positions_to_params_dp(warm_angles[1:], warm_depths[1:]),
+              positions_to_params_dp(lg3_angles, lg3_depths)]
+    with _optimize_semaphore:
+        res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
+                                  pinned_1b, w, d1, d2, n_restarts=8, seed=42,
+                                  extra_starts=starts)
+
+    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w, d1, d2)
+
+    def eval_set(angles3, depths3) -> tuple[np.ndarray, float, float]:
+        """(逐球 p1, 平均 p1, E[ΔRE]×n_gb)。"""
+        p1 = scorer.per_ball_p1(angles3, depths3)
+        runs = scorer.expected_re(angles3, depths3) * len(balls)
+        return p1, float(p1.mean()), runs
+
+    p1_opt, eo_opt, runs_opt = eval_set(res["angles"], res["depths"])
+    p1_lg, eo_lg, runs_lg = eval_set(lg3_angles, lg3_depths)
+
+    def positions_dict(angles4, depths4) -> dict[str, IFPosition]:
+        out = {}
+        for pos, a, d in zip(IF_POSITIONS, angles4, depths4):
+            rad = math.radians(float(a))
+            out[pos] = IFPosition(x=round(float(d) * math.sin(rad), 1),
+                                  y=round(float(d) * math.cos(rad), 1),
+                                  angle=round(float(a), 2), depth=round(float(d), 2))
+        return out
+
+    opt_angles4 = np.concatenate([[pinned_1b[0]], res["angles"]])
+    opt_depths4 = np.concatenate([[pinned_1b[1]], res["depths"]])
+    lg_angles4 = np.concatenate([[pinned_1b[0]], lg3_angles])
+    lg_depths4 = np.concatenate([[pinned_1b[1]], lg3_depths])
+
+    fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
+    gain_outs = eo_opt - eo_lg
+    runs_saved = runs_lg - runs_opt
+    raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
+    logger.info(f"[timing] if_optimize(DP) TOTAL: "
+                f"{time.perf_counter() - t_start:.2f}s "
+                f"(batter={req.batter_id}, year={year}, outs={req.outs})")
+
+    return IFOptimizeResponse(
+        batter_id=req.batter_id,
+        name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
+        year=year, stand=stand,
+        situation=f"1--  {req.outs} out",
+        fielders={p: (_name_map.get(fids[p], f"#{fids[p]}") if fids[p] else None)
+                  for p in IF_POSITIONS},
+        league=IFOptimizeSet(positions=positions_dict(lg_angles4, lg_depths4),
+                             exp_outs=round(eo_lg, 6), runs=round(runs_lg, 3)),
+        optimized=IFOptimizeSet(positions=positions_dict(opt_angles4, opt_depths4),
+                                exp_outs=round(eo_opt, 6), runs=round(runs_opt, 3)),
+        balls=[IFBallPoint(spray_deg=r[0], x=r[1], y=r[2], launch_speed=r[3],
+                           is_out=r[5], p_out_league=round(float(pl), 4),
+                           p_out_opt=round(float(po), 4))
+               for r, pl, po in zip(ball_rows, p1_lg, p1_opt)],
+        stats=IFOptimizeStats(
+            n_gb=len(balls), re_state=round(float(_re24_table.get(state, 0.0)), 4),
+            hp_to_1b=hp_to_1b,
+            gain_outs=round(gain_outs, 4), outs_per_450=round(gain_outs * 450, 1),
+            runs_saved=round(runs_saved, 3),
+            runs_per_450=round(runs_saved / len(balls) * 450, 2)),
+    )
+
+
 @app.post("/api/if_optimize", response_model=IFOptimizeResponse)
 def if_optimize(req: IFOptimizeRequest):
     """打者＋壘況（＋指定野手）→ 內野四人站位與省分。
@@ -727,7 +849,8 @@ def if_optimize(req: IFOptimizeRequest):
     （兩目標 2025 樣本外實測幾乎同解，見 models/if_gb/runvalue_objective_rows.csv），
     指定野手時同時掛球員層效應（錨定式，同 /api/if_result_custom）。
     計價同整合端點：runs = E[ΔRE]×n_gb，省分 = 聯盟平均 − 最佳化。
-    出局機率模型的主範圍是無人在壘，壘況只影響計價權重（階段B 另立研究）。
+    出局機率模型的主範圍是無人在壘，壘況只影響計價權重；例外＝僅一壘有人
+    （<2 出局）切換到階段B DP 優化（_if_optimize_dp）。
     """
     import math
 
@@ -739,6 +862,9 @@ def if_optimize(req: IFOptimizeRequest):
         raise HTTPException(404, f"No infield data for year {req.year}. Available: {_if_years}")
     if req.year not in _if_league:
         raise HTTPException(500, f"if_league_positions.json 缺 {req.year}")
+    if ((req.on_1b, req.on_2b, req.on_3b) == (1, 0, 0) and req.outs < 2
+            and _if_dp_out_model is not None):
+        return _if_optimize_dp(req)
 
     t_start = time.perf_counter()
     year = req.year

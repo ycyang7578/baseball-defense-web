@@ -256,6 +256,11 @@ class DPScorer:
         p1, _ = self._probs(angles3, depths3)
         return float(np.mean(p1))
 
+    def per_ball_p1(self, angles3, depths3) -> np.ndarray:
+        """逐球 P(≥1 出局)——web 端點的逐球上色用（UI 不顯示雙殺機率）。"""
+        p1, _ = self._probs(angles3, depths3)
+        return p1
+
 
 def params_to_positions_dp(x):
     """6 維參數（2B/3B/SS 的角度+深度比例）→ (angles3, depths3)。"""

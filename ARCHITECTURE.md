@@ -442,23 +442,29 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     結構）是貨真價實的一階效應。⚠️ 口徑注意：同模型自評、絕對量級承襲本專案
     模型 scale 偏大的已知傾向（見 OAA scale 條目），+32.5 分/450GB 引用時要
     帶此保留；淨 DP 貢獻 +0.9 分屬邊際、不宜當賣點
-  - **接 web 的待辦與決策（2026-07-13 使用者指示）**：內野頁 `/api/if_optimize`
-    在「僅一壘有人」壘況切換到 DP 優化（釘 1B＋optimize_infield_dp），**UI 只顯示
-    最佳站位，不顯示雙殺機率**；其他壘況維持現行 run-value 精修。部署前提：
-    Neon sync `fielder_positioning_on1b`、Render 環境有 models/if_gb/on1b/ 資產
+  - **接 web（2026-07-14 完成）**：`/api/if_optimize` 在「僅一壘有人、<2 出局」
+    切到 DP 優化（`_if_optimize_dp`：釘 1B＋optimize_infield_dp，起點配置同
+    跨年驗證＝LHS 8＋無壘況最佳解＋聯盟站位，勿在未重做收斂測試前調低）。
+    **UI 只顯示最佳站位、不顯示雙殺機率**——回應的 exp_outs / p_out_* /
+    gain_outs 一律是 P(≥1 出局)（口徑同「出局率」，前端零改動直接相容），
+    runs 仍是雙殺感知 E[ΔRE]×n_gb。其他壘況維持現行 run-value 精修；階段B
+    模型無球員層，此壘況指定野手不影響站位（回應仍回野手名）。聯盟一壘有人
+    站位＋跑者中位速度改走離線常數 JSON（scripts/precompute_if_on1b_constants.py
+    → data/precomputed/if_on1b_constants.json，startup 讀、缺了退回無壘況精修）
+    ——**雲端因此不需要 `fielder_positioning_on1b`／`sprint_speed` 表**，部署
+    前提只剩 models/if_gb/on1b/ 兩支 GLM（已入 git）。本機實測 DP 分支
+    2.1~2.6s（n_gb=264），估 Render 0.1 CPU 約 20~26s、與 OF 端點同量級
 - **部署（Neon）需要 sync 的表**：`precomputed_if_positions`、`precomputed_if_gbs`、
-  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用；2026-07-09 已全部同步過一輪，
-  逐球表含 ball_x/ball_y 的新 schema 也已同日重灌並驗證 142,189 列全帶座標）、
-  **`fielder_positioning`（2026-07-10 起野手選單需要，尚未 sync）**。
-  sync 方式見「部署上線」章節。陷阱：nullable INTEGER 欄 pandas 會讀成 float，
-  COPY 前要轉 Int64
-- **pipeline 現況（2026-07-10 暫停點）**：貝葉斯 pipeline 的全量 precompute 跑到
-  2023 年 ~70/391 暫停（checkpoint 在 data/precomputed/if_*_rows.csv，模型不再變、
-  續跑有效：直接重跑 `python scripts/precompute_if_optimize.py`）。**本機與 Neon 的
-  precomputed 表目前仍是 2026-07-09 的舊 GLM 結果**（自身一致，網站可用）。
-  待辦順序：precompute 續跑完（灌本機）→ 清 `models/if_gb/validation_rows_2025.csv`
-  （GLM 舊 checkpoint）重跑 validate_if_positioning → Neon sync（含 fielder_positioning）
-  → 線上驗證 /infield 野手選單與 custom 端點
+  `if_model_oaa`、`if_oaa_leaderboard`（排名頁 JOIN 用）、`fielder_positioning`
+  （野手選單）。**2026-07-14 查核：以上全部在 Neon 且與本機一致**
+  （precomputed_if_* 371/383/372 位打者、142,189 球逐筆對上；fielder_positioning
+  11,692 列）。sync 方式見「部署上線」章節。陷阱：nullable INTEGER 欄 pandas
+  會讀成 float，COPY 前要轉 Int64
+- ~~**pipeline 現況（2026-07-10 暫停點）**：貝葉斯 pipeline 的全量 precompute 跑到
+  2023 年 ~70/391 暫停~~（**已全部跑完並同步**——2026-07-14 查核本機與 Neon 的
+  precomputed_if_* 完全一致：371/383/372 位打者、142,189 球。歷史脈絡：當時
+  checkpoint 續跑機制在 data/precomputed/if_*_rows.csv，模型不變時重跑
+  `python scripts/precompute_if_optimize.py` 即續算）
 - **訓練年份實驗（2026-07-09）**：使用者提議訓練改用 2021–2024（Standard 子集篩選下
   shift 時代資料理論上可用）。實驗結果（同一 2025 樣本外）：GLM AUC 0.7531 vs 現行
   0.7540、GBM 0.8165 vs 0.8150、球員評價 R 0.521 vs 0.525——資料翻倍後三指標全在
@@ -645,9 +651,12 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
 - `api/main.py` 檔案最後：若 `frontend/dist` 存在就掛載成靜態檔案（見 `_FRONTEND_DIST` 那段），
   本機開發沒 build 前端時完全不影響，只有部署時才會啟用
 - 資料庫：Neon（免費方案，region ap-southeast-1 Singapore）。環境變數 `BASEBALL_DSN` 覆寫 `src/config.py` 的 DSN
-- Neon 上**只有**這幾張表：`model_oaa`、`oaa_leaderboard`、`fielder_positioning`、`model_star_stats`、
-  `precomputed_batter_balls`、`precomputed_batter_stand`。**沒有** `statcast`（5.1GB，超過免費方案容量，
-  只存在本機，訓練/評估/precompute 都只能在本機跑）、也沒有 `savant_fielding`（只有評估腳本用得到）
+- Neon 上**只有**這幾張表（2026-07-14 查核）：`model_oaa`、`oaa_leaderboard`、`fielder_positioning`、
+  `model_star_stats`、`precomputed_batter_balls`、`precomputed_batter_stand`、`precomputed_if_positions`、
+  `precomputed_if_gbs`、`if_model_oaa`、`if_oaa_leaderboard`。**沒有** `statcast`（5.1GB，超過免費方案容量，
+  只存在本機，訓練/評估/precompute 都只能在本機跑）、沒有 `savant_fielding`（只有評估腳本用得到）、
+  也沒有 `fielder_positioning_on1b`／`sprint_speed`（階段B 線上需要的常數已離線預算成
+  data/precomputed/if_on1b_constants.json，見階段B 章節）
 
 **更新雲端資料的方式**（例如匯入新年份的 statcast 之後）：
 1. 本機重跑 `python scripts/precompute_batter_balls.py`（source=target=本機 DSN，更新本機的兩張精簡表）
