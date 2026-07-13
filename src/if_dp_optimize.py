@@ -113,26 +113,133 @@ def dp_geometry(balls: pd.DataFrame, angles4, depths4) -> pd.DataFrame:
 class DPScorer:
     """(angles3, depths3) → (E[ΔRE], E[outs])，1B 釘死。
 
-    通用路徑（直接跑兩條 sklearn pipeline）；瓶頸可承受（單次評估 ~ms 級，
-    研究批次夠用；若日後上線再做 numpy 快速路徑）。
+    快速路徑：把兩段 GLM pipeline 展開成純 numpy（同 if_optimize.
+    _FastGLMObjective 的模式），預先算好不隨站位變動的部分，每次評估只重算
+    幾何相關項。與 predict_proba 數值等價（tests/test_if_dp_optimize.py
+    驗證到 1e-10）。係數切段順序必須跟 On1bOutFeatures / On1bDPFeatures
+    的 transform 一致。
     """
 
     def __init__(self, out_model, dp_model, balls: pd.DataFrame,
                  pinned_1b: tuple[float, float], w: np.ndarray,
                  d1: float, d2: float):
-        self._out = out_model
-        self._dp = dp_model
-        self._balls = balls
-        self._1b = pinned_1b
+        import copy
+
+        self._1b = (float(pinned_1b[0]), float(pinned_1b[1]))
         self._w = np.asarray(w, dtype=float)
         self._d1, self._d2 = float(d1), float(d2)
+
+        spray = balls["spray_deg"].to_numpy(float)
+        rad = np.radians(spray)
+        self._spray = spray
+        self._sin_spray, self._cos_spray = np.sin(rad), np.cos(rad)
+        self._speed_fts = balls["launch_speed"].to_numpy(float) * MPH_TO_FTS
+        self._rows = np.arange(len(balls))
+
+        def strip(spl):
+            spl = copy.deepcopy(spl)
+            if hasattr(spl, "feature_names_in_"):
+                del spl.feature_names_in_
+            return spl
+
+        # ── 階段1（On1bOutFeatures = FielderGeometryFeatures + throw_dist_2b）──
+        f1 = out_model.named_steps["features"]
+        lr1 = out_model.named_steps["lr"]
+        self._s1_spl_ad = strip(f1.splines_["ad_min"])
+        self._s1_spl_bt = strip(f1.splines_["ball_time"])
+        m1, s1 = f1.scaler_.mean_, f1.scaler_.scale_
+        ev_z = (balls["launch_speed"].to_numpy(float) - m1[0]) / s1[0]
+        hp_z = (balls["hp_to_1b"].to_numpy(float) - m1[2]) / s1[2]
+        self._s1_throw_norm = (m1[1], s1[1])
+        self._s1_2b_norm = (float(f1.scaler_2b_.mean_[0]), float(f1.scaler_2b_.scale_[0]))
+        self._s1_ev_z, self._s1_hp_z = ev_z, hp_z
+        la = f1.splines_["launch_angle"].transform(balls[["launch_angle"]])
+        k_a = self._s1_spl_ad.n_features_out_
+        k_b = self._s1_spl_bt.n_features_out_
+
+        coef, pos = lr1.coef_[0], 0
+
+        def take(k):
+            nonlocal pos
+            seg = coef[pos:pos + k]
+            pos += k
+            return seg
+
+        self._s1_c_a, self._s1_c_b, c_la = take(k_a), take(k_b), take(la.shape[1])
+        c_ev, self._s1_c_throw, c_hp = take(3)
+        self._s1_C_ab = take(k_a * k_b).reshape(k_a, k_b)
+        self._s1_c_aev = take(k_a)
+        self._s1_c_ht = take(1)[0]
+        self._s1_c_hpb = take(k_b)
+        self._s1_c_2b = take(1)[0]
+        assert pos == len(coef), "階段1 係數切段與 On1bOutFeatures 欄位順序不符"
+        self._s1_const = la @ c_la + ev_z * c_ev + hp_z * c_hp + lr1.intercept_[0]
+
+        # ── 階段2（On1bDPFeatures）──────────────────────────────────
+        f2 = dp_model.named_steps["features"]
+        lr2 = dp_model.named_steps["lr"]
+        self._s2_spl_ad = strip(f2.splines_["ad_min"])
+        self._s2_spl_bt = strip(f2.splines_["ball_time"])
+        m2, s2 = f2.scaler_.mean_, f2.scaler_.scale_
+        # _LINEAR = [launch_speed, hp_to_1b, runner_hp_to_1b, pivot_dist, throw_dist_2b]
+        ev2_z = (balls["launch_speed"].to_numpy(float) - m2[0]) / s2[0]
+        hp2_z = (balls["hp_to_1b"].to_numpy(float) - m2[1]) / s2[1]
+        rn2_z = (balls["runner_hp_to_1b"].to_numpy(float) - m2[2]) / s2[2]
+        self._s2_pivot_norm = (m2[3], s2[3])
+        self._s2_2b_norm = (m2[4], s2[4])
+        self._s2_hp_z = hp2_z
+        k2_a = self._s2_spl_ad.n_features_out_
+        k2_b = self._s2_spl_bt.n_features_out_
+
+        coef, pos = lr2.coef_[0], 0
+        self._s2_c_a, self._s2_c_b = take(k2_a), take(k2_b)
+        c2_ev, c2_hp, c2_rn, self._s2_c_pivot, self._s2_c_2b = take(5)
+        self._s2_interactions = f2.interactions
+        self._s2_c_hpb = take(k2_b) if f2.interactions else None
+        assert pos == len(coef), "階段2 係數切段與 On1bDPFeatures 欄位順序不符"
+        self._s2_const = (ev2_z * c2_ev + hp2_z * c2_hp + rn2_z * c2_rn
+                          + lr2.intercept_[0])
 
     def _probs(self, angles3, depths3):
         angles4 = np.concatenate([[self._1b[0]], np.asarray(angles3, dtype=float)])
         depths4 = np.concatenate([[self._1b[1]], np.asarray(depths3, dtype=float)])
-        feats = dp_geometry(self._balls, angles4, depths4)
-        p1 = self._out.predict_proba(feats)[:, 1]
-        p2 = self._dp.predict_proba(feats)[:, 1]
+        dtheta = np.abs(angles4[None, :] - self._spray[:, None])
+        nearest = dtheta.argmin(axis=1)
+        ad_min = dtheta[self._rows, nearest]
+        near_depth = depths4[nearest]
+        ball_time = near_depth / self._speed_fts
+        ix = near_depth * self._sin_spray
+        iy = near_depth * self._cos_spray
+        throw = np.hypot(ix - _FIRST_BASE_XY[0], iy - _FIRST_BASE_XY[1])
+        throw_2b = np.hypot(ix - SECOND_BASE_X, iy - SECOND_BASE_Y)
+
+        px = depths4 * np.sin(np.radians(angles4))
+        py = depths4 * np.cos(np.radians(angles4))
+        pivot = min(np.hypot(px[1] - SECOND_BASE_X, py[1] - SECOND_BASE_Y),
+                    np.hypot(px[3] - SECOND_BASE_X, py[3] - SECOND_BASE_Y))
+
+        a1 = self._s1_spl_ad.transform(ad_min[:, None])
+        b1 = self._s1_spl_bt.transform(ball_time[:, None])
+        throw_z = (throw - self._s1_throw_norm[0]) / self._s1_throw_norm[1]
+        t2b1_z = (throw_2b - self._s1_2b_norm[0]) / self._s1_2b_norm[1]
+        logit1 = (self._s1_const + a1 @ self._s1_c_a + b1 @ self._s1_c_b
+                  + throw_z * self._s1_c_throw
+                  + ((a1 @ self._s1_C_ab) * b1).sum(axis=1)
+                  + (a1 @ self._s1_c_aev) * self._s1_ev_z
+                  + self._s1_c_ht * self._s1_hp_z * throw_z
+                  + (b1 @ self._s1_c_hpb) * self._s1_hp_z
+                  + t2b1_z * self._s1_c_2b)
+        p1 = 1.0 / (1.0 + np.exp(-logit1))
+
+        a2 = self._s2_spl_ad.transform(ad_min[:, None])
+        b2 = self._s2_spl_bt.transform(ball_time[:, None])
+        pivot_z = (pivot - self._s2_pivot_norm[0]) / self._s2_pivot_norm[1]
+        t2b2_z = (throw_2b - self._s2_2b_norm[0]) / self._s2_2b_norm[1]
+        logit2 = (self._s2_const + a2 @ self._s2_c_a + b2 @ self._s2_c_b
+                  + pivot_z * self._s2_c_pivot + t2b2_z * self._s2_c_2b)
+        if self._s2_interactions:
+            logit2 = logit2 + (b2 @ self._s2_c_hpb) * self._s2_hp_z
+        p2 = 1.0 / (1.0 + np.exp(-logit2))
         return p1, p2
 
     def expected_re(self, angles3, depths3) -> float:

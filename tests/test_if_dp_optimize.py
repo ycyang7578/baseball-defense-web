@@ -66,3 +66,41 @@ def test_dp_params_roundtrip():
     a, d = params_to_positions_dp(positions_to_params_dp(angles, depths))
     np.testing.assert_allclose(a, angles)
     np.testing.assert_allclose(d, depths)
+
+
+def test_dp_scorer_fast_path_matches_pipelines():
+    """DPScorer 的 numpy 快速路徑必須與兩條 sklearn pipeline 數值等價。"""
+    from pathlib import Path
+
+    import joblib
+
+    from src.if_dp_optimize import DPScorer
+
+    model_dir = Path(__file__).resolve().parent.parent / "models" / "if_gb" / "on1b"
+    out_model = joblib.load(model_dir / "if_on1b_out_glm.joblib")
+    dp_model = joblib.load(model_dir / "if_on1b_dp_glm.joblib")
+
+    rng = np.random.default_rng(7)
+    n = 60
+    balls = pd.DataFrame({
+        "spray_deg": rng.uniform(-50, 50, n),
+        "launch_speed": rng.uniform(60, 110, n),
+        "launch_angle": rng.uniform(-40, 5, n),
+        "hp_to_1b": rng.uniform(4.0, 5.0, n),
+        "runner_hp_to_1b": np.full(n, 4.44),
+        "stand_R": rng.integers(0, 2, n).astype(float),
+    })
+    w = rng.uniform(0.3, 0.9, n)
+    pinned = (40.6, 88.0)
+    scorer = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77)
+
+    angles3 = np.array([12.0, -33.0, -12.0])
+    depths3 = np.array([148.0, 118.0, 146.0])
+    p1_fast, p2_fast = scorer._probs(angles3, depths3)
+
+    feats = dp_geometry(balls, np.concatenate([[pinned[0]], angles3]),
+                        np.concatenate([[pinned[1]], depths3]))
+    p1_ref = out_model.predict_proba(feats)[:, 1]
+    p2_ref = dp_model.predict_proba(feats)[:, 1]
+    np.testing.assert_allclose(p1_fast, p1_ref, atol=1e-10)
+    np.testing.assert_allclose(p2_fast, p2_ref, atol=1e-10)

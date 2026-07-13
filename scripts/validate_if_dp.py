@@ -75,7 +75,8 @@ def main(min_train: int = 150, min_test: int = 80) -> None:
     d1, d2 = dp_delta_re(re24, delta_re, OUTS)
 
     batters = qualifying_batters(min_train, min_test)
-    print(f"合格打者（train GB>={min_train}, test GB>={min_test}）: {len(batters)} 位")
+    print(f"合格打者（train GB>={min_train}, test GB>={min_test}）: {len(batters)} 位",
+          flush=True)
 
     done: set[int] = set()
     if ROWS_PATH.exists():
