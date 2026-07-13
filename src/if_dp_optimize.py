@@ -251,6 +251,11 @@ class DPScorer:
         p1, p2 = self._probs(angles3, depths3)
         return float(np.mean(p1 * (1 + p2)))
 
+    def expected_p1(self, angles3, depths3) -> float:
+        """P(≥1 出局) 平均——「懂釘死 1B 但不懂雙殺」的分解基準用。"""
+        p1, _ = self._probs(angles3, depths3)
+        return float(np.mean(p1))
+
 
 def params_to_positions_dp(x):
     """6 維參數（2B/3B/SS 的角度+深度比例）→ (angles3, depths3)。"""
@@ -271,9 +276,12 @@ def optimize_infield_dp(balls: pd.DataFrame, out_model, dp_model,
                         pinned_1b: tuple[float, float], w: np.ndarray,
                         d1: float, d2: float, n_restarts: int = 16,
                         seed: int = 42,
-                        extra_starts: list[np.ndarray] | None = None) -> dict:
-    """LHS 多起點 + L-BFGS-B，最小化 E[ΔRE]。
+                        extra_starts: list[np.ndarray] | None = None,
+                        objective: str = "re") -> dict:
+    """LHS 多起點 + L-BFGS-B，最小化 E[ΔRE]（objective="re"，預設）。
 
+    objective="p1"：改最大化 P(≥1 出局)——「懂釘死 1B 的幾何但不懂雙殺計價」，
+    只作為分解實驗的中間基準（隔離補洞效果 vs 雙殺感知，勿用於生產）。
     bounds：2B 角度 [1°,44°]（右側，不與釘死的 1B 換邊）、3B/SS [-44°,-1°]，
     深度重參數化同 if_optimize（內野土約束）。
     """
@@ -282,9 +290,16 @@ def optimize_infield_dp(balls: pd.DataFrame, out_model, dp_model,
     hi = np.array([b[1] for b in bounds])
     scorer = DPScorer(out_model, dp_model, balls, pinned_1b, w, d1, d2)
 
-    def obj(x):
-        angles, depths = params_to_positions_dp(x)
-        return scorer.expected_re(angles, depths)
+    if objective == "re":
+        def obj(x):
+            angles, depths = params_to_positions_dp(x)
+            return scorer.expected_re(angles, depths)
+    elif objective == "p1":
+        def obj(x):
+            angles, depths = params_to_positions_dp(x)
+            return -scorer.expected_p1(angles, depths)
+    else:
+        raise ValueError(f"unknown objective: {objective}")
 
     starts = []
     if n_restarts > 0:
