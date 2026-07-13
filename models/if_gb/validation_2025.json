@@ -2,10 +2,10 @@
   "n_batters": 212,
   "min_train_gb": 150,
   "min_test_gb": 80,
-  "mean_gain_cross": 0.01554,
-  "mean_gain_same": 0.02428,
-  "retention": 0.6402,
-  "share_positive": 0.9623,
-  "t_stat": 21.504,
-  "p_value": 4.449e-55
+  "mean_gain_cross": 0.01558,
+  "mean_gain_same": 0.02449,
+  "retention": 0.6364,
+  "share_positive": 0.9528,
+  "t_stat": 20.748,
+  "p_value": 7.584e-53
 }
