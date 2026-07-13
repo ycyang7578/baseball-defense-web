@@ -132,10 +132,56 @@ class IFFielderInfo(BaseModel):
 
 class IFFielderOption(BaseModel):
     """野手選單項（個人化站位用）。has_effects=False 表示無球員層估計，
-    選了等同聯盟平均。"""
+    選了等同聯盟平均。oaa/n_balls 來自 if_model_oaa（該年該位置的評價），
+    無紀錄則為 None（前端標籤與最低守備次數滑桿用）。"""
     player_id:   int
     name:        str
     has_effects: bool
+    oaa:         float | None = None
+    n_balls:     int   | None = None
+
+
+# ── 內野線上優化（外野 /api/optimize 的內野鏡像：壘況+野手，run-value 計價）──
+
+class IFOptimizeRequest(BaseModel):
+    batter_id: int
+    year: int = 2025
+    on_1b: int = Field(0, ge=0, le=1)
+    on_2b: int = Field(0, ge=0, le=1)
+    on_3b: int = Field(0, ge=0, le=1)
+    outs:  int = Field(0, ge=0, le=2)
+    # 指定內野手（球員層效應）。key 為 "1B"/"2B"/"3B"/"SS"，value 為 player_id；
+    # 未指定的位置視為聯盟平均野手（效應 0）。
+    fielders: dict[str, int] | None = None
+
+
+class IFOptimizeSet(BaseModel):
+    positions: dict[str, IFPosition]   # keys: "1B"/"2B"/"3B"/"SS"
+    exp_outs:  float                   # 期望出局率（打者滾地球平均 P(out)）
+    runs:      float                   # 期望失分 E[ΔRE]×n_gb（該壘況，越低越好）
+
+
+class IFOptimizeStats(BaseModel):
+    n_gb:          int
+    re_state:      float
+    hp_to_1b:      float
+    gain_outs:     float   # 出局率增益（最佳化 − 聯盟平均）
+    outs_per_450:  float
+    runs_saved:    float   # 省分（聯盟平均 runs − 最佳化 runs，正=較省）
+    runs_per_450:  float   # 每 450 顆滾地球的省分
+
+
+class IFOptimizeResponse(BaseModel):
+    batter_id: int
+    name:      str
+    year:      int
+    stand:     str
+    situation: str
+    fielders:  dict[str, str | None]   # pos → 野手名（None=聯盟平均）
+    league:    IFOptimizeSet
+    optimized: IFOptimizeSet
+    balls:     list[IFBallPoint]
+    stats:     IFOptimizeStats
 
 
 # ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──

@@ -36,7 +36,8 @@ from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
     IFBallPoint, IFBatterInfo, IFCustomResultResponse, IFFielderInfo,
-    IFFielderOption, IFPosition, IFPositionSet, IFResultResponse, IFStats,
+    IFFielderOption, IFOptimizeRequest, IFOptimizeResponse, IFOptimizeSet,
+    IFOptimizeStats, IFPosition, IFPositionSet, IFResultResponse, IFStats,
     IntegratedRequest, IntegratedResponse, IntegratedSet, IntegratedStats,
 )
 
@@ -183,16 +184,28 @@ def _load_if_fielder_menu() -> None:
                 if cur.fetchone()[0] is None:
                     logger.warning("fielder_positioning 不存在，野手選單停用")
                     return
+                # 該年該位置的模型評價（標籤 OAA/100 與最低守備次數滑桿用）
+                oaa_map: dict[tuple, tuple[float, int]] = {}
+                cur.execute("SELECT to_regclass('if_model_oaa')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute(
+                        "SELECT year, position, player_id, model_oaa, n_balls "
+                        "FROM if_model_oaa")
+                    oaa_map = {(int(y), p, int(pid)): (float(oaa), int(n))
+                               for y, p, pid, oaa, n in cur.fetchall()}
                 cur.execute(
                     "SELECT DISTINCT season, position, fielder_id "
                     "FROM fielder_positioning WHERE position IN %s "
                     "ORDER BY season, position", (IF_POSITIONS,))
                 for season, pos, fid in cur.fetchall():
+                    oaa_n = oaa_map.get((int(season), pos, int(fid)))
                     (opts.setdefault(int(season), {})
                      .setdefault(pos, []).append({
                          "player_id": int(fid),
                          "name": _name_map.get(int(fid), f"#{fid}"),
-                         "has_effects": int(fid) in _if_effects}))
+                         "has_effects": int(fid) in _if_effects,
+                         "oaa": oaa_n[0] if oaa_n else None,
+                         "n_balls": oaa_n[1] if oaa_n else None}))
         for year in opts.values():
             for lst in year.values():
                 lst.sort(key=lambda o: (not o["has_effects"], o["name"]))
@@ -499,6 +512,57 @@ def if_batters(year: int | None = None):
     return _if_batters_cache.get(year, [])
 
 
+def _load_if_batter(batter_id: int, year: int):
+    """precomputed 出局率最佳解＋打者滾地球（內野線上端點共用）。
+
+    回傳 (stand, n_gb, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_df)；
+    balls_df 已補 launch_angle 缺值、附 hp_to_1b / stand_R 特徵欄。"""
+    import numpy as np
+    import pandas as pd
+
+    with psycopg2.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT stand, n_gb, hp_to_1b, "
+                "       angle_1b, depth_1b, angle_2b, depth_2b, "
+                "       angle_3b, depth_3b, angle_ss, depth_ss "
+                "FROM precomputed_if_positions "
+                "WHERE batter = %s AND game_year = %s", (batter_id, year))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    404, f"Batter {batter_id} has no precomputed result in {year}")
+            cur.execute(
+                "SELECT spray_deg, ball_x, ball_y, launch_speed, launch_angle, is_out "
+                "FROM precomputed_if_gbs "
+                "WHERE batter = %s AND game_year = %s", (batter_id, year))
+            ball_rows = cur.fetchall()
+
+    stand, n_gb, hp_to_1b = row[:3]
+    warm_angles = np.array([row[3], row[5], row[7], row[9]], dtype=float)
+    warm_depths = np.array([row[4], row[6], row[8], row[10]], dtype=float)
+
+    balls = pd.DataFrame(ball_rows, columns=[
+        "spray_deg", "ball_x", "ball_y", "launch_speed", "launch_angle", "is_out"])
+    balls["launch_angle"] = pd.to_numeric(balls["launch_angle"], errors="coerce")
+    balls["launch_angle"] = balls["launch_angle"].fillna(balls["launch_angle"].median())
+    balls["launch_speed"] = balls["launch_speed"].astype(float)
+    balls["hp_to_1b"] = float(hp_to_1b)
+    balls["stand_R"] = int(stand == "R")
+    return stand, n_gb, float(hp_to_1b), warm_angles, warm_depths, ball_rows, balls
+
+
+def _if_player_effects(fids: dict[str, int | None]) -> dict:
+    """指定野手 → 球員層效應（未指定=聯盟平均，效應 0）。"""
+    import numpy as np
+    alpha = np.array([_if_effects.get(fids[p], (0.0, 0.0))[0] if fids[p] else 0.0
+                      for p in IF_POSITIONS])
+    g = np.array([_if_effects.get(fids[p], (0.0, 0.0))[1] if fids[p] else 0.0
+                  for p in IF_POSITIONS])
+    return {"alpha": alpha, "g": g,
+            "ad_mean": _if_ad_norm[0], "ad_std": _if_ad_norm[1]}
+
+
 def _if_position_set(pairs: dict[str, tuple[float, float]], exp_outs: float) -> IFPositionSet:
     import math
     positions = {}
@@ -580,42 +644,11 @@ def if_result_custom(batter_id: int, year: int,
         raise HTTPException(503, "個人化模型未載入")
     if year not in _if_years:
         raise HTTPException(404, f"No infield data for year {year}. Available: {_if_years}")
-    with psycopg2.connect(DSN) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT stand, n_gb, hp_to_1b, "
-                "       angle_1b, depth_1b, angle_2b, depth_2b, "
-                "       angle_3b, depth_3b, angle_ss, depth_ss "
-                "FROM precomputed_if_positions "
-                "WHERE batter = %s AND game_year = %s", (batter_id, year))
-            row = cur.fetchone()
-            if row is None:
-                raise HTTPException(404, f"Batter {batter_id} has no precomputed result in {year}")
-            cur.execute(
-                "SELECT spray_deg, ball_x, ball_y, launch_speed, launch_angle, is_out "
-                "FROM precomputed_if_gbs "
-                "WHERE batter = %s AND game_year = %s", (batter_id, year))
-            ball_rows = cur.fetchall()
-
-    stand, n_gb, hp_to_1b = row[:3]
-    opt_angles = np.array([row[3], row[5], row[7], row[9]], dtype=float)
-    opt_depths = np.array([row[4], row[6], row[8], row[10]], dtype=float)
-
-    balls = pd.DataFrame(ball_rows, columns=[
-        "spray_deg", "ball_x", "ball_y", "launch_speed", "launch_angle", "is_out"])
-    balls["launch_angle"] = pd.to_numeric(balls["launch_angle"], errors="coerce")
-    balls["launch_angle"] = balls["launch_angle"].fillna(balls["launch_angle"].median())
-    balls["launch_speed"] = balls["launch_speed"].astype(float)
-    balls["hp_to_1b"] = float(hp_to_1b)
-    balls["stand_R"] = int(stand == "R")
+    stand, n_gb, hp_to_1b, opt_angles, opt_depths, ball_rows, balls = \
+        _load_if_batter(batter_id, year)
 
     fids = {"1B": fielder_1b, "2B": fielder_2b, "3B": fielder_3b, "SS": fielder_ss}
-    alpha = np.array([_if_effects.get(fids[p], (0.0, 0.0))[0] if fids[p] else 0.0
-                      for p in IF_POSITIONS])
-    g = np.array([_if_effects.get(fids[p], (0.0, 0.0))[1] if fids[p] else 0.0
-                  for p in IF_POSITIONS])
-    pe = {"alpha": alpha, "g": g,
-          "ad_mean": _if_ad_norm[0], "ad_std": _if_ad_norm[1]}
+    pe = _if_player_effects(fids)
 
     warm = positions_to_params(opt_angles, opt_depths)
     with _optimize_semaphore:
@@ -682,6 +715,102 @@ def if_fielders(year: int = 2025, min_balls: int = 100):
             for pid, name, _, oaa, n, off_oaa, off_n in rows_pos
         ]
     return result
+
+
+# ── 內野線上優化（外野 /api/optimize 的內野鏡像）──────────────────
+
+@app.post("/api/if_optimize", response_model=IFOptimizeResponse)
+def if_optimize(req: IFOptimizeRequest):
+    """打者＋壘況（＋指定野手）→ 內野四人站位與省分。
+
+    站位從離線出局率最佳解 warm start、以該壘況的 run-value 權重精修
+    （兩目標 2025 樣本外實測幾乎同解，見 models/if_gb/runvalue_objective_rows.csv），
+    指定野手時同時掛球員層效應（錨定式，同 /api/if_result_custom）。
+    計價同整合端點：runs = E[ΔRE]×n_gb，省分 = 聯盟平均 − 最佳化。
+    出局機率模型的主範圍是無人在壘，壘況只影響計價權重（階段B 另立研究）。
+    """
+    import math
+
+    import numpy as np
+
+    if _if_bayes_model is None or _if_xb_model is None:
+        raise HTTPException(503, "內野模型未載入")
+    if req.year not in _if_years:
+        raise HTTPException(404, f"No infield data for year {req.year}. Available: {_if_years}")
+    if req.year not in _if_league:
+        raise HTTPException(500, f"if_league_positions.json 缺 {req.year}")
+
+    t_start = time.perf_counter()
+    year = req.year
+    state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
+    stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls = \
+        _load_if_batter(req.batter_id, year)
+
+    fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
+    pe = _if_player_effects(fids)
+
+    bw, mean_w = runvalue_ball_weights(balls, _if_xb_model, _re24_table, _delta_re, state)
+    warm = positions_to_params(warm_angles, warm_depths)
+    with _optimize_semaphore:
+        res = optimize_infield(balls, _if_bayes_model, n_restarts=0,
+                               extra_starts=[warm], ball_weights=bw,
+                               player_effects=pe)
+
+    lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
+    lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
+
+    def eval_set(angles, depths) -> tuple[float, float]:
+        """(期望出局率, 期望失分×n_gb)，皆在指定野手效應下評估。"""
+        eo = if_expected_outs(_if_bayes_model, balls, angles, depths, pe)
+        runs = (mean_w - if_expected_outs(_if_bayes_model, balls, angles, depths,
+                                          pe, ball_weights=bw)) * len(balls)
+        return eo, runs
+
+    eo_opt, runs_opt = eval_set(res["angles"], res["depths"])
+    eo_lg, runs_lg = eval_set(lg_angles, lg_depths)
+    p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths, pe)
+    p_opt = predict_p_out(_if_bayes_model, balls, res["angles"], res["depths"], pe)
+
+    def positions_dict(angles, depths) -> dict[str, IFPosition]:
+        out = {}
+        for pos, a, d in zip(IF_POSITIONS, angles, depths):
+            rad = math.radians(float(a))
+            out[pos] = IFPosition(x=round(float(d) * math.sin(rad), 1),
+                                  y=round(float(d) * math.cos(rad), 1),
+                                  angle=round(float(a), 2), depth=round(float(d), 2))
+        return out
+
+    gain_outs = eo_opt - eo_lg
+    runs_saved = runs_lg - runs_opt
+    raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
+    bases = (("1" if req.on_1b else "-") + ("2" if req.on_2b else "-")
+             + ("3" if req.on_3b else "-"))
+    logger.info(f"[timing] if_optimize TOTAL: {time.perf_counter() - t_start:.2f}s "
+                f"(batter={req.batter_id}, year={year}, state={state}, "
+                f"fielders={any(fids.values())})")
+
+    return IFOptimizeResponse(
+        batter_id=req.batter_id,
+        name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
+        year=year, stand=stand,
+        situation=f"{bases}  {req.outs} out",
+        fielders={p: (_name_map.get(fids[p], f"#{fids[p]}") if fids[p] else None)
+                  for p in IF_POSITIONS},
+        league=IFOptimizeSet(positions=positions_dict(lg_angles, lg_depths),
+                             exp_outs=round(eo_lg, 6), runs=round(runs_lg, 3)),
+        optimized=IFOptimizeSet(positions=positions_dict(res["angles"], res["depths"]),
+                                exp_outs=round(eo_opt, 6), runs=round(runs_opt, 3)),
+        balls=[IFBallPoint(spray_deg=r[0], x=r[1], y=r[2], launch_speed=r[3],
+                           is_out=r[5], p_out_league=round(float(pl), 4),
+                           p_out_opt=round(float(po), 4))
+               for r, pl, po in zip(ball_rows, p_league, p_opt)],
+        stats=IFOptimizeStats(
+            n_gb=len(balls), re_state=round(float(_re24_table.get(state, 0.0)), 4),
+            hp_to_1b=hp_to_1b,
+            gain_outs=round(gain_outs, 4), outs_per_450=round(gain_outs * 450, 1),
+            runs_saved=round(runs_saved, 3),
+            runs_per_450=round(runs_saved / len(balls) * 450, 2)),
+    )
 
 
 # ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──
@@ -760,35 +889,8 @@ def optimize_integrated(req: IntegratedRequest):
     _, runs_of_league = of_runs(pos_of_league)
 
     # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修）──
-    with psycopg2.connect(DSN) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT stand, n_gb, hp_to_1b, "
-                "       angle_1b, depth_1b, angle_2b, depth_2b, "
-                "       angle_3b, depth_3b, angle_ss, depth_ss "
-                "FROM precomputed_if_positions "
-                "WHERE batter = %s AND game_year = %s", (req.batter_id, year))
-            row = cur.fetchone()
-            if row is None:
-                raise HTTPException(
-                    404, f"Batter {req.batter_id} has no precomputed infield result in {year}")
-            cur.execute(
-                "SELECT spray_deg, ball_x, ball_y, launch_speed, launch_angle, is_out "
-                "FROM precomputed_if_gbs "
-                "WHERE batter = %s AND game_year = %s", (req.batter_id, year))
-            ball_rows = cur.fetchall()
-
-    stand, _, hp_to_1b = row[:3]
-    warm_angles = np.array([row[3], row[5], row[7], row[9]], dtype=float)
-    warm_depths = np.array([row[4], row[6], row[8], row[10]], dtype=float)
-
-    balls_if = pd.DataFrame(ball_rows, columns=[
-        "spray_deg", "ball_x", "ball_y", "launch_speed", "launch_angle", "is_out"])
-    balls_if["launch_angle"] = pd.to_numeric(balls_if["launch_angle"], errors="coerce")
-    balls_if["launch_angle"] = balls_if["launch_angle"].fillna(balls_if["launch_angle"].median())
-    balls_if["launch_speed"] = balls_if["launch_speed"].astype(float)
-    balls_if["hp_to_1b"] = float(hp_to_1b)
-    balls_if["stand_R"] = int(stand == "R")
+    stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
+        _load_if_batter(req.batter_id, year)
 
     bw, mean_w = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table, _delta_re, state)
     warm = positions_to_params(warm_angles, warm_depths)
