@@ -24,6 +24,15 @@ OUT_EVENTS = ("field_out", "force_out", "grounded_into_double_play", "double_pla
               "fielders_choice_out")
 NONOUT_EVENTS = ("single", "double", "triple", "field_error")
 
+# 階段B（一壘有人、<2 出局）：結果升級為「拿到幾個出局」。
+# fielders_choice 經 des 逐筆抽驗（2026-07-13）＝打者上壘、跑者全推進，沒有出局；
+# fielders_choice_out 才有記出局。
+ON1B_EVENT_OUTS = {
+    "grounded_into_double_play": 2, "double_play": 2,
+    "force_out": 1, "field_out": 1, "fielders_choice_out": 1,
+    "single": 0, "double": 0, "triple": 0, "field_error": 0, "fielders_choice": 0,
+}
+
 # Savant hc_x/hc_y 座標系的本壘位置
 HOME_X, HOME_Y = 125.42, 198.27
 MPH_TO_FTS = 1.46667          # 擊球初速 mph → ft/s
@@ -71,6 +80,48 @@ def fetch_positioning(years: list[int]) -> pd.DataFrame:
     with psycopg2.connect(DSN) as conn:
         return pd.read_sql(sql, conn,
                            params={"pos": INFIELD_POSITIONS, "years": list(years)})
+
+
+def fetch_positioning_on1b(years: list[int]) -> pd.DataFrame:
+    """「一壘有人」切分的賽季平均站位（fielder_positioning_on1b，2023 起）。
+
+    階段B 的幾何代理要用這份：一壘有人時站位系統性位移（1B hold runner
+    −26~−35 呎、2B/SS 雙殺深度 −3~−4.4 呎），用全情境平均會把幾何特徵算錯。"""
+    sql = """
+        SELECT fielder_id, season, position,
+               avg_norm_start_distance AS depth, avg_norm_start_angle AS angle
+        FROM fielder_positioning_on1b
+        WHERE position IN %(pos)s AND season = ANY(%(years)s)
+    """
+    with psycopg2.connect(DSN) as conn:
+        return pd.read_sql(sql, conn,
+                           params={"pos": INFIELD_POSITIONS, "years": list(years)})
+
+
+def fetch_raw_gb_on1b(years: list[int]) -> pd.DataFrame:
+    """一壘有人（僅一壘）、<2 出局的非觸擊滾地球（階段B 雙殺情境主範圍）。
+
+    比 fetch_raw_gb 多帶 on_1b（跑者 id，接跑者速度）與 outs_when_up，
+    事件集合含 fielders_choice（0 出局，無人在壘時不存在此事件）。"""
+    events = tuple(ON1B_EVENT_OUTS)
+    sql = f"""
+        SELECT game_year, batter, stand, hc_x, hc_y, launch_speed, launch_angle,
+               events, if_fielding_alignment, hit_location,
+               on_1b, outs_when_up,
+               (on_1b IS NULL AND on_2b IS NULL AND on_3b IS NULL) AS bases_empty,
+               fielder_3, fielder_4, fielder_5, fielder_6
+        FROM statcast
+        WHERE bb_type = 'ground_ball'
+          AND game_year = ANY(%(years)s)
+          AND hc_x IS NOT NULL AND launch_speed IS NOT NULL
+          AND on_1b IS NOT NULL AND on_2b IS NULL AND on_3b IS NULL
+          AND outs_when_up < 2
+          AND events IN {events}
+          AND des NOT ILIKE '%%bunt%%'
+        ORDER BY game_year, batter, hc_x, hc_y, launch_speed
+    """
+    with psycopg2.connect(DSN) as conn:
+        return pd.read_sql(sql, conn, params={"years": list(years)})
 
 
 def fetch_run_speed(years: list[int]) -> pd.DataFrame:
@@ -141,6 +192,59 @@ def attach_features(gb: pd.DataFrame, positioning: pd.DataFrame,
     la_med = df.groupby("game_year")["launch_angle"].transform("median")
     df["launch_angle"] = df["launch_angle"].fillna(la_med)
     return df
+
+
+SECOND_BASE_X, SECOND_BASE_Y = 0.0, 90.0 * np.sqrt(2.0)  # 二壘壘包
+
+
+def attach_dp_features(df: pd.DataFrame, run_speed: pd.DataFrame) -> pd.DataFrame:
+    """階段B（雙殺情境）追加特徵。純函式，接在 attach_features 之後。
+
+    - n_outs           該球拿到的出局數（0/1/2，ON1B_EVENT_OUTS）
+    - throw_dist_2b    攔截點（沿球路徑、最近野手深度處）到二壘的距離（呎）
+                       ——一壘有人時主要傳球目標是二壘 force，與 throw_dist（到一壘）
+                       同性質的反事實合法幾何，僅線性使用（函數形式內生性教訓）
+    - pivot_dist       2B/SS 野手到二壘壘包的較小距離（呎）＝雙殺軸心幾何，
+                       純站位函數（搬野手預測會跟著變）
+    - runner_hp_to_1b  一壘跑者的賽季 hp_to_1b（跑者速度代理；缺值同年中位數填補）
+    - has_runner_speed 是否為實際值
+    """
+    df = df.copy()
+    df["n_outs"] = df["events"].map(ON1B_EVENT_OUTS)
+
+    ix, iy = _polar_to_xy(df["near_depth"].to_numpy(float),
+                          df["spray_deg"].to_numpy(float))
+    df["throw_dist_2b"] = np.hypot(ix - SECOND_BASE_X, iy - SECOND_BASE_Y)
+
+    dists = []
+    for pos in ("2B", "SS"):
+        px, py = _polar_to_xy(df[f"{pos}_depth"].to_numpy(float),
+                              df[f"{pos}_angle"].to_numpy(float))
+        dists.append(np.hypot(px - SECOND_BASE_X, py - SECOND_BASE_Y))
+    df["pivot_dist"] = np.minimum(*dists)
+
+    rs_map = run_speed.set_index(["player_id", "season"])["hp_to_1b"]
+    idx = pd.MultiIndex.from_arrays([df["on_1b"], df["game_year"]])
+    df["runner_hp_to_1b"] = rs_map.reindex(idx).to_numpy()
+    df["has_runner_speed"] = df["runner_hp_to_1b"].notna()
+    year_med = df.groupby("game_year")["runner_hp_to_1b"].transform("median")
+    df["runner_hp_to_1b"] = df["runner_hp_to_1b"].fillna(year_med)
+    return df
+
+
+def build_gb_on1b_dataset(years: list[int],
+                          alignment: str | None = "Standard") -> pd.DataFrame:
+    """一站式（階段B）：一壘有人（僅一壘）、<2 出局滾地球＋雙殺特徵。
+
+    站位代理用 fielder_positioning_on1b（一壘有人切分）；標籤 n_outs ∈ {0,1,2}。
+    """
+    run_speed = fetch_run_speed(years)
+    df = attach_features(fetch_raw_gb_on1b(years), fetch_positioning_on1b(years),
+                         run_speed)
+    df = attach_dp_features(df, run_speed)
+    if alignment is not None:
+        df = df[df["if_fielding_alignment"] == alignment]
+    return df.reset_index(drop=True)
 
 
 def build_gb_dataset(years: list[int], bases_empty: bool | None = None,
