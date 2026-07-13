@@ -87,6 +87,25 @@ export async function fetchIfResultCustom(batterId, year, fielderIds) {
   return res.json()
 }
 
+// ── 內外野整合（外野線上優化＋內野錨定式精修，計算需時間）─────────
+
+export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, outs }) {
+  const res = await fetch(`${BASE}/optimize_integrated`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      batter_id: batterId, year: year || 2025,
+      on_1b: on1b, on_2b: on2b, on_3b: on3b, outs,
+    }),
+  })
+  if (!res.ok) {
+    let detail = 'Integrated optimization failed'
+    try { detail = (await res.json()).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
 function _body({ batterId, year, on1b, on2b, on3b, outs, homeTeam, fielders }) {
   return JSON.stringify({
     batter_id: batterId,
