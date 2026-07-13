@@ -106,6 +106,14 @@ PostgreSQL 資料表：
     - Response: `OptimizeResponse{title, situation, positions{key→PositionSet}, balls, park_boundary?, stats}`；positions key 為 `league_avg`/`no_park`/`with_park` 或 `custom`
   - `POST /api/optimize_plot` — 同 Request，回傳 JSON `{image_b64, title, situation, positions, stats}`；
     前端從 base64 解碼為 Blob URL 顯示圖，stats 數字（catch%, RE24, Δ RE24）另外用 HTML StatsPanel 呈現（不嵌在 PNG 內）
+  - `POST /api/optimize_integrated` — 內外野七人整合（頁面 `/integrated`）
+    - Request: `{batter_id, year, on_1b, on_2b, on_3b, outs}`（通用球場、聯盟平均野手）
+    - 外野＝線上優化（同 `/api/optimize` 一般模式 no_park，n_restarts=10）；內野＝
+      precomputed 出局率最佳解 warm start + run-value 權重精修（n_restarts=0，
+      兩目標 2025 樣本外實測幾乎同解，見 `models/if_gb/runvalue_objective_rows.csv`）
+    - 計價統一為期望失分：外野 `Σ(1−p̂)×w_j`、內野 `E[ΔRE]×n_gb`（`src/if_runvalue.py`），
+      兩側各自 vs 同壘況聯盟平均站位，省分相加＝聯合口徑（優化可分離）
+    - 需要 `models/if_gb/if_gb_xb_model.joblib`（train_if_gb.py 產出），缺了回 503
 
 ## 站位優化管線（需先 precompute，再 optimize）
 1. `scripts/precompute_model_oaa.py` — 對 `is_official` 子集逐球算 `oaa_play=caught−catch_prob`（用群體層 mu_*），按球員加總後寫入 `data/precomputed/model_oaa_2025.csv`，再 UPSERT 進 `model_oaa` 表。執行：`python scripts/precompute_model_oaa.py`
@@ -475,10 +483,16 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   場地幾何不隨打者鏡像）+ w_j 計價（對齊外野 compute_w_j 慣例）+ ΔRE(out)
   跑者不推進近似（無人在壘精確）。E[ΔRE] = mean(w_j) − mean(p×(w_j−ΔRE_out))，
   optimize 傳 ball_weights = w_j−ΔRE_out。
-  進行中：`exp_if_runvalue_objective.py` = Melville「wOBA 目標連出局都更好」的
-  跨年重現（212 位驗證打者、兩目標各自優化、2025 球上比出局率與失分兩指標）。
-  剩餘整合工作：整合頁面（打者+壘況→七人站位+總省分）、驗證升級為失分口徑；
-  階段B（有人在壘 out 模型 force/DP）另立研究
+  **實驗結論（2026-07-13，`exp_if_runvalue_objective.py`，n=212、2025 樣本外）**：
+  Melville「wOBA 目標連出局都更好」（樣本內）在跨年設定**不重現**——兩目標實務
+  無差（出局率差 mean −0.00010、失分差 mean +0.00001，450 GB≈0 分/−0.05 出局，
+  逐列在 `models/if_gb/runvalue_objective_rows.csv`）。含意：run-value 計價對出局
+  無代價，整合可放心用期望失分當統一貨幣；也因兩目標幾乎同解，整合端點的內野側
+  用 precomputed 出局率最佳解 warm start＋run-value 權重精修（n_restarts=0）即可。
+  **已落地（2026-07-13）**：XB 模型進 train_if_gb.py cascade（if_gb_xb_model.joblib，
+  2025 AUC 0.9167）；`POST /api/optimize_integrated`＋前端 `/integrated` 頁（見
+  API/前端章節）；跨年驗證失分口徑＝`scripts/validate_if_runvalue.py`
+  （validation_runvalue_2025.json）。階段B（有人在壘 out 模型 force/DP）另立研究
 - **評價用難度模型改為可解釋 GLM（2026-07-12，使用者決定：不用無法說明的模型）**：
   `scripts/exp_if_difficulty_glm.py` → `make_difficulty_glm()` 進生產（if_model.py），
   GBM 降為 benchmark。特徵：spray 左打鏡像（Melville 同款）+ spray(8 節點)/LA/EV/hp
@@ -508,6 +522,9 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   - 責任歸屬（`responsible`）由後端提供；若無則前端 fallback 用距離
   - KDE 等高線（Marching Squares + feGaussianBlur 平滑）
 - `src/components/DensityChart.jsx` — 落點密度畫布（canvas radial gradient，非等高線）
+- `src/components/IntegratedChart.jsx` — 內外野全場圖（SVG，座標/顏色/標記慣例同
+  InfieldChart，視野放大到 X±270/Y430）：七人站位聯盟平均 vs 最佳化、外野球（顏色=
+  接殺機率）＋滾地球（顏色=P(out)）散點、hover tooltip
 
 App.jsx（`/`）：
 - 左側面板（280px，手機版見下方響應式說明）：頂部年份 tabs → 打者搜尋 → 比賽狀況 → 球場 → 外野手（min_opp 滑桿＋守備員下拉）；底部 footer 放「⇔ 比較模式」切換 + 計算按鈕
@@ -524,6 +541,13 @@ Rankings 頁（`src/pages/Rankings.jsx`）：
 - 球員名字可點擊：開啟多年趨勢 modal（SVG 折線圖，X軸=年份、Y軸=OAA/100，LF藍/CF綠/RF橘；位置標籤顯示在 modal 標題旁）
 - 球員頭像與球隊 logo 透過 `_team_map` 取得（startup 時從 MLB Stats API 載入，不受 min_opp 限制）
 - 括號內 OAA 標「模型估計，非 Statcast 官方」
+
+Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整合站位」）：
+- 左側面板：年份 tabs（if_years）→ 打者搜尋（內野打者清單，2025 全部 372 位同時有
+  外野資料）→ 比賽狀況（GameStateForm）→ 計算按鈕（線上計算，Render 上約一分鐘）
+- 結果：TitleBar（打者/壘況/球數）＋ IntegratedChart ＋ StatsPanel：總省分大卡
+  （vs 聯盟平均，綠/紅）＋外野三人/內野四人分項卡＋七人座標表
+- 文案面向休閒球迷（「七名野手一起排…加總就是省下的分數」），不放方法論
 
 ### 響應式/手機版（2026-07-06）
 專案原本完全沒有 mobile breakpoint，用 Playwright 在 375×812 實測後修的問題：
