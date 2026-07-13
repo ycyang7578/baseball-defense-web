@@ -311,10 +311,15 @@ def optimize_positions(
     _, delta_re = load_re24(re24_dir)
     hit_bundle = load_hit_prob(hit_prob_dir)
 
-    # 載入模型參數（指定外野手時，以其 player-level 參數覆寫該位置）
-    scalers, mus = {}, {}
-    for pos in POSITIONS:
-        scalers[pos], mus[pos] = load_model_params(pos, models_dir)
+    # 載入模型參數：統一 OF 模型——LF/CF/RF 共用同一 scaler 與群體層參數，
+    # 與 precompute_model_oaa 及 API 顯示層同一口徑（2026-07-13 定案）。
+    # models/{year}/ 底下若存在分位置目錄（LF/CF/RF/）是舊模型時代的遺留產物，
+    # 這裡刻意不用：曾因 _resolve_model_dir 偏好分位置目錄，使優化器與顯示層
+    # 在 2025 用了兩套曲面，兩組站位的優劣排序可以相反。
+    # （指定外野手時，以其 player-level 參數覆寫該位置）
+    of_scaler, of_mu = load_model_params("OF", models_dir)
+    scalers = {pos: of_scaler for pos in POSITIONS}
+    mus = {pos: of_mu for pos in POSITIONS}
     if fielder_mus:
         for pos, m in fielder_mus.items():
             if m is not None:

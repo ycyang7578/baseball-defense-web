@@ -94,9 +94,10 @@ def test_optimize_positions_beats_a_deliberately_bad_guess():
     w_j = compute_w_j(balls, None, delta_re, 0, 0, 0, 0, hit_probs=hit_probs)
     assert (w_j > 0).all()  # 確認這組合成資料沒有被 optimize_positions 內部的 w_j>0 過濾掉任何球
 
-    scalers, mus = {}, {}
-    for pos in POSITIONS:
-        scalers[pos], mus[pos] = load_model_params(pos, MODELS_DIR)
+    # optimize_positions 用統一 OF 參數（三位置共用，2026-07-13 定案），這裡同步
+    of_scaler, of_mu = load_model_params("OF", MODELS_DIR)
+    scalers = {pos: of_scaler for pos in POSITIONS}
+    mus = {pos: of_mu for pos in POSITIONS}
     ctx = {
         "ball_x": balls["ball_x"].values,
         "ball_y": balls["ball_y"].values,
