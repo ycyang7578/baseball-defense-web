@@ -151,7 +151,14 @@ def _load_if_bayes() -> None:
         logger.warning(f"貝葉斯個人化資產載入失敗，個人化端點停用: {e}")
         _if_bayes_model = None
         return
+    _load_if_fielder_menu()
+
+
+def _load_if_fielder_menu() -> None:
+    """野手選單快取。獨立成函式：啟動時對 DB 的暫時性失敗不該讓功能死到重啟
+    （2026-07-13 線上實例即因此選單 404），if_fielder_options 會惰性重試。"""
     try:
+        opts: dict[int, dict[str, list[dict]]] = {}
         with psycopg2.connect(DSN) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('fielder_positioning')")
@@ -163,14 +170,17 @@ def _load_if_bayes() -> None:
                     "FROM fielder_positioning WHERE position IN %s "
                     "ORDER BY season, position", (IF_POSITIONS,))
                 for season, pos, fid in cur.fetchall():
-                    (_if_fielder_opts.setdefault(int(season), {})
+                    (opts.setdefault(int(season), {})
                      .setdefault(pos, []).append({
                          "player_id": int(fid),
                          "name": _name_map.get(int(fid), f"#{fid}"),
                          "has_effects": int(fid) in _if_effects}))
-        for year in _if_fielder_opts.values():
-            for opts in year.values():
-                opts.sort(key=lambda o: (not o["has_effects"], o["name"]))
+        for year in opts.values():
+            for lst in year.values():
+                lst.sort(key=lambda o: (not o["has_effects"], o["name"]))
+        _if_fielder_opts.clear()
+        _if_fielder_opts.update(opts)
+        logger.info(f"野手選單: {sorted(_if_fielder_opts)} 年份已載入")
     except Exception as e:
         logger.warning(f"野手選單載入失敗: {e}")
 
@@ -531,6 +541,8 @@ def if_fielder_options(year: int = 2025):
     """個人化站位的野手選單（該年有站位資料的野手，依位置分組）。"""
     if _if_bayes_model is None:
         raise HTTPException(503, "個人化模型未載入")
+    if year not in _if_fielder_opts:
+        _load_if_fielder_menu()  # 啟動時可能因暫時性 DB 失敗而空，惰性重建
     if year not in _if_fielder_opts:
         raise HTTPException(404, f"No fielder options for year {year}")
     return _if_fielder_opts[year]
