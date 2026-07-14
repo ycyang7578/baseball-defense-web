@@ -107,6 +107,32 @@ function clampXY(x, y) {
 const OF_POSITIONS = ['LF', 'CF', 'RF']
 const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 
+// ── 密度色圖（Blues，同 seaborn KDE 的感覺）：v∈[0,1] → [r,g,b,alpha] ──
+const DENS_STOPS = [
+  [0.00, [198, 219, 239], 0.00],
+  [0.15, [198, 219, 239], 0.32],
+  [0.35, [158, 202, 225], 0.46],
+  [0.55, [107, 174, 214], 0.56],
+  [0.75, [49, 130, 189], 0.64],
+  [1.00, [8, 81, 156], 0.72],
+]
+
+function densColor(v) {
+  v = Math.max(0, Math.min(1, v))
+  for (let i = 0; i < DENS_STOPS.length - 1; i++) {
+    const [t0, c0, a0] = DENS_STOPS[i], [t1, c1, a1] = DENS_STOPS[i + 1]
+    if (v <= t1) {
+      const t = (v - t0) / (t1 - t0)
+      return [Math.round(c0[0] + (c1[0] - c0[0]) * t),
+              Math.round(c0[1] + (c1[1] - c0[1]) * t),
+              Math.round(c0[2] + (c1[2] - c0[2]) * t),
+              a0 + (a1 - a0) * t]
+    }
+  }
+  const [, c, a] = DENS_STOPS[DENS_STOPS.length - 1]
+  return [...c, a]
+}
+
 // ── Marching squares：從網格 KDE 取一條等值線的線段集（SVG path 字串）──
 function marchingSquares(grid, gw, gh, level, cell) {
   const parts = []
@@ -202,11 +228,11 @@ export default function IntegratedChart({ data }) {
     const sctx = small.getContext('2d')
     const img = sctx.createImageData(GW, GH)
     for (let i = 0; i < grid.length; i++) {
-      const v = grid[i] / maxV
-      img.data[i * 4] = 30
-      img.data[i * 4 + 1] = 64
-      img.data[i * 4 + 2] = 175
-      img.data[i * 4 + 3] = Math.round(255 * 0.4 * Math.pow(v, 0.75))  // 淡一點讓球點可讀
+      const [r, g, b, a] = densColor(Math.pow(grid[i] / maxV, 0.85))
+      img.data[i * 4] = r
+      img.data[i * 4 + 1] = g
+      img.data[i * 4 + 2] = b
+      img.data[i * 4 + 3] = Math.round(255 * a)
     }
     sctx.putImageData(img, 0, 0)
     const big = document.createElement('canvas')
@@ -218,8 +244,8 @@ export default function IntegratedChart({ data }) {
     bctx.drawImage(small, 0, 0, PW, PH)
     setDensitySrc(big.toDataURL('image/png'))
 
-    // 等高線：同一份網格取 5 條等值線
-    const levels = [0.15, 0.3, 0.45, 0.6, 0.8]
+    // 等高線：同一份網格取 9 條等值線
+    const levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     setContours(levels.map(t => marchingSquares(grid, GW, GH, t * maxV, CELL)))
   }, [showDensity, data, showTypes, probMin, probMax])
 
@@ -333,6 +359,11 @@ export default function IntegratedChart({ data }) {
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
         </linearGradient>
+        <linearGradient id="ic-grad-d" x1="0" y1="0" x2="1" y2="0">
+          {DENS_STOPS.map(([t, [r, g, b]]) => (
+            <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
+          ))}
+        </linearGradient>
       </defs>
       {/* 草地扇形 */}
       <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
@@ -362,7 +393,7 @@ export default function IntegratedChart({ data }) {
         <g transform={`translate(${PL},${PT})`}>
           {contours.map((d, i) => d && (
             <path key={i} d={d} fill="none" stroke="#1e3a8a"
-              strokeWidth="0.9" opacity={0.28 + i * 0.13} />
+              strokeWidth="0.8" opacity={0.2 + i * 0.07} />
           ))}
         </g>
       )}
@@ -466,7 +497,7 @@ export default function IntegratedChart({ data }) {
           `滾地 ${if_balls.length}` + (popup_balls.length > 0 ? `・高飛 ${popup_balls.length}` : ''),
         ]
         const isProb = colorMode === 'prob'
-        const H = (isProb ? 100 : 144) + (nWall > 0 ? 16 : 0)
+        const H = (isProb ? 100 : 144) + (showDensity ? 26 : 0) + (nWall > 0 ? 16 : 0)
         const W = 178
         const LX = PL + PW - W - 8
         const LY = PT + PH - H - 8
@@ -503,6 +534,17 @@ export default function IntegratedChart({ data }) {
               <text x={10} y={y + 4 * 17 + 8} fontSize="8" fill="#999">點星標高亮其責任球</text>
             </g>)
           y += 4 * 17 + 16
+        }
+        if (showDensity) {
+          rows.push(
+            <g key="dens">
+              <rect x={10} y={y} width={104} height={9}
+                fill="url(#ic-grad-d)" stroke="#bbb" strokeWidth="0.5" />
+              <text x={10} y={y + 20} fontSize="8" fill="#555">疏</text>
+              <text x={114} y={y + 20} fontSize="8" fill="#555" textAnchor="end">密</text>
+              <text x={120} y={y + 8} fontSize="8" fill="#555">落點密度</text>
+            </g>)
+          y += 26
         }
         rows.push(
           <text key="counts" x={10} y={y + 8} fontSize="8.5" fill="#777">
