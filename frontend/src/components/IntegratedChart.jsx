@@ -205,22 +205,33 @@ export default function IntegratedChart({ data }) {
     }
     if (ptsIF.length + ptsOF.length === 0) { setDensitySrc(null); setContours(null); return }
 
-    // 網格 KDE（高斯核）
-    const CELL = 4, SIGMA = 3.4                     // 格 4px、頻寬 ~14px
+    // 網格 KDE（高斯核）。頻寬用 Scott 法則按資料自適應（同 seaborn 預設）——
+    // 固定窄頻寬會讓等高線長成不規則的變形蟲（2026-07-14 使用者回報）
+    const CELL = 4
     const GW = Math.ceil(PW / CELL) + 1
     const GH = Math.ceil(PH / CELL) + 1
-    const win = Math.ceil(SIGMA * 3)
     const kde = (pts) => {
       const g = new Float32Array(GW * GH)
-      for (const [x, y] of pts) {
-        const gx = ((x - X0) / (X1 - X0) * PW) / CELL
-        const gy = ((Y1 - y) / (Y1 - Y0) * PH) / CELL
+      if (pts.length === 0) return [g, 0]
+      // Scott：sigma = 平均(std_x, std_y) × n^(-1/6)，換算成格
+      const px = pts.map(([x]) => (x - X0) / (X1 - X0) * PW)
+      const py = pts.map(([, y]) => (Y1 - y) / (Y1 - Y0) * PH)
+      const std = (a) => {
+        const m = a.reduce((s, v) => s + v, 0) / a.length
+        return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length)
+      }
+      const scottPx = 0.5 * (std(px) + std(py)) * Math.pow(pts.length, -1 / 6)
+      const sigma = Math.max(4, Math.min(12, scottPx / CELL))
+      const win = Math.ceil(sigma * 3)
+      for (let k = 0; k < pts.length; k++) {
+        const gx = px[k] / CELL
+        const gy = py[k] / CELL
         const ix0 = Math.max(0, Math.floor(gx - win)), ix1 = Math.min(GW - 1, Math.ceil(gx + win))
         const iy0 = Math.max(0, Math.floor(gy - win)), iy1 = Math.min(GH - 1, Math.ceil(gy + win))
         for (let iy = iy0; iy <= iy1; iy++)
           for (let ix = ix0; ix <= ix1; ix++) {
             const d2 = (ix - gx) ** 2 + (iy - gy) ** 2
-            g[iy * GW + ix] += Math.exp(-d2 / (2 * SIGMA * SIGMA))
+            g[iy * GW + ix] += Math.exp(-d2 / (2 * sigma * sigma))
           }
       }
       let m = 0
