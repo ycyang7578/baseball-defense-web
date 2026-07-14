@@ -643,8 +643,14 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
   （vs 聯盟平均，綠/紅）＋外野三人/內野四人分項卡＋七人座標表
 - 文案面向休閒球迷（「七名野手一起排…加總就是省下的分數」），不放方法論
 - **展示用內野高飛（2026-07-14）**：popup 站位無槓桿（出局率 98.6%）不參與優化，
-  但為了「打者所有場內球」的視覺完整性畫上去（淡灰小點、tooltip 註明不參與
-  優化）。資料走 `precomputed_batter_popups`（scripts/precompute_batter_popups.py，
+  但為了「打者所有場內球」的視覺完整性畫上去——**顏色＝實證常數接殺機率 98.5%
+  （RdYlGn 深綠，`POPUP_CATCH` in IntegratedChart.jsx），tooltip 註明實證與
+  不參與優化**。⚠️ **勿改用外野模型算 popup 接殺機率**（使用者曾提案，
+  2026-07-14 校準實驗否決）：2025 全部 8,815 顆 popup、七人聯盟平均站位＋
+  OF 群體 μ，Brier 0.0243 **輸給常數 0.986 的 0.0148**；失敗模式＝OOD 尾巴，
+  138 顆球模型說平均 11% 接殺、實際 88.4% 出局（滯空 6.7s 中位遠超外野
+  訓練分布，內野手接 popup 是等球不是追球）。
+  資料走 `precomputed_batter_popups`（scripts/precompute_batter_popups.py，
   本機與 Neon 皆已灌 2020–25 共 46,520 筆；hc×2.5 展示座標同 precomputed_if_gbs
   慣例），端點 `_load_batter_popups` 表缺時回空清單不擋主流程。場內球覆蓋率
   口徑（2025 實測）：外野側 46.0%＋內野側 40.3%＋popup 7.1%＝93.4%，

@@ -112,6 +112,10 @@ function LegendItem({ color, shape, label, y }) {
 const OF_POSITIONS = ['LF', 'CF', 'RF']
 const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 
+// popup 接殺機率＝聯盟實證常數（2025 例行賽 98.5% 出局；站哪都接得到，
+// 所以不參與優化）。外野模型算 popup 是 OOD、校準比常數差，勿改回模型算。
+const POPUP_CATCH = 0.985
+
 export default function IntegratedChart({ data }) {
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if', ball }
   if (!data) return null
@@ -125,7 +129,10 @@ export default function IntegratedChart({ data }) {
     const lines = kind === 'of'
       ? [`外野球　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`]
       : kind === 'popup'
-      ? [`內野高飛　${ball.is_out ? '出局' : '安打/失誤'}　不參與站位優化`]
+      ? [
+          `內野高飛　${ball.is_out ? '出局' : '安打/失誤'}　接殺機率 ~99%（實證）`,
+          '站哪都接得到，不參與站位優化',
+        ]
       : [
           `滾地球　${ball.is_out ? '出局' : '安打/失誤'}　EV ${ball.launch_speed.toFixed(0)} mph`,
           `P(out) 平均 ${(ball.p_out_league * 100).toFixed(0)}% → 最佳化 ${(ball.p_out_opt * 100).toFixed(0)}%`,
@@ -155,7 +162,7 @@ export default function IntegratedChart({ data }) {
       <polygon points={basePts(...B3)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
-      {/* 內野高飛（展示用，不參與優化——站位無槓桿，畫在最底層淡灰） */}
+      {/* 內野高飛（展示用，不參與優化——顏色＝實證常數接殺機率，畫在最底層） */}
       {popup_balls.map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'popup' && hovered.ball === b
@@ -163,9 +170,9 @@ export default function IntegratedChart({ data }) {
           <circle key={`pu-${i}`}
             cx={tx(bx)} cy={ty(by)}
             r={isHov ? 6 : 3.5}
-            fill="#a7afba"
-            stroke={b.is_out ? '#777' : 'white'} strokeWidth={b.is_out ? 0.9 : 0.6}
-            opacity="0.55"
+            fill={rdylgn(POPUP_CATCH)}
+            stroke={b.is_out ? '#555' : 'white'} strokeWidth={b.is_out ? 0.9 : 0.6}
+            opacity="0.85"
             onMouseEnter={() => setHovered({ kind: 'popup', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
@@ -233,7 +240,7 @@ export default function IntegratedChart({ data }) {
       <LegendItem color={rdylgn(0.9)} shape="circle" label="接住機率高" y={PT + 52} />
       <LegendItem color={rdylgn(0.1)} shape="circle" label="接住機率低" y={PT + 70} />
       {popup_balls.length > 0 &&
-        <LegendItem color="#a7afba" shape="circle" label="內野高飛" y={PT + 88} />}
+        <LegendItem color={rdylgn(POPUP_CATCH)} shape="circle" label="內野高飛" y={PT + 88} />}
       {nWall > 0 &&
         <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`} y={PT + 106} />}
       <text x={SVG_W - PR + 8} y={PT + 128} fontSize="8.5" fill="#999">
@@ -247,7 +254,8 @@ export default function IntegratedChart({ data }) {
         <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>
         {popup_balls.length > 0 && <>
-          <tspan x={SVG_W - PR + 8} dy="14">灰＝內野高飛，</tspan>
+          <tspan x={SVG_W - PR + 8} dy="14">高飛≈99% 接殺</tspan>
+          <tspan x={SVG_W - PR + 8} dy="11">（聯盟實證），</tspan>
           <tspan x={SVG_W - PR + 8} dy="11">不參與站位優化</tspan>
         </>}
       </text>
