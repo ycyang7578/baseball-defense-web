@@ -644,10 +644,14 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
   七人座標差；同 Infield 頁模式）→ 計算按鈕（線上計算，Render 上約一分鐘起）
 - 圖寬 maxWidth 1020（2026-07-14 從 760 放大）、比較模式 1700；
   視野 Y0=-60（本壘後方界外 popup 99% 在 -49 內，再深夾回下緣）
-- **圖上互動（2026-07-14）**：外野責任歸屬色切換（前端最近距離法，同外野主頁
-  fallback 演算法；點外野星標高亮其責任球、owner 模式時內野球/高飛淡出）＋
-  機率範圍雙滑桿（外野 catch_prob／內野 p_out_opt／高飛用實證常數一起過濾）＋
-  RdYlGn 接殺機率色階條（owner 模式換成 LF/CF/RF/其他 色塊說明）
+- **圖上互動（2026-07-14）**：責任歸屬色切換（七人皆分：外野球分 LF/CF/RF、
+  滾地球分 1B/2B/3B/SS，前端最近距離法；點任一星標高亮其責任球、owner 模式
+  時高飛淡出）＋機率範圍雙滑桿（外野 catch_prob／內野 p_out_opt／高飛用實證
+  常數一起過濾）＋RdYlGn 接殺機率色階條（owner 模式換成七人色塊說明）＋
+  **球種複選勾選**（滾地球/飛球/平飛球/內野高飛）。飛球 vs 平飛用真實
+  Statcast bb_type 標籤——`precomputed_batter_balls` 2026-07-14 起加 `bb_type`
+  欄（本機與 Neon 已重灌 299,345 筆；precompute_batter_balls.py 改 DROP+CREATE
+  因 CREATE IF NOT EXISTS 不會補欄位），_BATTER_QUERY/BallPoint 一路帶出
 - **聯盟平均站位標記已從所有圖移除（2026-07-14 使用者決策）**：SprayChart／
   matplotlib PNG（api/plot.py）／InfieldChart／IntegratedChart 圖上只畫最佳化
   站位；聯盟平均只留在數字比較（統計卡、座標表、省分口徑不變）。

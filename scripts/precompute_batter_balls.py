@@ -29,7 +29,8 @@ SQL_DIR = Path(__file__).resolve().parent / "sql"
 
 # 跟 src/optimization.py 的 _BATTER_QUERY 篩選條件保持一致（打出去的球）
 _BALLS_QUERY = """
-    SELECT batter, game_year, stand, hit_distance_sc, launch_speed, launch_angle, hc_x, hc_y, plate_z
+    SELECT batter, game_year, stand, hit_distance_sc, launch_speed, launch_angle, hc_x, hc_y, plate_z,
+           bb_type
     FROM statcast
     WHERE game_year = ANY(%(years)s)
       AND game_type = 'R'
@@ -80,7 +81,7 @@ def build_batter_balls(source_dsn: str, years: list[int]) -> pd.DataFrame:
     print(f"[balls] flight_time>0.5 篩選後: {len(df):,}")
 
     return df[["batter", "game_year", "stand", "ball_x", "ball_y", "flight_time",
-               "launch_speed", "launch_angle", "spray_angle"]].reset_index(drop=True)
+               "launch_speed", "launch_angle", "spray_angle", "bb_type"]].reset_index(drop=True)
 
 
 def build_batter_stand(source_dsn: str, years: list[int]) -> pd.DataFrame:
@@ -107,9 +108,11 @@ def main():
 
     with psycopg2.connect(target_dsn) as conn:
         with conn.cursor() as cur:
+            # DROP 而非 TRUNCATE：schema 可能改版（如 2026-07-14 加 bb_type 欄），
+            # CREATE IF NOT EXISTS 不會補欄位
+            cur.execute("DROP TABLE IF EXISTS precomputed_batter_balls")
             cur.execute((SQL_DIR / "create_precomputed_batter_balls_table.sql").read_text(encoding="utf-8"))
             cur.execute((SQL_DIR / "create_precomputed_batter_stand_table.sql").read_text(encoding="utf-8"))
-            cur.execute("TRUNCATE precomputed_batter_balls")
             cur.execute("TRUNCATE precomputed_batter_stand")
         conn.commit()
         _copy(conn, "precomputed_batter_balls", balls_df)

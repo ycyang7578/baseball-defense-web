@@ -83,7 +83,7 @@ def _xy_to_polar_params(xy: dict) -> np.ndarray:
 # 查精簡預計算表（scripts/precompute_batter_balls.py 產生），不直查 5GB 的 statcast。
 # 舊版直查 statcast 再算物理公式的版本見 git 歷史（2026-07 前的 prepare_batter_balls）。
 _BATTER_QUERY = """
-    SELECT ball_x, ball_y, flight_time, launch_speed, launch_angle, spray_angle, stand
+    SELECT ball_x, ball_y, flight_time, launch_speed, launch_angle, spray_angle, stand, bb_type
     FROM precomputed_batter_balls
     WHERE batter = %(batter_id)s AND game_year = ANY(%(years)s)
 """
@@ -162,7 +162,8 @@ def prepare_batter_balls(
         return df
 
     return df[["ball_x", "ball_y", "flight_time",
-               "launch_speed", "launch_angle", "spray_angle", "stand"]].reset_index(drop=True)
+               "launch_speed", "launch_angle", "spray_angle", "stand",
+               "bb_type"]].reset_index(drop=True)
 
 
 # ── w_j 計算 ──────────────────────────────────────────────────────

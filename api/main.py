@@ -1185,7 +1185,9 @@ def optimize_integrated(req: IntegratedRequest):
         of_balls=[BallPoint(x=float(balls_of.iloc[i]["ball_x"]),
                             y=float(balls_of.iloc[i]["ball_y"]),
                             catch_prob=float(probs_of_opt[i]),
-                            is_wall_ball=bool(wall_flags[i]))
+                            is_wall_ball=bool(wall_flags[i]),
+                            bb_type=(str(balls_of.iloc[i]["bb_type"])
+                                     if "bb_type" in balls_of.columns else None))
                   for i in range(len(balls_of))],
         if_balls=[IFBallPoint(spray_deg=r[0], x=r[1], y=r[2], launch_speed=r[3],
                               is_out=r[5], p_out_league=round(float(pl), 4),

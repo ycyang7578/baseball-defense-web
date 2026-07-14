@@ -122,10 +122,13 @@ const POPUP_CATCH = 0.985
 
 export default function IntegratedChart({ data }) {
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if'|'popup', ball }
-  const [activePos, setActivePos] = useState(null)   // 'LF'|'CF'|'RF'|null
+  const [activePos, setActivePos] = useState(null)   // 七位置之一或 null
   const [colorMode, setColorMode] = useState('prob') // 'prob' | 'owner'
   const [probMin, setProbMin] = useState(0)          // 0–100 integer
   const [probMax, setProbMax] = useState(100)
+  // 球種篩選（複選）：滾地→內野球、飛球/平飛→外野球（真實 bb_type 標籤）、高飛→popup
+  const [showTypes, setShowTypes] = useState(
+    { ground_ball: true, fly_ball: true, line_drive: true, popup: true })
 
   // 責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）。
   // 外野球在 LF/CF/RF 之間分、滾地球在 1B/2B/3B/SS 之間分（球種已定守備側）
@@ -161,8 +164,10 @@ export default function IntegratedChart({ data }) {
   const tip = hovered ? (() => {
     const { kind, ball } = hovered
     const [bx, by] = clampXY(ball.x, ball.y)
+    const ofLabel = ball.bb_type === 'line_drive' ? '平飛球'
+      : ball.bb_type === 'fly_ball' ? '飛球' : '外野球'
     const lines = kind === 'of'
-      ? [`外野球　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`
+      ? [`${ofLabel}　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`
          + (ballOwner?.[of_balls.indexOf(ball)] ? `　歸屬 ${ballOwner[of_balls.indexOf(ball)]}` : '')]
       : kind === 'popup'
       ? [
@@ -206,6 +211,18 @@ export default function IntegratedChart({ data }) {
             style={{ width: '72px', accentColor: '#4472C4' }} />
           <span style={{ minWidth: '28px' }}>{probMax}%</span>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', color: '#475569' }}>
+          <span>球種</span>
+          {[['ground_ball', '滾地球'], ['fly_ball', '飛球'],
+            ['line_drive', '平飛球'], ['popup', '內野高飛']].map(([key, label]) => (
+            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showTypes[key]}
+                onChange={e => setShowTypes(s => ({ ...s, [key]: e.target.checked }))}
+                style={{ accentColor: '#4472C4', cursor: 'pointer' }} />
+              {label}
+            </label>
+          ))}
+        </div>
       </div>
 
     <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', height: 'auto', display: 'block', background: 'white' }}>
@@ -237,7 +254,7 @@ export default function IntegratedChart({ data }) {
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
       {/* 內野高飛（展示用，不參與優化——顏色＝實證常數接殺機率，畫在最底層） */}
-      {popup_balls.filter(() => inRange(POPUP_CATCH)).map((b, i) => {
+      {popup_balls.filter(() => showTypes.popup && inRange(POPUP_CATCH)).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'popup' && hovered.ball === b
         return (
@@ -254,7 +271,7 @@ export default function IntegratedChart({ data }) {
       })}
       {/* 滾地球（顏色 = P(out) 或責任歸屬） */}
       {if_balls.map((b, i) => {
-        if (!inRange(b.p_out_opt)) return null
+        if (!showTypes.ground_ball || !inRange(b.p_out_opt)) return null
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'if' && hovered.ball === b
         const owner = ifBallOwner?.[i]
@@ -278,6 +295,7 @@ export default function IntegratedChart({ data }) {
       {/* 外野球（顏色 = 接殺機率或責任歸屬；打牆球另畫橘星） */}
       {of_balls.map((b, i) => {
         if (b.is_wall_ball || !inRange(b.catch_prob)) return null
+        if (b.bb_type && !showTypes[b.bb_type]) return null
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'of' && hovered.ball === b
         const owner = ballOwner?.[i]
@@ -302,7 +320,7 @@ export default function IntegratedChart({ data }) {
         <polyline fill="none" stroke="#00CC55" strokeWidth="2.2" opacity="0.9"
           points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
       )}
-      {of_balls.filter(b => b.is_wall_ball).map((b, i) => {
+      {of_balls.filter(b => b.is_wall_ball && (!b.bb_type || showTypes[b.bb_type])).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         return (
           <polygon key={`wb-${i}`} points={starPts(tx(bx), ty(by), 7)}

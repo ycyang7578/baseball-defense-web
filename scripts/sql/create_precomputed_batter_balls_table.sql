@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS precomputed_batter_balls (
     flight_time   DOUBLE PRECISION NOT NULL,
     launch_speed  DOUBLE PRECISION NOT NULL,
     launch_angle  DOUBLE PRECISION NOT NULL,
-    spray_angle   DOUBLE PRECISION NOT NULL
+    spray_angle   DOUBLE PRECISION NOT NULL,
+    bb_type       TEXT             NOT NULL   -- 'fly_ball' | 'line_drive'（整合頁球種篩選用）
 );
 
 CREATE INDEX IF NOT EXISTS idx_pbb_batter_year ON precomputed_batter_balls (batter, game_year);

@@ -41,6 +41,7 @@ class BallPoint(BaseModel):
     catch_prob:   float
     is_wall_ball: bool
     responsible:  str | None = None   # 'LF'/'CF'/'RF'，None = 接殺機率不足 5%
+    bb_type:      str | None = None   # 'fly_ball'/'line_drive'（整合頁球種篩選用）
 
 
 class ParkCoord(BaseModel):
