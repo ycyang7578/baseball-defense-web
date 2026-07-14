@@ -473,7 +473,8 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
 
     _SQL_ALL = """
         SELECT m.name_fielder, m.position, m.model_oaa, m.n_opp,
-               MAX(o.player_id) AS player_id
+               MAX(o.player_id) AS player_id,
+               MAX(o.oaa) AS official_oaa, MAX(o.n_opp) AS official_n_opp
         FROM model_oaa m
         LEFT JOIN oaa_leaderboard o
                ON o.player_name = m.name_fielder AND o.year = %(year)s
@@ -490,16 +491,17 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
     result: dict[str, list[dict]] = {}
     for pos in POSITIONS:
         rows_pos = [
-            (name, float(oaa) - avg_oaa_per_ball * int(n), int(n), pid)
-            for name, p, oaa, n, pid in all_rows
+            (name, float(oaa) - avg_oaa_per_ball * int(n), int(n), pid, ooaa, onopp)
+            for name, p, oaa, n, pid, ooaa, onopp in all_rows
             if p == pos and name in yr_model_names.get(pos, set())
         ]
-        filtered = [(name, c, n, pid) for name, c, n, pid in rows_pos if n >= min_opp]
+        filtered = [r for r in rows_pos if r[2] >= min_opp]
         filtered.sort(key=lambda x: x[1] / x[2] if x[2] else 0, reverse=True)
         result[pos] = [{"name": name, "oaa": round(c, 2), "n_opp": n,
                         "player_id": pid,
-                        "team_id": yr_team_map.get(pid) if pid else None}
-                       for name, c, n, pid in filtered]
+                        "team_id": yr_team_map.get(pid) if pid else None,
+                        "official_oaa": ooaa, "official_n_opp": onopp}
+                       for name, c, n, pid, ooaa, onopp in filtered]
     return result
 
 

@@ -6,27 +6,9 @@ export async function fetchTeams() {
   return res.json()
 }
 
-export async function fetchYears() {
-  const res = await fetch(`${BASE}/years`)
-  if (!res.ok) throw new Error('Failed to fetch available years')
-  return res.json()
-}
-
 export async function fetchFielders(minOpp = 100, year = 2025) {
   const res = await fetch(`${BASE}/fielders?min_opp=${minOpp}&year=${year}`)
   if (!res.ok) throw new Error('Failed to fetch fielders')
-  return res.json()
-}
-
-export async function fetchPlayerTrend(name) {
-  const res = await fetch(`${BASE}/player_trend?name=${encodeURIComponent(name)}`)
-  if (!res.ok) throw new Error('Failed to fetch trend')
-  return res.json()
-}
-
-export async function fetchStarStats(year = 2025) {
-  const res = await fetch(`${BASE}/star_stats?year=${year}`)
-  if (!res.ok) throw new Error('Failed to fetch star stats')
   return res.json()
 }
 

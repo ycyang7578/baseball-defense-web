@@ -20,6 +20,8 @@ class FielderInfo(BaseModel):
     n_opp:     int   | None = None
     player_id: int   | None = None
     team_id:   int   | None = None
+    official_oaa:   int | None = None   # Statcast 官方 OAA（統一排名頁對照用）
+    official_n_opp: int | None = None
 
 
 class PositionXY(BaseModel):
