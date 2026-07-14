@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
-// 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）
-const PL = 52, PT = 56, PW = 560, PR = 92, PB = 40
+// 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）。
+// 邊界縮到最小讓球場本身佔滿版面（右側 92 留給圖例/色階條）
+const PL = 10, PT = 12, PW = 560, PR = 92, PB = 10
 // Y0=-60：本壘後方界外 popup 99% 落在 -49 內（precomputed_batter_popups 實測），
-// 再深的夾回下緣
-const X0 = -270, X1 = 270, Y0 = -60, Y1 = 430
+// 再深的夾回下緣；Y1=425 給 400 呎弧與最深牆線（~420）留邊
+const X0 = -262, X1 = 262, Y0 = -60, Y1 = 425
 const PH = PW * (Y1 - Y0) / (X1 - X0)          // 等比例，不變形
 const SVG_W = PL + PW + PR
 const SVG_H = PT + PH + PB
-const MAX_R = 415   // 超出視野的深球夾回邊緣（沿同方向）
+const MAX_R = 412   // 超出視野的深球夾回邊緣（沿同方向）
 
 const tx = x => PL + (x - X0) / (X1 - X0) * PW
 const ty = y => PT + (Y1 - y) / (Y1 - Y0) * PH
@@ -95,11 +96,12 @@ const B2 = [0, 90 * Math.SQRT2]
 const B3 = [-90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 
 // 球點畫在 Statcast 記錄座標；太深的球沿同方向夾回視野邊緣，
-// 本壘後方過深的界外球夾回下緣
+// 界外過深/過寬的球夾回視野內
 function clampXY(x, y) {
   const r = Math.hypot(x, y)
   const k = r > MAX_R ? MAX_R / r : 1
-  return [x * k, Math.max(y * k, Y0 + 6)]
+  return [Math.max(X0 + 6, Math.min(X1 - 6, x * k)),
+          Math.max(y * k, Y0 + 6)]
 }
 
 function LegendItem({ color, shape, label, y }) {
@@ -181,8 +183,9 @@ export default function IntegratedChart({ data }) {
     return { x: tx(bx), y: ty(by), lines }
   })() : null
 
-  // 責任歸屬模式下高飛淡出（不參與優化、無歸屬）
-  const dimPopup = colorMode === 'owner' ? 0.18 : null
+  // 高飛不參與優化、不屬於任何野手：責任歸屬模式或點選野手高亮時一律淡出，
+  // 否則會看起來像被歸進選中野手的責任球
+  const dimPopup = (colorMode === 'owner' || activePos) ? 0.15 : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'white' }}>
