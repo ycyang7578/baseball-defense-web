@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
 // 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）。
@@ -174,6 +174,7 @@ function marchingSquares(grid, gw, gh, level, cell) {
 const POPUP_CATCH = 0.985
 
 export default function IntegratedChart({ data }) {
+  const svgRef = useRef(null)
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if'|'popup', ball }
   const [activePos, setActivePos] = useState(null)   // 七位置之一或 null
   const [colorMode, setColorMode] = useState('prob') // 'prob' | 'owner'
@@ -337,6 +338,34 @@ export default function IntegratedChart({ data }) {
   // 否則會看起來像被歸進選中野手的責任球
   const dimPopup = (colorMode === 'owner' || activePos) ? 0.15 : null
 
+  // 下載 PNG：序列化 SVG（密度層是 data URI 一併帶走）→ canvas 2x → 下載
+  const downloadPng = () => {
+    const svg = svgRef.current
+    if (!svg) return
+    const clone = svg.cloneNode(true)
+    clone.setAttribute('width', SVG_W)
+    clone.setAttribute('height', SVG_H)
+    const xml = new XMLSerializer().serializeToString(clone)
+    const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
+    const img = new Image()
+    img.onload = () => {
+      const scale = 2
+      const c = document.createElement('canvas')
+      c.width = SVG_W * scale
+      c.height = SVG_H * scale
+      const ctx = c.getContext('2d')
+      ctx.fillStyle = 'white'
+      ctx.fillRect(0, 0, c.width, c.height)
+      ctx.drawImage(img, 0, 0, c.width, c.height)
+      URL.revokeObjectURL(url)
+      const a = document.createElement('a')
+      a.href = c.toDataURL('image/png')
+      a.download = `positioning_${(data.name || '').replace(/[ ,]+/g, '_')}_${data.year}.png`
+      a.click()
+    }
+    img.src = url
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'white' }}>
       {/* ── Controls（同外野主頁：歸屬色切換＋機率範圍）── */}
@@ -359,6 +388,12 @@ export default function IntegratedChart({ data }) {
             style={{ accentColor: '#4472C4', cursor: 'pointer' }} />
           落點密度
         </label>
+        <button onClick={downloadPng} style={{
+          marginLeft: 'auto', padding: '3px 10px', borderRadius: '4px', cursor: 'pointer',
+          fontSize: '12px', border: '1px solid #cbd5e1', background: 'white', color: '#334155',
+        }}>
+          ↓ 下載圖
+        </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
           <span>機率範圍</span>
           <span style={{ minWidth: '28px', textAlign: 'right' }}>{probMin}%</span>
@@ -385,7 +420,9 @@ export default function IntegratedChart({ data }) {
         </div>
       </div>
 
-    <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', height: 'auto', display: 'block', background: 'white' }}>
+    <svg ref={svgRef} viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+      style={{ width: '100%', height: 'auto', display: 'block', background: 'white',
+               fontFamily: 'system-ui, sans-serif' }}>
       <defs>
         <linearGradient id="ic-grad-h" x1="0" y1="0" x2="1" y2="0">
           {RDYLGN.map(([t, [r, g, b]]) => (
@@ -522,8 +559,8 @@ export default function IntegratedChart({ data }) {
         )
       })}
 
-      {/* 七人站位（最佳化紫星；點任一人高亮其責任球） */}
-      {[...OF_POSITIONS, ...IF_POSITIONS].map(p => (
+      {/* 站位（最佳化紫星；點任一人高亮其責任球）。滾地不足的打者只有外野三人 */}
+      {[...OF_POSITIONS, ...IF_POSITIONS].filter(p => optimized.positions[p]).map(p => (
         <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
           code={p} isActive={activePos === p}
           onClick={() => setActivePos(a => a === p ? null : p)} />

@@ -4,7 +4,8 @@ import { TEAM_ABBR, TeamLogo, PlayerAvatar, displayName, oaaColor } from '../com
 
 const POSITIONS = ['1B', '2B', '3B', 'SS']
 const TABS = ['ALL', '1B', '2B', '3B', 'SS']
-const YEARS = [2025]   // 樣本外評分年（GBM 以 2023–24 訓練，只對 2025 打分）
+// 2025=樣本外評分年；2023/2024 落在訓練年內屬 in-sample、數字偏樂觀（展示用）
+const YEARS = [2023, 2024, 2025]
 
 const ACTIVE_BG  = '#eff6ff'
 const ACTIVE_HDR = '#dbeafe'

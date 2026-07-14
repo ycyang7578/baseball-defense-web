@@ -559,8 +559,9 @@ _integrated_batters_cache: dict[int, list[dict]] = {}   # year → 選單（含�
 
 @app.get("/api/integrated_batters", response_model=list[IntegratedBatterInfo])
 def integrated_batters(year: int | None = None):
-    """整合頁打者選單：括號顯示的是圖上會出現的全部球數
-    （滾地＋外野飛球/平飛＋popup），不是只有滾地球。"""
+    """整合頁打者選單：內野合格打者 ∪ 外野合格打者（OF 球 ≥ 30）。
+    滾地球樣本不足的打者只排外野三人（n_gb=0，前端據此退化顯示）。
+    括號顯示的是圖上會出現的全部球數（滾地＋外野飛球/平飛＋popup）。"""
     if year is None and _if_years:
         year = _if_years[-1]
     if year not in _if_batters_cache:
@@ -583,12 +584,17 @@ def integrated_batters(year: int | None = None):
                         pu_n = dict(cur.fetchall())
         except Exception as e:
             logger.warning(f"integrated_batters 球數統計失敗，退回滾地球數: {e}")
+        rows_by_id = {b["batter_id"]: {"batter_id": b["batter_id"], "name": b["name"],
+                                       "n_gb": b["n_gb"]}
+                      for b in _if_batters_cache[year]}
+        for pid, n_of in of_n.items():
+            if n_of >= _MIN_BALLS and pid not in rows_by_id:
+                rows_by_id[pid] = {"batter_id": pid,
+                                   "name": _name_map.get(pid, f"#{pid}"), "n_gb": 0}
         rows = [
-            {"batter_id": b["batter_id"], "name": b["name"],
-             "n_total": b["n_gb"] + of_n.get(b["batter_id"], 0)
-                        + pu_n.get(b["batter_id"], 0),
-             "n_gb": b["n_gb"]}
-            for b in _if_batters_cache[year]]
+            {**r, "n_total": r["n_gb"] + of_n.get(r["batter_id"], 0)
+                  + pu_n.get(r["batter_id"], 0)}
+            for r in rows_by_id.values()]
         _integrated_batters_cache[year] = sorted(
             rows, key=lambda r: r["n_total"], reverse=True)
     return _integrated_batters_cache[year]
@@ -1054,7 +1060,9 @@ def optimize_integrated(req: IntegratedRequest):
     （滾地歸內野、飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位。
     僅一壘有人（<2 出局）時內野側切換階段B DP 優化（釘 1B＋雙殺感知，
     _solve_if_dp，同 /api/if_optimize 的切換），聯盟基準改用一壘有人切分
-    的聯盟站位、內野出局率＝P(≥1 出局)。
+    的聯盟站位、內野出局率＝P(≥1 出局)。滾地球樣本不足（無 precomputed
+    內野資料）的打者退化成只排外野三人：positions 只有 LF/CF/RF、
+    n_gb=0、runs_if=0。
     內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
     （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
     指定 home_team 時外野同 /api/optimize 一般模式：打牆球接殺機率強制 0
@@ -1171,17 +1179,33 @@ def optimize_integrated(req: IntegratedRequest):
     probs_of_league, runs_of_league = of_runs(pos_of_league, _mus.get(year, {}))
 
     # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修；
-    #    僅一壘有人 <2 出局切換階段B DP 優化，同 /api/if_optimize）──────
-    stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
-        _load_if_batter(req.batter_id, year)
+    #    僅一壘有人 <2 出局切換階段B DP 優化，同 /api/if_optimize）。
+    #    滾地球樣本不足的打者沒有 precomputed 資料：退化成只排外野三人 ──
+    try:
+        stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
+            _load_if_batter(req.batter_id, year)
+        has_if = True
+    except HTTPException:
+        has_if = False
+        stand = str(balls_of["stand"].mode().iloc[0]) if len(balls_of) else "R"
+        ball_rows, balls_if = [], pd.DataFrame()
 
     # 指定內野手（貝葉斯球員層效應，同 /api/if_optimize）
     if_fids = {p: (req.if_fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(if_fids) if any(if_fids.values()) else None
 
-    dp_state = ((req.on_1b, req.on_2b, req.on_3b) == (1, 0, 0) and req.outs < 2
+    dp_state = (has_if
+                and (req.on_1b, req.on_2b, req.on_3b) == (1, 0, 0) and req.outs < 2
                 and _if_dp_out_model is not None)
-    if dp_state:
+    if not has_if:
+        if_opt_angles = np.array([])
+        if_opt_depths = np.array([])
+        lg_angles = np.array([])
+        lg_depths = np.array([])
+        runs_if_opt = runs_if_league = 0.0
+        p_if_league = np.array([])
+        p_if_opt = np.array([])
+    elif dp_state:
         # 階段B：釘 1B hold-runner＋雙殺感知計價（E[ΔRE] 本身即完整口徑）；
         # 顯示的內野出局率＝P(≥1 出局)，聯盟基準＝一壘有人切分的聯盟站位
         sol = _solve_if_dp(balls_if, state, warm_angles, warm_depths, pe)
@@ -1234,7 +1258,8 @@ def optimize_integrated(req: IntegratedRequest):
                           for p, a, d in zip(IF_POSITIONS, if_angles, if_depths)})
         return IntegratedSet(positions=positions,
                              catch_pct=round(float(np.mean(probs_of)) * 100, 1),
-                             exp_outs_if=round(float(np.mean(p_if)), 4),
+                             exp_outs_if=(round(float(np.mean(p_if)), 4)
+                                          if len(p_if) else 0.0),
                              runs_of=round(runs_of, 3), runs_if=round(runs_if, 3),
                              runs_total=round(runs_of + runs_if, 3))
 

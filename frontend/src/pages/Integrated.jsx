@@ -199,7 +199,8 @@ export default function Integrated() {
               placeholder="搜尋打者…"
             />
             <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 8, lineHeight: 1.6 }}>
-              括號內為該年場內球數。內外野七人一起排：飛球交給外野、滾地球交給內野
+              括號內為該年場內球數。內外野七人一起排：飛球交給外野、滾地球交給內野；
+              滾地球樣本不足的打者只排外野三人
             </div>
           </Sec>
 
@@ -274,7 +275,7 @@ export default function Integrated() {
               disabled={!batterId || loading}
               style={{ ...s.btn, opacity: (!batterId || loading) ? 0.5 : 1 }}
             >
-              {loading ? '計算中…' : '計算七人最佳站位'}
+              {loading ? '計算中…' : '計算最佳站位'}
             </button>
             {error && <div style={s.error}>{error}</div>}
           </div>
@@ -344,8 +345,10 @@ function TitleBar({ data, park }) {
         {displayName(data.name)}（{data.year}, {data.stand}打）{park ? ` @ ${park}` : ''}
       </div>
       <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--slate-600)', marginTop: 3 }}>
-        壘況 {data.situation}・{counts}＋滾地 {data.stats.n_gb} 球
+        壘況 {data.situation}・{counts}
+        {data.stats.n_gb > 0 && `＋滾地 ${data.stats.n_gb} 球`}
         {data.stats.n_popups > 0 && `＋高飛 ${data.stats.n_popups} 球（展示）`}
+        {data.stats.n_gb === 0 && '　（滾地球樣本不足，只排外野三人）'}
       </div>
       {picked.length > 0 && (
         <div style={{ fontSize: 11, color: 'var(--blue-600)', fontWeight: 600, marginTop: 2 }}>
@@ -409,14 +412,18 @@ function StatsPanel({ data }) {
             <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
               外野接殺率 <strong style={{ fontSize: 14 }}>{set.catch_pct.toFixed(1)}%</strong>
             </div>
-            <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
-              內野出局率 <strong style={{ fontSize: 14 }}>{(set.exp_outs_if * 100).toFixed(1)}%</strong>
-            </div>
+            {data.stats.n_gb > 0 && (
+              <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
+                內野出局率 <strong style={{ fontSize: 14 }}>{(set.exp_outs_if * 100).toFixed(1)}%</strong>
+              </div>
+            )}
             <div style={{ fontSize: 12, color: 'var(--slate-700)' }}>
               預期失分 <strong style={{ fontSize: 14 }}>{set.runs_total.toFixed(1)}</strong>
-              <span style={{ fontSize: 10, color: 'var(--slate-500)' }}>
-                {'　'}（外野 {set.runs_of.toFixed(1)}＋內野 {set.runs_if.toFixed(1)}）
-              </span>
+              {data.stats.n_gb > 0 && (
+                <span style={{ fontSize: 10, color: 'var(--slate-500)' }}>
+                  {'　'}（外野 {set.runs_of.toFixed(1)}＋內野 {set.runs_if.toFixed(1)}）
+                </span>
+              )}
             </div>
           </div>
         ))}
@@ -431,14 +438,14 @@ function StatsPanel({ data }) {
             </tr>
           </thead>
           <tbody>
-            {ALL_POSITIONS.map(p => (
+            {ALL_POSITIONS.filter(p => optimized.positions[p]).map(p => (
               <tr key={p}>
                 <td style={{ ...spc.td, fontWeight: 700, color: 'var(--slate-700)' }}>{p}</td>
                 {[league, optimized].map((set, i) => {
                   const pos = set.positions[p]
                   return (
                     <td key={i} style={spc.td}>
-                      ({Math.round(pos.x)}, {Math.round(pos.y)}) ft
+                      {pos ? `(${Math.round(pos.x)}, ${Math.round(pos.y)}) ft` : '—'}
                     </td>
                   )
                 })}
@@ -511,7 +518,8 @@ function CompareStats({ dataA, dataB }) {
           <tr><td colSpan={4} style={{ padding: '4px 0' }}>
             <hr style={{ border: 'none', borderTop: '1px solid var(--slate-100)', margin: 0 }} />
           </td></tr>
-          {ALL_POSITIONS.map(posRow)}
+          {ALL_POSITIONS.filter(p => dataA.optimized.positions[p]
+            && dataB.optimized.positions[p]).map(posRow)}
         </tbody>
       </table>
     </div>

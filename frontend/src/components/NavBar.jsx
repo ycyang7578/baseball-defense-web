@@ -12,13 +12,10 @@ export default function NavBar() {
           內野手站位最佳化
         </NavLink>
         <NavLink to="/integrated" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          七人整合站位
+          最佳化站位
         </NavLink>
         <NavLink to="/rankings" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          外野手排名
-        </NavLink>
-        <NavLink to="/if-rankings" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          內野手排名
+          OAA 排名
         </NavLink>
       </div>
     </nav>
