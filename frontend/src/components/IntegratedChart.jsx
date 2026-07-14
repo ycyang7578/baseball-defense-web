@@ -128,9 +128,9 @@ function bluesColor(t) {
   return BLUES[BLUES.length - 1][1]
 }
 
-// 同外野頁 seaborn 風格：levels=10、thresh=0.05（最低 5% 不填色）
+// 同外野頁 seaborn 風格：thresh=0.05（最低 5% 不填色）；7 層、色帶區隔加強
 const DENS_THRESH = 0.05
-const DENS_LEVELS = 10
+const DENS_LEVELS = 7
 const DENS_EDGES = Array.from({ length: DENS_LEVELS },
   (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / (DENS_LEVELS - 1))
 
@@ -260,7 +260,8 @@ export default function IntegratedChart({ data }) {
         img.data[o] = r
         img.data[o + 1] = g
         img.data[o + 2] = b
-        img.data[o + 3] = Math.round(255 * 0.3)   // 同外野頁 alpha=0.28 的清淡感
+        // 透明度隨層數升高，色帶間的區隔更明顯（低層維持外野頁的清淡感）
+        img.data[o + 3] = Math.round(255 * (0.26 + band * 0.055))
       }
     }
     bctx.putImageData(img, 0, 0)
