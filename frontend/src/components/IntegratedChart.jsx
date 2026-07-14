@@ -128,9 +128,9 @@ function bluesColor(t) {
   return BLUES[BLUES.length - 1][1]
 }
 
-// 同外野頁 seaborn 風格：thresh=0.05（最低 5% 不填色）；7 層、色帶區隔加強
+// 同外野頁 seaborn 風格：thresh=0.05（最低 5% 不填色）；10 層、清淡填色
 const DENS_THRESH = 0.05
-const DENS_LEVELS = 7
+const DENS_LEVELS = 10
 const DENS_EDGES = Array.from({ length: DENS_LEVELS },
   (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / (DENS_LEVELS - 1))
 
@@ -266,13 +266,13 @@ export default function IntegratedChart({ data }) {
                    + (grid[(iy + 1) * GW + ix] * (1 - fx) + grid[(iy + 1) * GW + ix + 1] * fx) * fy) / maxV
         if (v < DENS_THRESH) continue
         const band = Math.min(DENS_LEVELS - 2, Math.floor((v - DENS_THRESH) / bandW))
-        const [r, g, b] = bluesColor((band + 1) / (DENS_LEVELS - 1))
+        // 色圖上限收在 0.85、透明度整體壓低——最深層不要黑藍壓過球點
+        const [r, g, b] = bluesColor(0.85 * (band + 1) / (DENS_LEVELS - 1))
         const o = (py * PW + px) * 4
         img.data[o] = r
         img.data[o + 1] = g
         img.data[o + 2] = b
-        // 透明度隨層數升高，色帶間的區隔更明顯（低層維持外野頁的清淡感）
-        img.data[o + 3] = Math.round(255 * (0.26 + band * 0.055))
+        img.data[o + 3] = Math.round(255 * (0.18 + band * 0.028))
       }
     }
     bctx.putImageData(img, 0, 0)
