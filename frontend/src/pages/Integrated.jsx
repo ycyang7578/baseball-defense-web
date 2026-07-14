@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchIfBatters, fetchIfYears, optimizeIntegrated } from '../api'
+import { fetchIntegratedBatters, fetchIfYears, fetchTeams, optimizeIntegrated } from '../api'
 import GameStateForm from '../components/GameStateForm'
 import SearchSelect from '../components/SearchSelect'
 import IntegratedChart from '../components/IntegratedChart'
@@ -12,6 +12,8 @@ export default function Integrated() {
   const [year, setYear]             = useState(null)
   const [batters, setBatters]       = useState([])
   const [batterId, setBatterId]     = useState('')
+  const [teams, setTeams]           = useState([])
+  const [homeTeam, setHomeTeam]     = useState('')
   const [gameState, setGameState]   = useState({ on1b: 0, on2b: 0, on3b: 0, outs: 0 })
   const [data, setData]             = useState(null)
   const [loading, setLoading]       = useState(false)
@@ -22,11 +24,12 @@ export default function Integrated() {
       setAvailYears(ys)
       if (ys.length) setYear(ys[ys.length - 1])
     }).catch(console.error)
+    fetchTeams().then(setTeams).catch(console.error)
   }, [])
 
   useEffect(() => {
     if (year === null) return
-    fetchIfBatters(year).then(data => { setBatters(data); setBatterId('') }).catch(console.error)
+    fetchIntegratedBatters(year).then(data => { setBatters(data); setBatterId('') }).catch(console.error)
   }, [year])
 
   async function handleOptimize() {
@@ -38,6 +41,7 @@ export default function Integrated() {
         batterId: Number(batterId), year,
         on1b: gameState.on1b, on2b: gameState.on2b,
         on3b: gameState.on3b, outs: gameState.outs,
+        homeTeam,
       }))
     } catch (e) {
       setError(e.message)
@@ -69,19 +73,29 @@ export default function Integrated() {
             <SearchSelect
               options={batters.map(b => ({
                 value: String(b.batter_id),
-                label: `${displayName(b.name)}（${b.n_gb}）`,
+                label: `${displayName(b.name)}（${b.n_total}）`,
               }))}
               value={batterId}
               onChange={setBatterId}
               placeholder="搜尋打者…"
             />
             <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 8, lineHeight: 1.6 }}>
-              括號內為該年滾地球數。內外野七人一起排：飛球交給外野、滾地球交給內野
+              括號內為該年場內球數。內外野七人一起排：飛球交給外野、滾地球交給內野
             </div>
           </Sec>
 
           <Sec title="比賽狀況">
             <GameStateForm state={gameState} onChange={setGameState} />
+          </Sec>
+
+          <Sec title="球場">
+            <select value={homeTeam} onChange={e => setHomeTeam(e.target.value)} style={s.select}>
+              <option value="">— 通用 —</option>
+              {teams.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6, lineHeight: 1.6 }}>
+              指定球場會把打到牆的球視為必失分，外野站位跟著調整（計算較久）
+            </div>
           </Sec>
 
           <div style={s.panelFooter}>
@@ -98,7 +112,7 @@ export default function Integrated() {
 
         {/* ── 右側結果區 ── */}
         <div className="app-chart-area" style={s.chartArea}>
-          <div style={{ width: '100%', maxWidth: 760 }}>
+          <div style={{ width: '100%', maxWidth: 1020 }}>
             <div style={{ position: 'relative' }}>
               {data ? (
                 <>
@@ -289,6 +303,10 @@ const s = {
     width: '100%', padding: '9px 0', background: 'var(--blue-600)', color: 'white',
     border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer',
     letterSpacing: '0.01em',
+  },
+  select: {
+    width: '100%', padding: '6px 8px', fontSize: 12, borderRadius: 6,
+    border: '1px solid var(--slate-200)', background: 'white', color: 'var(--slate-800)',
   },
   error: {
     background: '#fef2f2', border: '1px solid #fca5a5',

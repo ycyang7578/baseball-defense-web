@@ -109,13 +109,20 @@ export async function ifOptimize({ batterId, year, on1b, on2b, on3b, outs, field
 
 // ── 內外野整合（外野線上優化＋內野錨定式精修，計算需時間）─────────
 
-export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, outs }) {
+export async function fetchIntegratedBatters(year) {
+  const res = await fetch(`${BASE}/integrated_batters?year=${year}`)
+  if (!res.ok) throw new Error('Failed to fetch integrated batters')
+  return res.json()
+}
+
+export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, outs, homeTeam }) {
   const res = await fetch(`${BASE}/optimize_integrated`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       batter_id: batterId, year: year || 2025,
       on_1b: on1b, on_2b: on2b, on_3b: on3b, outs,
+      home_team: homeTeam || null,
     }),
   })
   if (!res.ok) {

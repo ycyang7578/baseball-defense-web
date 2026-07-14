@@ -632,8 +632,13 @@ Rankings 頁（`src/pages/Rankings.jsx`）：
 - 括號內 OAA 標「模型估計，非 Statcast 官方」
 
 Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整合站位」）：
-- 左側面板：年份 tabs（if_years）→ 打者搜尋（內野打者清單，2025 全部 372 位同時有
-  外野資料）→ 比賽狀況（GameStateForm）→ 計算按鈕（線上計算，Render 上約一分鐘）
+- 左側面板：年份 tabs（if_years）→ 打者搜尋（`/api/integrated_batters`，括號＝
+  該年場內球總數：滾地＋外野飛球/平飛＋popup，2026-07-14 起；底層清單仍是內野
+  打者，2025 全部 372 位同時有外野資料）→ 比賽狀況（GameStateForm）→ 球場
+  選單（2026-07-14 加，同主頁球場因素：打牆球接殺機率強制 0＋no_park 解
+  warm start 的 with_park 第二次優化＋牆線/橘星，內野無牆不受影響；多一次
+  優化 Render 上會更慢）→ 計算按鈕（線上計算，Render 上約一分鐘起）
+- 圖寬 maxWidth 1020（2026-07-14 從 760 放大）
 - 結果：TitleBar（打者/壘況/球數）＋ IntegratedChart ＋ StatsPanel：總省分大卡
   （vs 聯盟平均，綠/紅）＋外野三人/內野四人分項卡＋七人座標表
 - 文案面向休閒球迷（「七名野手一起排…加總就是省下的分數」），不放方法論

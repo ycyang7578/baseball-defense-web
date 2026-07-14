@@ -41,8 +41,8 @@ from .schemas import (
     IFBallPoint, IFBatterInfo, IFCustomResultResponse, IFFielderInfo,
     IFFielderOption, IFOptimizeRequest, IFOptimizeResponse, IFOptimizeSet,
     IFOptimizeStats, IFPosition, IFPositionSet, IFResultResponse, IFStats,
-    IntegratedRequest, IntegratedResponse, IntegratedSet, IntegratedStats,
-    PopupBall,
+    IntegratedBatterInfo, IntegratedRequest, IntegratedResponse, IntegratedSet,
+    IntegratedStats, PopupBall,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -544,6 +544,46 @@ def if_batters(year: int | None = None):
     return _if_batters_cache.get(year, [])
 
 
+_integrated_batters_cache: dict[int, list[dict]] = {}   # year → 選單（含全部球數）
+
+
+@app.get("/api/integrated_batters", response_model=list[IntegratedBatterInfo])
+def integrated_batters(year: int | None = None):
+    """整合頁打者選單：括號顯示的是圖上會出現的全部球數
+    （滾地＋外野飛球/平飛＋popup），不是只有滾地球。"""
+    if year is None and _if_years:
+        year = _if_years[-1]
+    if year not in _if_batters_cache:
+        return []
+    if year not in _integrated_batters_cache:
+        of_n: dict[int, int] = {}
+        pu_n: dict[int, int] = {}
+        try:
+            with psycopg2.connect(DSN) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT batter, count(*) FROM precomputed_batter_balls "
+                        "WHERE game_year = %s GROUP BY batter", (year,))
+                    of_n = dict(cur.fetchall())
+                    cur.execute("SELECT to_regclass('precomputed_batter_popups')")
+                    if cur.fetchone()[0] is not None:
+                        cur.execute(
+                            "SELECT batter, count(*) FROM precomputed_batter_popups "
+                            "WHERE game_year = %s GROUP BY batter", (year,))
+                        pu_n = dict(cur.fetchall())
+        except Exception as e:
+            logger.warning(f"integrated_batters 球數統計失敗，退回滾地球數: {e}")
+        rows = [
+            {"batter_id": b["batter_id"], "name": b["name"],
+             "n_total": b["n_gb"] + of_n.get(b["batter_id"], 0)
+                        + pu_n.get(b["batter_id"], 0),
+             "n_gb": b["n_gb"]}
+            for b in _if_batters_cache[year]]
+        _integrated_batters_cache[year] = sorted(
+            rows, key=lambda r: r["n_total"], reverse=True)
+    return _integrated_batters_cache[year]
+
+
 def _load_if_batter(batter_id: int, year: int):
     """precomputed 出局率最佳解＋打者滾地球（內野線上端點共用）。
 
@@ -981,7 +1021,9 @@ def optimize_integrated(req: IntegratedRequest):
     飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位，省分相加即聯合口徑。
     內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
     （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
-    通用球場（不指定 home_team）、聯盟平均野手。
+    聯盟平均野手。指定 home_team 時外野同 /api/optimize 一般模式：打牆球
+    接殺機率強制 0 計入 RE24，且多跑一次 warm start 的 with_park 優化；
+    內野無牆不受影響。
     """
     import math
 
@@ -990,6 +1032,8 @@ def optimize_integrated(req: IntegratedRequest):
 
     if _if_bayes_model is None or _if_xb_model is None:
         raise HTTPException(503, "整合模型未載入")
+    if req.home_team and req.home_team.upper() not in SUPPORTED_TEAMS:
+        raise HTTPException(422, f"Unsupported team '{req.home_team}'. Use GET /api/teams.")
     if req.year not in _AVAILABLE_YEARS:
         raise HTTPException(422, f"No OF model for year {req.year}. Available: {_AVAILABLE_YEARS}")
     if req.year not in _if_years:
@@ -999,6 +1043,7 @@ def optimize_integrated(req: IntegratedRequest):
 
     t_start = time.perf_counter()
     year = req.year
+    home_team = req.home_team.upper() if req.home_team else None
     state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
 
     # ── 外野側（同 /api/optimize 一般模式；共用打者球快取）──────────
@@ -1022,6 +1067,11 @@ def optimize_integrated(req: IntegratedRequest):
     if not of_mask.any():
         raise HTTPException(422, "No balls with positive w_j for this game state")
 
+    # 打牆球（指定球場時）：接殺機率強制 0、計入 RE24（同 _run_optimize 口徑）
+    wall_flags = (np.array(is_wall_ball(balls_of["ball_x"].values,
+                                        balls_of["ball_y"].values, home_team), dtype=bool)
+                  if home_team else np.zeros(len(balls_of), dtype=bool))
+
     models_dir = BASE / "models" / str(year)
     with _optimize_semaphore:
         opt_of = optimize_positions(
@@ -1031,7 +1081,17 @@ def optimize_integrated(req: IntegratedRequest):
             home_team=None, dsn=DSN, balls=balls_of, hit_probs=hit_probs,
             n_restarts=10,
         )
-    pos_of_opt = {p: opt_of[p] for p in POSITIONS}
+        pos_of_opt = {p: opt_of[p] for p in POSITIONS}
+        if home_team:
+            # 同 _run_optimize：no_park 解 warm start 的 with_park 精修
+            opt_of_park = optimize_positions(
+                batter_id=req.batter_id,
+                on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
+                years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
+                home_team=home_team, dsn=DSN, balls=balls_of, hit_probs=hit_probs,
+                warm_start_xy=pos_of_opt, n_restarts=8,
+            )
+            pos_of_opt = {p: opt_of_park[p] for p in POSITIONS}
     try:
         pos_of_league = get_league_avg_positions(year, DSN)
     except Exception:
@@ -1039,7 +1099,9 @@ def optimize_integrated(req: IntegratedRequest):
 
     def of_runs(pos_dict):
         probs = np.asarray(compute_ball_catch_probs(
-            pos_dict, balls_of, _scalers.get(year, {}), _mus.get(year, {})), dtype=float)
+            pos_dict, balls_of, _scalers.get(year, {}), _mus.get(year, {})),
+            dtype=float).copy()
+        probs[wall_flags] = 0.0                      # 打牆球無論站哪都接不到
         return probs, float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask]))
 
     probs_of_opt, runs_of_opt = of_runs(pos_of_opt)
@@ -1099,15 +1161,18 @@ def optimize_integrated(req: IntegratedRequest):
         optimized=pack(pos_of_opt, res["angles"], res["depths"], runs_of_opt, runs_if_opt),
         of_balls=[BallPoint(x=float(balls_of.iloc[i]["ball_x"]),
                             y=float(balls_of.iloc[i]["ball_y"]),
-                            catch_prob=float(probs_of_opt[i]), is_wall_ball=False)
+                            catch_prob=float(probs_of_opt[i]),
+                            is_wall_ball=bool(wall_flags[i]))
                   for i in range(len(balls_of))],
         if_balls=[IFBallPoint(spray_deg=r[0], x=r[1], y=r[2], launch_speed=r[3],
                               is_out=r[5], p_out_league=round(float(pl), 4),
                               p_out_opt=round(float(po), 4))
                   for r, pl, po in zip(ball_rows, p_if_league, p_if_opt)],
         popup_balls=popups,
+        park_boundary=(get_park_boundary_coords(home_team) if home_team else None),
         stats=IntegratedStats(
             n_of_balls=len(balls_of), n_gb=len(balls_if), n_popups=len(popups),
+            n_wall_balls=int(wall_flags.sum()), home_team=home_team,
             re_state=round(float(_re24_table.get(state, 0.0)), 4),
             runs_saved_of=round(runs_of_league - runs_of_opt, 3),
             runs_saved_if=round(runs_if_league - runs_if_opt, 3),

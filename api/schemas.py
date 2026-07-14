@@ -193,6 +193,9 @@ class IntegratedRequest(BaseModel):
     on_2b: int = Field(0, ge=0, le=1)
     on_3b: int = Field(0, ge=0, le=1)
     outs:  int = Field(0, ge=0, le=2)
+    # 球場（外野牆因素，同 /api/optimize：打牆球接殺機率強制 0＋第二次
+    # warm start 優化）。None = 通用球場。內野無牆不受影響。
+    home_team: str | None = None
 
 
 class IntegratedSet(BaseModel):
@@ -217,6 +220,8 @@ class IntegratedStats(BaseModel):
     n_of_balls:       int
     n_gb:             int
     n_popups:         int = 0  # 展示用，不在任何 runs 計算內
+    n_wall_balls:     int = 0  # 指定球場時的打牆球數（接殺機率強制 0）
+    home_team:        str | None = None
     re_state:         float
     runs_saved_of:    float   # league − optimized（正=最佳化較省分）
     runs_saved_if:    float
@@ -234,7 +239,16 @@ class IntegratedResponse(BaseModel):
     of_balls:  list[BallPoint]     # catch_prob 為最佳化站位下的接殺機率
     if_balls:  list[IFBallPoint]
     popup_balls: list[PopupBall] = []  # 展示用（雲端表未 sync 時為空）
+    park_boundary: list[ParkCoord] | None = None  # 指定球場時的牆線
     stats:     IntegratedStats
+
+
+class IntegratedBatterInfo(BaseModel):
+    """整合頁打者選單項。n_total = 滾地＋外野飛球/平飛＋popup（圖上會出現的球）。"""
+    batter_id: int
+    name:      str
+    n_total:   int
+    n_gb:      int
 
 
 class IFCustomResultResponse(BaseModel):

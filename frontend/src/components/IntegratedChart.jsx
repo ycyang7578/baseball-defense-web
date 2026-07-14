@@ -115,7 +115,8 @@ const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 export default function IntegratedChart({ data }) {
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if', ball }
   if (!data) return null
-  const { league, optimized, of_balls, if_balls, popup_balls = [] } = data
+  const { league, optimized, of_balls, if_balls, popup_balls = [], park_boundary = null } = data
+  const nWall = data.stats?.n_wall_balls ?? 0
   const arcPts = dirtArcPath()
 
   const tip = hovered ? (() => {
@@ -186,8 +187,9 @@ export default function IntegratedChart({ data }) {
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 外野球（顏色 = 最佳化站位下的接殺機率） */}
+      {/* 外野球（顏色 = 最佳化站位下的接殺機率；打牆球另畫橘星） */}
       {of_balls.map((b, i) => {
+        if (b.is_wall_ball) return null
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'of' && hovered.ball === b
         return (
@@ -200,6 +202,18 @@ export default function IntegratedChart({ data }) {
             onMouseEnter={() => setHovered({ kind: 'of', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
+        )
+      })}
+      {/* 球場牆線與打牆球（同外野主頁慣例：綠線＋橘星） */}
+      {park_boundary && (
+        <polyline fill="none" stroke="#00CC55" strokeWidth="2.2" opacity="0.9"
+          points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
+      )}
+      {of_balls.filter(b => b.is_wall_ball).map((b, i) => {
+        const [bx, by] = clampXY(b.x, b.y)
+        return (
+          <polygon key={`wb-${i}`} points={starPts(tx(bx), ty(by), 7)}
+            fill="#FF6B00" stroke="black" strokeWidth="0.4" opacity="0.9" />
         )
       })}
 
@@ -220,13 +234,15 @@ export default function IntegratedChart({ data }) {
       <LegendItem color={rdylgn(0.1)} shape="circle" label="接住機率低" y={PT + 70} />
       {popup_balls.length > 0 &&
         <LegendItem color="#a7afba" shape="circle" label="內野高飛" y={PT + 88} />}
-      <text x={SVG_W - PR + 8} y={PT + 110} fontSize="8.5" fill="#999">
+      {nWall > 0 &&
+        <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`} y={PT + 106} />}
+      <text x={SVG_W - PR + 8} y={PT + 128} fontSize="8.5" fill="#999">
         <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>
         <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
         {popup_balls.length > 0 &&
           <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
       </text>
-      <text x={SVG_W - PR + 8} y={PT + 154} fontSize="8" fill="#aaa">
+      <text x={SVG_W - PR + 8} y={PT + 176} fontSize="8" fill="#aaa">
         <tspan x={SVG_W - PR + 8} dy="0">球點＝紀錄座標</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>
