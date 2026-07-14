@@ -106,16 +106,22 @@ PostgreSQL 資料表：
     - Response: `OptimizeResponse{title, situation, positions{key→PositionSet}, balls, park_boundary?, stats}`；positions key 為 `league_avg`/`no_park`/`with_park` 或 `custom`
   - `POST /api/optimize_plot` — 同 Request，回傳 JSON `{image_b64, title, situation, positions, stats}`；
     前端從 base64 解碼為 Blob URL 顯示圖，stats 數字（catch%, RE24, Δ RE24）另外用 HTML StatsPanel 呈現（不嵌在 PNG 內）
-  - `POST /api/optimize_integrated` — 內外野七人整合（頁面 `/integrated`）
-    - Request: `{batter_id, year, on_1b, on_2b, on_3b, outs}`（通用球場、聯盟平均野手）
-    - 外野＝線上優化（同 `/api/optimize` 一般模式 no_park，n_restarts=10）；內野＝
-      precomputed 出局率最佳解 warm start + run-value 權重精修（n_restarts=0，
-      兩目標 2025 樣本外實測幾乎同解，見 `models/if_gb/runvalue_objective_rows.csv`）
-    - 計價統一為期望失分：外野 `Σ(1−p̂)×w_j`、內野 `E[ΔRE]×n_gb`（`src/if_runvalue.py`），
-      兩側各自 vs 同壘況聯盟平均站位，省分相加＝聯合口徑（優化可分離）
+  - `GET  /api/integrated_batters?year=` — 最佳化站位頁打者選單（內野合格名單
+    ＋全部球數 n_total＝滾地＋外野＋popup），2026-07-14 新增
+  - `POST /api/optimize_integrated` — 內外野七人整合（首頁 `/`，網站主端點）
+    - Request: `{batter_id, year, on_1b, on_2b, on_3b, outs, home_team?,
+      of_fielders?, if_fielders?}`
+    - 外野＝線上優化（no_park n_restarts=10；指定球場再 warm start with_park
+      n_restarts=8，打牆球接殺機率強制 0）；內野＝precomputed 出局率最佳解
+      warm start + run-value 權重精修（n_restarts=0）；**僅一壘有人 <2 出局
+      內野側切換階段B DP 優化**（`_solve_if_dp`，與 /api/if_optimize 共用）
+    - 計價＝完整 ΔRE（外野接殺記出局負分，內外野同尺度）；比較基準＝
+      平均站位＋平均參數；回應含 of_balls（帶 bb_type）/if_balls/popup_balls/
+      park_boundary/fielders
     - 需要 `models/if_gb/if_gb_xb_model.joblib`（train_if_gb.py 產出），缺了回 503
-  - `POST /api/if_optimize` — 內野頁主端點（外野 optimize 的內野鏡像），詳見
-    「內野 web 整合」章節「內野頁改版為外野頁鏡像」條目
+  - `POST /api/if_optimize` — 內野優化端點（UI 已無入口，API 保留），詳見
+    「內野 web 整合」章節；`/api/fielders` 2026-07-14 起回應含
+    official_oaa/official_n_opp（統一排名頁對照用）
 
 ## 站位優化管線（需先 precompute，再 optimize）
 1. `scripts/precompute_model_oaa.py` — 對 `is_official` 子集逐球算 `oaa_play=caught−catch_prob`（用群體層 mu_*），按球員加總後寫入 `data/precomputed/model_oaa_2025.csv`，再 UPSERT 進 `model_oaa` 表。執行：`python scripts/precompute_model_oaa.py`
@@ -595,43 +601,40 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
 
 ## 前端（React + Vite）
 
+**2026-07-14 全站收斂成兩頁**（使用者定案）：外野頁（原 App.jsx 主頁）、內野頁
+（Infield.jsx）與兩個分開的排名頁全部刪除，SprayChart/InfieldChart/DensityChart
+一併移除（後端端點 `/api/optimize`、`/api/optimize_plot`、`/api/if_optimize`、
+`/api/if_result*` 等全部保留，只是 UI 沒有入口）。代價：UI 看不到 2021/2022
+年份與 OF-only 打者、matplotlib 論文圖無入口（要救回成本低）。
+
 路由（react-router-dom）：
-- `/` — 外野手站位最佳化（主頁），左側面板控制；右側顯示站位圖
-- `/rankings` — 外野手守備排名頁
+- `/` — **最佳化站位**（原整合頁 Integrated.jsx，升為首頁）
+- `/rankings` — **OAA 排名**（OaaRankings.jsx，外野＋內野同一張表）
+- `/integrated`、`/infield`、`/if-rankings` — 舊路由，轉址到上面兩頁
 
 共用元件：
-- `src/components/NavBar.jsx` — 頂部持久導覽列（sticky），品牌名「MLB Lab」，連結「外野手站位最佳化」/「守備排名」，當前頁高亮
+- `src/components/NavBar.jsx` — 頂部持久導覽列（sticky），品牌名「MLB Lab」，
+  連結「最佳化站位」「OAA 排名」，當前頁高亮
 - `src/components/Layout.jsx` — 包住所有頁面，注入 NavBar；背景 `#f1f5f9`
 - `src/components/SearchSelect.jsx` — 可打字搜尋下拉
 - `src/components/GameStateForm.jsx` — 壘上跑者 + 出局數
-- `src/components/SprayChart.jsx` — 互動落點圖（SVG）
-  - RdYlGn 顏色 by catch_prob，或切換為 LF/CF/RF 責任歸屬顏色（owner mode）
-  - 接殺機率範圍滑桿（probMin/probMax），過濾顯示球數
-  - 點擊守備員標記 → 高亮該守備員負責的球，其餘球淡化至 10% opacity
-  - 責任歸屬（`responsible`）由後端提供；若無則前端 fallback 用距離
-  - KDE 等高線（Marching Squares + feGaussianBlur 平滑）
-- `src/components/DensityChart.jsx` — 落點密度畫布（canvas radial gradient，非等高線）
-- `src/components/IntegratedChart.jsx` — 內外野全場圖（SVG，座標/顏色/標記慣例同
-  InfieldChart，視野放大到 X±270/Y430）：七人站位聯盟平均 vs 最佳化、外野球（顏色=
-  接殺機率）＋滾地球（顏色=P(out)）散點、hover tooltip
+- `src/components/IntegratedChart.jsx` — 內外野全場圖（SVG）。⚠️ **SVG defs
+  的 id（clipPath/漸層）用 useId 產生 per-instance 唯一值**——比較模式同頁
+  兩張圖時固定 id 會讓 B 圖引用到 A 圖的 clipPath（草地跟錯球場，2026-07-14
+  bug）；useId 的冒號要 strip 掉（url(#) 相容性）
 
-App.jsx（`/`）：
-- 左側面板（280px，手機版見下方響應式說明）：頂部年份 tabs → 打者搜尋 → 比賽狀況 → 球場 → 外野手（min_opp 滑桿＋守備員下拉）；底部 footer 放「⇔ 比較模式」切換 + 計算按鈕
-- 比較模式：A/B 各自獨立選球場（homeTeam / homeTeamB）與外野手，並排顯示兩張圖 + CompareStats 表（含座標差 Δ(dx,dy)）
-- 圖片右上角有「↓ 下載」按鈕（Blob URL download）
-- 空白狀態顯示引導文字（無圖示）
-- 圖模式 toggle：**落點密度圖**（matplotlib PNG）/ **互動圖**（SprayChart SVG）
+OAA 排名頁（`src/pages/OaaRankings.jsx`，`/rankings`）：
+- **外野＋內野同一張表**：ALL＋LF/CF/RF/1B/2B/3B/SS 八個 tab、年份 2023–2025、
+  一組球隊篩選＋最低守備機會滑桿。資料＝`/api/fielders`（外野，2026-07-14 起
+  含 official_oaa/official_n_opp）＋`/api/if_fielders`（內野），欄位歸一
+  （n_opp→n_balls）後同表排序（OAA/100 口徑一致）
+- 欄位：# / 球員（頭像＋隊徽）/ 守位（ALL 時）/ 模型機會 / 模型OAA / OAA/100 /
+  官方OAA / 官方機會 / 官方OAA/100，全欄可排序
+- ⚠️ **列 key 用 player_id**：同名同守位的不同球員存在（2025 兩位 Max Muncy
+  都守 3B），name+position 撞 key → 重排時 ghost 重複列（2026-07-14 bug）
+- 舊外野排名的 0–5 星表格與多年趨勢 modal 隨舊頁移除
 
-Rankings 頁（`src/pages/Rankings.jsx`）：
-- 頂部：年份選擇 → 球隊篩選（全部球隊 / 各隊縮寫，年份切換時重設）→ min_opp 滑桿（不重設球隊篩選）
-- LF/CF/RF tab 切換
-- 欄位：# / 球員（圓形頭像＋球隊 logo）/ 模型機會 / 模型OAA / OAA/100 / 5 Star(0-25%) Outs-Opp-% / 4 Star / 3 Star / 2 Star / 1 Star / All Plays
-- 所有欄位可點擊排序（升/降序），排序欄換淡藍底色
-- 球員名字可點擊：開啟多年趨勢 modal（SVG 折線圖，X軸=年份、Y軸=OAA/100，LF藍/CF綠/RF橘；位置標籤顯示在 modal 標題旁）
-- 球員頭像與球隊 logo 透過 `_team_map` 取得（startup 時從 MLB Stats API 載入，不受 min_opp 限制）
-- 括號內 OAA 標「模型估計，非 Statcast 官方」
-
-Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整合站位」）：
+最佳化站位頁（`src/pages/Integrated.jsx`，`/`）：
 - 左側面板：年份 tabs（if_years）→ 打者搜尋（`/api/integrated_batters`，括號＝
   該年場內球總數：滾地＋外野飛球/平飛＋popup，2026-07-14 起；底層清單仍是內野
   打者，2025 全部 372 位同時有外野資料）→ 比賽狀況（GameStateForm）→ 球場
@@ -639,11 +642,20 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
   warm start 的 with_park 第二次優化＋牆線/橘星，內野無牆不受影響；多一次
   優化 Render 上會更慢）→ **七人野手選單**（2026-07-14 加：外野傳球員名→
   球員層 mu、內野傳 player_id→貝葉斯效應，`of_fielders`/`if_fielders` 請求
-  欄位，回應 `fielders` 回七位置名字；選單固定 min 門檻 100 不放滑桿）
-  → 比較模式（A/B 兩組球場＋野手，並排圖＋差異表：總/外野/內野省分＋
-  七人座標差；同 Infield 頁模式）→ 計算按鈕（線上計算，Render 上約一分鐘起）
-- 圖寬 maxWidth 1020（2026-07-14 從 760 放大）、比較模式 1700；
-  視野 Y0=-60（本壘後方界外 popup 99% 在 -49 內，再深夾回下緣）
+  欄位，回應 `fielders` 回七位置名字；上方共用「最低守備次數」滑桿，內野
+  選單純 OAA/100 降序）→ 比較模式（A/B 兩組球場＋野手，並排圖＋差異表：
+  多守下幾分 總/外野/內野＋七人座標差）→ 計算按鈕（線上計算，Render 上
+  約一分鐘起）
+- 畫布 maxWidth 1000／比較模式 1500；SVG 內部邊界縮到最小讓球場佔滿版面，
+  圖例（星標＋接殺機率色條＋球數）疊在圖內右下角半透明卡；
+  視野 X±262、Y -60~425（本壘後方界外 popup 99% 在 -49 內，超出夾回邊緣）；
+  **草地填色裁到球場邊界**（有球場＝牆線多邊形、通用＝400 呎弧扇形）；
+  圖可「↓ 下載圖」（SVG 序列化→canvas 2x→PNG，含密度層）
+- **落點密度底層**（勾選開關，預設開）：前端網格 KDE（高斯核、Scott 法則
+  自適應頻寬——固定窄頻寬等高線會變形蟲狀）＋marching squares 10 條等值線，
+  照外野頁 seaborn 設定（Blues cmap、thresh 0.05、離散色帶、細等高線）；
+  **內外野各自歸一化再取 max 疊合**（共用歸一化會讓滾地峰值把外野全壓進
+  最低色帶）；輸入吃球種勾選＋機率範圍過濾
 - **圖上互動（2026-07-14）**：責任歸屬色切換（七人皆分：外野球分 LF/CF/RF、
   滾地球分 1B/2B/3B/SS，前端最近距離法；點任一星標高亮其責任球、owner 模式
   時高飛淡出）＋機率範圍雙滑桿（外野 catch_prob／內野 p_out_opt／高飛用實證
@@ -656,9 +668,11 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
   matplotlib PNG（api/plot.py）／InfieldChart／IntegratedChart 圖上只畫最佳化
   站位；聯盟平均只留在數字比較（統計卡、座標表、省分口徑不變）。
   DensityChart.jsx 已無頁面引用（密度圖視圖顯示的是後端 matplotlib PNG）
-- 結果：TitleBar（打者/壘況/球數）＋ IntegratedChart ＋ StatsPanel：總省分大卡
-  （vs 聯盟平均，綠/紅）＋外野三人/內野四人分項卡＋七人座標表
-- 文案面向休閒球迷（「七名野手一起排…加總就是省下的分數」），不放方法論
+- 結果：TitleBar（打者/壘況/球數，飛球與平飛分列）＋ IntegratedChart ＋
+  StatsPanel：**聯盟平均站位 vs 最佳化站位對照卡**（外野接殺率/內野出局率/
+  預期失分含內外野拆分；基準＝平均站位＋平均參數）＋七人座標表。
+  失分＝完整 ΔRE 口徑（接殺/出局記負分，內外野同尺度，內野常為負=守方賺）
+- 文案面向休閒球迷（「七名野手一起排…」），不放方法論
 - **展示用內野高飛（2026-07-14）**：popup 站位無槓桿（出局率 98.6%）不參與優化，
   但為了「打者所有場內球」的視覺完整性畫上去——**顏色＝實證常數接殺機率 98.5%
   （RdYlGn 深綠，`POPUP_CATCH` in IntegratedChart.jsx），tooltip 註明實證與
@@ -674,7 +688,8 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
   刻意不畫的剩餘＝全壘打 4.5%、觸擊 0.9%、缺特徵/極端 spray 0.9%、
   fielders_choice 0.3%
 
-### 響應式/手機版（2026-07-06）
+### 響應式/手機版（2026-07-06；⚠️ 下述 App.jsx/Rankings.jsx 已於 2026-07-14 刪除，
+此節保留當時的修法脈絡——同樣的 CSS class 模式沿用在 Integrated.jsx）
 專案原本完全沒有 mobile breakpoint，用 Playwright 在 375×812 實測後修的問題：
 - **`App.jsx` 主頁最嚴重**：左側 280px 固定寬面板 + `display:flex` 無 `flex-direction` 響應，手機上右側圖表區被擠到剩不到 100px 寬，空白狀態文字整個變成一行一個字的直排。
   修法：`.app-body`/`.app-panel`/`.app-chart-area`/`.compare-row` 這幾個 class 配合 `App.jsx` 底部 `<style>` 內的 `@media (max-width: 768px)`，窄螢幕下改成 `flex-direction: column`（面板疊在圖表區上方，寬度變 100%）。因為原本用 inline style 設定 `width`/`minHeight`/`border-right`，媒體查詢要贏過 inline style 必須加 `!important`（唯一乾淨解法，不是隨便亂加）。
