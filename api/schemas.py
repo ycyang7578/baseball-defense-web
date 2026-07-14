@@ -260,7 +260,8 @@ class IntegratedBatterInfo(BaseModel):
 
 class IFCustomResultResponse(BaseModel):
     """指定野手陣容的個人化結果。optimized 為錨定式解（從零效應最佳解
-    warm start），balls 的 p_out_* 皆在該陣容效應下評估。"""
+    warm start）。比較基準＝平均站位＋平均參數：p_out_league / league 在
+    效應 0 下評估，p_out_opt / optimized 才掛陣容效應。"""
     batter_id:         int
     name:              str
     year:              int

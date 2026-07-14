@@ -730,9 +730,10 @@ def if_result_custom(batter_id: int, year: int,
     league_pairs = {pos: tuple(_if_league[year][pos]) for pos in IF_POSITIONS}
     lg_angles = np.array([league_pairs[p][0] for p in IF_POSITIONS])
     lg_depths = np.array([league_pairs[p][1] for p in IF_POSITIONS])
-    exp_league = if_expected_outs(_if_bayes_model, balls, lg_angles, lg_depths, pe)
+    # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
+    exp_league = if_expected_outs(_if_bayes_model, balls, lg_angles, lg_depths)
     baseline = if_expected_outs(_if_bayes_model, balls, opt_angles, opt_depths, pe)
-    p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths, pe)
+    p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths)
     p_custom = predict_p_out(_if_bayes_model, balls, res["angles"], res["depths"], pe)
 
     custom_pairs = {pos: (round(float(a), 2), round(float(d), 2))
@@ -841,15 +842,18 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
 
     scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w,
                       d1, d2, pe)
+    # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
+    scorer_base = scorer if pe is None else DPScorer(
+        _if_dp_out_model, _if_dp_model, balls, pinned_1b, w, d1, d2)
 
-    def eval_set(angles3, depths3) -> tuple[np.ndarray, float, float]:
+    def eval_set(angles3, depths3, sc) -> tuple[np.ndarray, float, float]:
         """(逐球 p1, 平均 p1, E[ΔRE]×n_gb)。"""
-        p1 = scorer.per_ball_p1(angles3, depths3)
-        runs = scorer.expected_re(angles3, depths3) * len(balls)
+        p1 = sc.per_ball_p1(angles3, depths3)
+        runs = sc.expected_re(angles3, depths3) * len(balls)
         return p1, float(p1.mean()), runs
 
-    p1_opt, eo_opt, runs_opt = eval_set(res["angles"], res["depths"])
-    p1_lg, eo_lg, runs_lg = eval_set(lg3_angles, lg3_depths)
+    p1_opt, eo_opt, runs_opt = eval_set(res["angles"], res["depths"], scorer)
+    p1_lg, eo_lg, runs_lg = eval_set(lg3_angles, lg3_depths, scorer_base)
 
     def positions_dict(angles4, depths4) -> dict[str, IFPosition]:
         out = {}
@@ -941,16 +945,17 @@ def if_optimize(req: IFOptimizeRequest):
     lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
     lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
 
-    def eval_set(angles, depths) -> tuple[float, float]:
-        """(期望出局率, 期望失分×n_gb)，皆在指定野手效應下評估。"""
-        eo = if_expected_outs(_if_bayes_model, balls, angles, depths, pe)
+    def eval_set(angles, depths, pe_use) -> tuple[float, float]:
+        """(期望出局率, 期望失分×n_gb)。基準組傳 pe_use=None（平均站位＋
+        平均參數），最佳化組才掛指定野手效應。"""
+        eo = if_expected_outs(_if_bayes_model, balls, angles, depths, pe_use)
         runs = (mean_w - if_expected_outs(_if_bayes_model, balls, angles, depths,
-                                          pe, ball_weights=bw)) * len(balls)
+                                          pe_use, ball_weights=bw)) * len(balls)
         return eo, runs
 
-    eo_opt, runs_opt = eval_set(res["angles"], res["depths"])
-    eo_lg, runs_lg = eval_set(lg_angles, lg_depths)
-    p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths, pe)
+    eo_opt, runs_opt = eval_set(res["angles"], res["depths"], pe)
+    eo_lg, runs_lg = eval_set(lg_angles, lg_depths, None)
+    p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths)
     p_opt = predict_p_out(_if_bayes_model, balls, res["angles"], res["depths"], pe)
 
     def positions_dict(angles, depths) -> dict[str, IFPosition]:
@@ -1115,15 +1120,16 @@ def optimize_integrated(req: IntegratedRequest):
     except Exception:
         pos_of_league = {"LF": (-130.0, 250.0), "CF": (0.0, 310.0), "RF": (130.0, 250.0)}
 
-    def of_runs(pos_dict):
+    def of_runs(pos_dict, mus_use):
         probs = np.asarray(compute_ball_catch_probs(
-            pos_dict, balls_of, _scalers.get(year, {}), mus_eff),
+            pos_dict, balls_of, _scalers.get(year, {}), mus_use),
             dtype=float).copy()
         probs[wall_flags] = 0.0                      # 打牆球無論站哪都接不到
         return probs, float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask]))
 
-    probs_of_opt, runs_of_opt = of_runs(pos_of_opt)
-    _, runs_of_league = of_runs(pos_of_league)
+    # 基準＝平均站位＋平均參數（群體 mu）；最佳化組才掛指定野手的球員 mu
+    probs_of_opt, runs_of_opt = of_runs(pos_of_opt, mus_eff)
+    _, runs_of_league = of_runs(pos_of_league, _mus.get(year, {}))
 
     # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修）──
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
@@ -1142,14 +1148,15 @@ def optimize_integrated(req: IntegratedRequest):
 
     lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
     lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
-    # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)
+    # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)。
+    # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
     e_if_opt = mean_w - res["exp_outs"]
     e_if_league = mean_w - if_expected_outs(
-        _if_bayes_model, balls_if, lg_angles, lg_depths, pe, ball_weights=bw)
+        _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=bw)
     runs_if_opt = e_if_opt * len(balls_if)
     runs_if_league = e_if_league * len(balls_if)
 
-    p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths, pe)
+    p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths)
     p_if_opt = predict_p_out(_if_bayes_model, balls_if, res["angles"], res["depths"], pe)
 
     # ── 組裝（七人站位共用 PositionXY；內野 angle/depth → x/y）──────
