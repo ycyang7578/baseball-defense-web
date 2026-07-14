@@ -379,42 +379,31 @@ function EmptyState() {
 }
 
 function StatsPanel({ data }) {
-  const { league, optimized, stats } = data
-  const saved = stats.runs_saved_total
-  const card = (label, savedVal, note) => (
-    <div style={{ background: 'var(--slate-50)', border: '1px solid var(--slate-200)',
-                  borderRadius: 7, padding: '8px 16px', minWidth: 130 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-500)',
-                    textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700,
-                    color: savedVal > 0 ? 'var(--green-600)' : 'var(--red-600)' }}>
-        {savedVal > 0 ? '+' : ''}{savedVal.toFixed(1)} 分
-      </div>
-      <div style={{ fontSize: 10, color: 'var(--slate-500)', marginTop: 2 }}>{note}</div>
-    </div>
-  )
+  const { league, optimized } = data
   return (
     <div style={{ background: 'white', borderRadius: '0 0 8px 8px', padding: '12px 18px',
                   borderTop: '1px solid var(--slate-200)', boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 12 }}>
-        <div style={{ background: saved > 0 ? '#f0fdf4' : '#fef2f2',
-                      border: `1px solid ${saved > 0 ? '#bbf7d0' : '#fecaca'}`,
-                      borderRadius: 7, padding: '8px 16px', minWidth: 150,
-                      display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
-                        color: saved > 0 ? '#166534' : '#991b1b', marginBottom: 4 }}>
-            總省分（vs 聯盟平均）
+        {[{ label: '聯盟平均站位', set: league }, { label: '最佳化站位', set: optimized }].map(({ label, set }) => (
+          <div key={label} style={{ background: 'var(--slate-50)', border: '1px solid var(--slate-200)',
+                                    borderRadius: 7, padding: '8px 16px', minWidth: 190 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-500)',
+                          textTransform: 'uppercase', letterSpacing: '0.05em',
+                          marginBottom: 5 }}>{label}</div>
+            <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
+              外野接殺率 <strong style={{ fontSize: 14 }}>{set.catch_pct.toFixed(1)}%</strong>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
+              內野出局率 <strong style={{ fontSize: 14 }}>{(set.exp_outs_if * 100).toFixed(1)}%</strong>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--slate-700)' }}>
+              預期失分 <strong style={{ fontSize: 14 }}>{set.runs_total.toFixed(1)}</strong>
+              <span style={{ fontSize: 10, color: 'var(--slate-500)' }}>
+                {'　'}（外野 {set.runs_of.toFixed(1)}＋內野 {set.runs_if.toFixed(1)}）
+              </span>
+            </div>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 700,
-                        color: saved > 0 ? 'var(--green-600)' : 'var(--red-600)' }}>
-            {saved > 0 ? '+' : ''}{saved.toFixed(1)} 分
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--slate-500)', marginTop: 2 }}>
-            以他該季全部擊球估計
-          </div>
-        </div>
-        {card('外野三人', stats.runs_saved_of, `${stats.n_of_balls} 顆外野球`)}
-        {card('內野四人', stats.runs_saved_if, `${stats.n_gb} 顆滾地球`)}
+        ))}
       </div>
       <div style={{ borderTop: '1px solid var(--slate-100)', paddingTop: 10 }}>
         <table style={{ borderCollapse: 'collapse', fontSize: 11 }}>

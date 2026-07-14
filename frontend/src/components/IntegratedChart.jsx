@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
 // 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）。
-// 邊界縮到最小讓球場本身佔滿版面（右側 92 留給圖例/色階條）
-const PL = 10, PT = 12, PW = 560, PR = 92, PB = 10
+// 邊界縮到最小讓球場本身佔滿版面（圖例/色階條疊在圖內右下角）
+const PL = 10, PT = 12, PW = 560, PR = 12, PB = 10
 // Y0=-60：本壘後方界外 popup 99% 落在 -49 內（precomputed_batter_popups 實測），
 // 再深的夾回下緣；Y1=425 給 400 呎弧與最深牆線（~420）留邊
 const X0 = -262, X1 = 262, Y0 = -60, Y1 = 425
@@ -102,17 +102,6 @@ function clampXY(x, y) {
   const k = r > MAX_R ? MAX_R / r : 1
   return [Math.max(X0 + 6, Math.min(X1 - 6, x * k)),
           Math.max(y * k, Y0 + 6)]
-}
-
-function LegendItem({ color, shape, label, y }) {
-  const cx = SVG_W - PR + 14
-  return (
-    <g>
-      {shape === 'star'   && <polygon points={starPts(cx, y, 8)} fill={color} stroke="white" strokeWidth="1" />}
-      {shape === 'circle' && <circle cx={cx} cy={y} r={4.5} fill={color} stroke="#999" strokeWidth="0.5" />}
-      <text x={cx + 12} y={y + 3.5} fontSize="9.5" fill="#555">{label}</text>
-    </g>
-  )
 }
 
 const OF_POSITIONS = ['LF', 'CF', 'RF']
@@ -230,7 +219,7 @@ export default function IntegratedChart({ data }) {
 
     <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', height: 'auto', display: 'block', background: 'white' }}>
       <defs>
-        <linearGradient id="ic-grad" x1="0" y1="1" x2="0" y2="0">
+        <linearGradient id="ic-grad-h" x1="0" y1="0" x2="1" y2="0">
           {RDYLGN.map(([t, [r, g, b]]) => (
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
@@ -346,61 +335,73 @@ export default function IntegratedChart({ data }) {
           onClick={() => setActivePos(a => a === p ? null : p)} />
       ))}
 
-      {/* Legend */}
-      <LegendItem color="#7B2FBE" shape="star" label="最佳化站位" y={PT + 8} />
-      {colorMode === 'prob' ? (() => {
-        // 接殺機率色階條
-        const cbX = SVG_W - PR + 10, cbY = PT + 30, cbW = 12, cbH = 96
-        return (
-          <g>
-            <rect x={cbX} y={cbY} width={cbW} height={cbH}
-              fill="url(#ic-grad)" stroke="#bbb" strokeWidth="0.5" />
-            {[0, 0.5, 1].map(t => (
-              <g key={t}>
-                <line x1={cbX + cbW} y1={cbY + cbH * (1 - t)} x2={cbX + cbW + 4}
-                  y2={cbY + cbH * (1 - t)} stroke="#666" strokeWidth="0.8" />
-                <text x={cbX + cbW + 6} y={cbY + cbH * (1 - t) + 3} fontSize="8.5" fill="#555">
-                  {(t * 100).toFixed(0)}%
-                </text>
-              </g>
-            ))}
-            <text x={cbX} y={cbY + cbH + 14} fontSize="8.5" fill="#555">接殺/出局機率</text>
-          </g>
-        )
-      })() : (() => {
-        // 責任歸屬色說明（七人＋其他）
-        return (
-          <g>
-            {[...OF_POSITIONS, ...IF_POSITIONS, '其他'].map((label, i) => (
-              <g key={label} transform={`translate(${SVG_W - PR + 10},${PT + 30 + i * 19})`}>
-                <rect width={12} height={12} rx="2.5" fill={OWNER_COLORS[label] ?? OWNER_COLORS.null} />
-                <text x={17} y={9.5} fontSize="9" fill="#555">{label}</text>
-              </g>
-            ))}
-            <text x={SVG_W - PR + 10} y={PT + 192} fontSize="8" fill="#aaa">
-              <tspan x={SVG_W - PR + 10} dy="0">點星標高亮</tspan>
-              <tspan x={SVG_W - PR + 10} dy="11">其責任球</tspan>
-            </text>
-          </g>
-        )
-      })()}
-      {nWall > 0 &&
-        <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`}
-          y={PT + (colorMode === 'prob' ? 158 : 218)} />}
+      {/* Legend（疊在圖內右下角的半透明卡片） */}
       {(() => {
         const nFly = of_balls.filter(b => b.bb_type === 'fly_ball').length
         const nLd = of_balls.filter(b => b.bb_type === 'line_drive').length
         const hasType = nFly + nLd === of_balls.length
+        const countLines = [
+          hasType ? `飛球 ${nFly}・平飛 ${nLd}` : `外野 ${of_balls.length} 球`,
+          `滾地 ${if_balls.length}` + (popup_balls.length > 0 ? `・高飛 ${popup_balls.length}` : ''),
+        ]
+        const isProb = colorMode === 'prob'
+        const H = (isProb ? 100 : 144) + (nWall > 0 ? 16 : 0)
+        const W = 178
+        const LX = PL + PW - W - 8
+        const LY = PT + PH - H - 8
+        let y = 14
+        const rows = []
+        // 最佳化站位
+        rows.push(
+          <g key="star">
+            <polygon points={starPts(16, y, 7)} fill="#7B2FBE" stroke="white" strokeWidth="1" />
+            <text x={28} y={y + 3.5} fontSize="9.5" fill="#555">最佳化站位</text>
+          </g>)
+        y += 14
+        if (isProb) {
+          // 水平色階條
+          rows.push(
+            <g key="cb">
+              <rect x={10} y={y} width={104} height={9}
+                fill="url(#ic-grad-h)" stroke="#bbb" strokeWidth="0.5" />
+              <text x={10} y={y + 20} fontSize="8" fill="#555">0%</text>
+              <text x={114} y={y + 20} fontSize="8" fill="#555" textAnchor="end">100%</text>
+              <text x={120} y={y + 8} fontSize="8" fill="#555">接殺/出局</text>
+            </g>)
+          y += 26
+        } else {
+          // 七人歸屬色塊（兩欄）
+          rows.push(
+            <g key="own">
+              {[...OF_POSITIONS, ...IF_POSITIONS, '其他'].map((label, i) => (
+                <g key={label} transform={`translate(${10 + (i % 2) * 88},${y + Math.floor(i / 2) * 17})`}>
+                  <rect width={10} height={10} rx="2" fill={OWNER_COLORS[label] ?? OWNER_COLORS.null} />
+                  <text x={14} y={8.5} fontSize="8.5" fill="#555">{label}</text>
+                </g>
+              ))}
+              <text x={10} y={y + 4 * 17 + 8} fontSize="8" fill="#999">點星標高亮其責任球</text>
+            </g>)
+          y += 4 * 17 + 16
+        }
+        rows.push(
+          <text key="counts" x={10} y={y + 8} fontSize="8.5" fill="#777">
+            <tspan x={10} dy="0">{countLines[0]}</tspan>
+            <tspan x={10} dy="12">{countLines[1]}</tspan>
+          </text>)
+        y += 30
+        if (nWall > 0) {
+          rows.push(
+            <g key="wall">
+              <polygon points={starPts(16, y, 6)} fill="#FF6B00" stroke="black" strokeWidth="0.4" />
+              <text x={26} y={y + 3} fontSize="8.5" fill="#555">打牆球 ({nWall})</text>
+            </g>)
+        }
         return (
-          <text x={SVG_W - PR + 8} y={PT + (colorMode === 'prob' ? 182 : 242)} fontSize="8.5" fill="#999">
-            {hasType ? <>
-              <tspan x={SVG_W - PR + 8} dy="0">飛球 {nFly} 球</tspan>
-              <tspan x={SVG_W - PR + 8} dy="12">平飛 {nLd} 球</tspan>
-            </> : <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>}
-            <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
-            {popup_balls.length > 0 &&
-              <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
-          </text>
+          <g transform={`translate(${LX},${LY})`}>
+            <rect width={W} height={H} rx="6" fill="white" fillOpacity="0.88"
+              stroke="#ccc" strokeWidth="0.8" />
+            {rows}
+          </g>
         )
       })()}
 

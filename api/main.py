@@ -1129,7 +1129,7 @@ def optimize_integrated(req: IntegratedRequest):
 
     # 基準＝平均站位＋平均參數（群體 mu）；最佳化組才掛指定野手的球員 mu
     probs_of_opt, runs_of_opt = of_runs(pos_of_opt, mus_eff)
-    _, runs_of_league = of_runs(pos_of_league, _mus.get(year, {}))
+    probs_of_league, runs_of_league = of_runs(pos_of_league, _mus.get(year, {}))
 
     # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修）──
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
@@ -1165,13 +1165,16 @@ def optimize_integrated(req: IntegratedRequest):
         return PositionXY(x=round(depth * math.sin(rad), 1),
                           y=round(depth * math.cos(rad), 1))
 
-    def pack(pos_of, if_angles, if_depths, runs_of, runs_if) -> IntegratedSet:
+    def pack(pos_of, if_angles, if_depths, runs_of, runs_if,
+             probs_of, p_if) -> IntegratedSet:
         positions = {p: PositionXY(x=round(float(pos_of[p][0]), 1),
                                    y=round(float(pos_of[p][1]), 1))
                      for p in POSITIONS}
         positions.update({p: if_xy(float(a), float(d))
                           for p, a, d in zip(IF_POSITIONS, if_angles, if_depths)})
         return IntegratedSet(positions=positions,
+                             catch_pct=round(float(np.mean(probs_of)) * 100, 1),
+                             exp_outs_if=round(float(np.mean(p_if)), 4),
                              runs_of=round(runs_of, 3), runs_if=round(runs_if, 3),
                              runs_total=round(runs_of + runs_if, 3))
 
@@ -1187,8 +1190,10 @@ def optimize_integrated(req: IntegratedRequest):
         name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
         year=year, stand=stand,
         situation=f"{bases}  {req.outs} out",
-        league=pack(pos_of_league, lg_angles, lg_depths, runs_of_league, runs_if_league),
-        optimized=pack(pos_of_opt, res["angles"], res["depths"], runs_of_opt, runs_if_opt),
+        league=pack(pos_of_league, lg_angles, lg_depths, runs_of_league, runs_if_league,
+                    probs_of_league, p_if_league),
+        optimized=pack(pos_of_opt, res["angles"], res["depths"], runs_of_opt, runs_if_opt,
+                       probs_of_opt, p_if_opt),
         of_balls=[BallPoint(x=float(balls_of.iloc[i]["ball_x"]),
                             y=float(balls_of.iloc[i]["ball_y"]),
                             catch_prob=float(probs_of_opt[i]),
