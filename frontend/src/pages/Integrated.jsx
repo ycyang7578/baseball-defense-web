@@ -199,8 +199,7 @@ export default function Integrated() {
               placeholder="搜尋打者…"
             />
             <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 8, lineHeight: 1.6 }}>
-              括號內為該年場內球數。內外野七人一起排：飛球交給外野、滾地球交給內野；
-              滾地球樣本不足的打者只排外野三人
+              括號內為該年場內球數。內外野七人一起排：飛球交給外野、滾地球交給內野
             </div>
           </Sec>
 

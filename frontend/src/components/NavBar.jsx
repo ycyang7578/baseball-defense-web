@@ -6,12 +6,6 @@ export default function NavBar() {
       <span style={s.brand}>MLB Lab</span>
       <div style={s.links}>
         <NavLink to="/" end style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          外野手站位最佳化
-        </NavLink>
-        <NavLink to="/infield" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
-          內野手站位最佳化
-        </NavLink>
-        <NavLink to="/integrated" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>
           最佳化站位
         </NavLink>
         <NavLink to="/rankings" style={({ isActive }) => ({ ...s.link, ...(isActive ? s.active : {}) })}>

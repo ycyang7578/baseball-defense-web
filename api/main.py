@@ -559,8 +559,8 @@ _integrated_batters_cache: dict[int, list[dict]] = {}   # year → 選單（含�
 
 @app.get("/api/integrated_batters", response_model=list[IntegratedBatterInfo])
 def integrated_batters(year: int | None = None):
-    """整合頁打者選單：內野合格打者 ∪ 外野合格打者（OF 球 ≥ 30）。
-    滾地球樣本不足的打者只排外野三人（n_gb=0，前端據此退化顯示）。
+    """整合頁打者選單：內野合格打者（滾地 ≥ 50 的離線預算名單；曾納入
+    OF-only 打者後又移除——樣本不足的退化體驗不佳，2026-07-14 使用者定案）。
     括號顯示的是圖上會出現的全部球數（滾地＋外野飛球/平飛＋popup）。"""
     if year is None and _if_years:
         year = _if_years[-1]
@@ -584,17 +584,11 @@ def integrated_batters(year: int | None = None):
                         pu_n = dict(cur.fetchall())
         except Exception as e:
             logger.warning(f"integrated_batters 球數統計失敗，退回滾地球數: {e}")
-        rows_by_id = {b["batter_id"]: {"batter_id": b["batter_id"], "name": b["name"],
-                                       "n_gb": b["n_gb"]}
-                      for b in _if_batters_cache[year]}
-        for pid, n_of in of_n.items():
-            if n_of >= _MIN_BALLS and pid not in rows_by_id:
-                rows_by_id[pid] = {"batter_id": pid,
-                                   "name": _name_map.get(pid, f"#{pid}"), "n_gb": 0}
         rows = [
-            {**r, "n_total": r["n_gb"] + of_n.get(r["batter_id"], 0)
-                  + pu_n.get(r["batter_id"], 0)}
-            for r in rows_by_id.values()]
+            {"batter_id": b["batter_id"], "name": b["name"], "n_gb": b["n_gb"],
+             "n_total": b["n_gb"] + of_n.get(b["batter_id"], 0)
+                        + pu_n.get(b["batter_id"], 0)}
+            for b in _if_batters_cache[year]]
         _integrated_batters_cache[year] = sorted(
             rows, key=lambda r: r["n_total"], reverse=True)
     return _integrated_batters_cache[year]
