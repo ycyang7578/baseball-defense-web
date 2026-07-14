@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
 // 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）。
@@ -120,6 +120,45 @@ export default function IntegratedChart({ data }) {
   // 球種篩選（複選）：滾地→內野球、飛球/平飛→外野球（真實 bb_type 標籤）、高飛→popup
   const [showTypes, setShowTypes] = useState(
     { ground_ball: true, fly_ball: true, line_drive: true, popup: true })
+  // 落點密度模式：把目前可見的球（球種勾選＋機率範圍過濾後）算成藍色密度層
+  const [showDensity, setShowDensity] = useState(false)
+  const [densitySrc, setDensitySrc] = useState(null)
+
+  useEffect(() => {
+    if (!showDensity || !data) { setDensitySrc(null); return }
+    const within = (p) => p * 100 >= probMin && p * 100 <= probMax
+    const pts = []
+    if (showTypes.ground_ball)
+      for (const b of data.if_balls) if (within(b.p_out_opt)) pts.push(clampXY(b.x, b.y))
+    for (const b of data.of_balls) {
+      if (b.is_wall_ball || (b.bb_type && !showTypes[b.bb_type]) || !within(b.catch_prob)) continue
+      pts.push(clampXY(b.x, b.y))
+    }
+    if (showTypes.popup && within(POPUP_CATCH))
+      for (const b of (data.popup_balls || [])) pts.push(clampXY(b.x, b.y))
+    if (pts.length === 0) { setDensitySrc(null); return }
+
+    // 每球一個放射漸層藍色 blob，重疊即累積密度（同舊 DensityChart 技法，
+    // 但背景透明疊在球場上）
+    const canvas = document.createElement('canvas')
+    canvas.width = PW
+    canvas.height = PH
+    const ctx = canvas.getContext('2d')
+    const R = 26
+    for (const [x, y] of pts) {
+      const bx = (x - X0) / (X1 - X0) * PW
+      const by = (Y1 - y) / (Y1 - Y0) * PH
+      const g = ctx.createRadialGradient(bx, by, 0, bx, by, R)
+      g.addColorStop(0,   'rgba(30,64,175,0.16)')
+      g.addColorStop(0.4, 'rgba(30,64,175,0.09)')
+      g.addColorStop(1,   'rgba(30,64,175,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(Math.max(0, bx - R), Math.max(0, by - R),
+                   Math.min(PW, bx + R) - Math.max(0, bx - R),
+                   Math.min(PH, by + R) - Math.max(0, by - R))
+    }
+    setDensitySrc(canvas.toDataURL('image/png'))
+  }, [showDensity, data, showTypes, probMin, probMax])
 
   // 責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）。
   // 外野球在 LF/CF/RF 之間分、滾地球在 1B/2B/3B/SS 之間分（球種已定守備側）
@@ -183,13 +222,23 @@ export default function IntegratedChart({ data }) {
         display: 'flex', alignItems: 'center', gap: '16px',
         padding: '6px 12px', borderBottom: '1px solid var(--slate-200)', flexWrap: 'wrap',
       }}>
-        <button onClick={() => { setColorMode(m => m === 'prob' ? 'owner' : 'prob'); setActivePos(null) }} style={{
+        {!showDensity && (
+          <button onClick={() => { setColorMode(m => m === 'prob' ? 'owner' : 'prob'); setActivePos(null) }} style={{
+            padding: '3px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
+            border: '1px solid #cbd5e1',
+            background: colorMode === 'owner' ? '#1e40af' : 'white',
+            color: colorMode === 'owner' ? 'white' : '#334155',
+          }}>
+            {colorMode === 'prob' ? '切換：責任歸屬色' : '切換：接殺機率色'}
+          </button>
+        )}
+        <button onClick={() => { setShowDensity(v => !v); setActivePos(null) }} style={{
           padding: '3px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
           border: '1px solid #cbd5e1',
-          background: colorMode === 'owner' ? '#1e40af' : 'white',
-          color: colorMode === 'owner' ? 'white' : '#334155',
+          background: showDensity ? '#1e40af' : 'white',
+          color: showDensity ? 'white' : '#334155',
         }}>
-          {colorMode === 'prob' ? '切換：責任歸屬色' : '切換：接殺機率色'}
+          {showDensity ? '切換：球點' : '切換：落點密度'}
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
           <span>機率範圍</span>
@@ -245,8 +294,12 @@ export default function IntegratedChart({ data }) {
       <polygon points={basePts(...B3)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
+      {/* 落點密度層（取代球點；輸入吃球種勾選＋機率範圍過濾） */}
+      {showDensity && densitySrc && (
+        <image x={PL} y={PT} width={PW} height={PH} href={densitySrc} />
+      )}
       {/* 內野高飛（展示用，不參與優化——顏色＝實證常數接殺機率，畫在最底層） */}
-      {popup_balls.filter(() => showTypes.popup && inRange(POPUP_CATCH)).map((b, i) => {
+      {!showDensity && popup_balls.filter(() => showTypes.popup && inRange(POPUP_CATCH)).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'popup' && hovered.ball === b
         return (
@@ -262,7 +315,7 @@ export default function IntegratedChart({ data }) {
         )
       })}
       {/* 滾地球（顏色 = P(out) 或責任歸屬） */}
-      {if_balls.map((b, i) => {
+      {!showDensity && if_balls.map((b, i) => {
         if (!showTypes.ground_ball || !inRange(b.p_out_opt)) return null
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'if' && hovered.ball === b
@@ -285,7 +338,7 @@ export default function IntegratedChart({ data }) {
         )
       })}
       {/* 外野球（顏色 = 接殺機率或責任歸屬；打牆球另畫橘星） */}
-      {of_balls.map((b, i) => {
+      {!showDensity && of_balls.map((b, i) => {
         if (b.is_wall_ball || !inRange(b.catch_prob)) return null
         if (b.bb_type && !showTypes[b.bb_type]) return null
         const [bx, by] = clampXY(b.x, b.y)
@@ -344,7 +397,7 @@ export default function IntegratedChart({ data }) {
           hasType ? `飛球 ${nFly}・平飛 ${nLd}` : `外野 ${of_balls.length} 球`,
           `滾地 ${if_balls.length}` + (popup_balls.length > 0 ? `・高飛 ${popup_balls.length}` : ''),
         ]
-        const isProb = colorMode === 'prob'
+        const isProb = colorMode === 'prob' || showDensity
         const H = (isProb ? 100 : 144) + (nWall > 0 ? 16 : 0)
         const W = 178
         const LX = PL + PW - W - 8
@@ -358,7 +411,13 @@ export default function IntegratedChart({ data }) {
             <text x={28} y={y + 3.5} fontSize="9.5" fill="#555">最佳化站位</text>
           </g>)
         y += 14
-        if (isProb) {
+        if (showDensity) {
+          rows.push(
+            <text key="dn" x={10} y={y + 8} fontSize="8.5" fill="#555">
+              藍色越深＝落點越密集
+            </text>)
+          y += 26
+        } else if (isProb) {
           // 水平色階條
           rows.push(
             <g key="cb">
