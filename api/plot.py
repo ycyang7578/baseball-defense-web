@@ -94,13 +94,13 @@ def render_plot(resp) -> bytes:
                    edgecolors="black", linewidths=0.4, zorder=5,
                    label=f"Wall Ball ({int(wall.sum())})")
 
-    # ── 站位標記（custom > with_park > 全部）────────────────────
+    # ── 站位標記（custom > with_park > no_park；聯盟平均只留數字比較，圖上不畫）──
     if "custom" in pos:
         draw_keys = ["custom"]
     elif "with_park" in pos:
         draw_keys = ["with_park"]
     else:
-        draw_keys = _ORDER
+        draw_keys = ["no_park"]
     for key in draw_keys:
         if key in pos:
             ps = pos[key]

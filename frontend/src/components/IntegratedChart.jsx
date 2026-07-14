@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
 // 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）
@@ -39,7 +39,7 @@ function rdylgn(p) {
   return 'rgb(0,104,55)'
 }
 
-// ── Marker shapes（同站慣例：聯盟平均=藍菱形、最佳化=紫星）──────
+// ── Marker shapes（同站慣例：最佳化=紫星；聯盟平均不畫，只留數字比較）──
 function starPts(cx, cy, r) {
   return Array.from({ length: 10 }, (_, i) => {
     const a = (Math.PI * i) / 5 - Math.PI / 2
@@ -48,21 +48,18 @@ function starPts(cx, cy, r) {
   }).join(' ')
 }
 
-function diamondPts(cx, cy, r) {
-  return `${cx},${cy - r} ${cx + r * 0.7},${cy} ${cx},${cy + r} ${cx - r * 0.7},${cy}`
-}
+const OPT_STYLE = { color: '#7B2FBE', r: 10, dy: +20 }
+const OWNER_COLORS = { LF: '#4472C4', CF: '#27AE60', RF: '#E67E22', null: '#aaa' }
 
-const STYLES = {
-  league:    { color: '#1565C0', shape: 'diamond', r: 6,  dy: -16 },
-  optimized: { color: '#7B2FBE', shape: 'star',    r: 10, dy: +20 },
-}
-
-function PosMarker({ cx, cy, st, code }) {
-  const { color, shape, r, dy } = st
+function PosMarker({ cx, cy, code, isActive, onClick }) {
+  const { color, r, dy } = OPT_STYLE
   return (
-    <g>
-      {shape === 'diamond' && <polygon points={diamondPts(cx, cy, r)} fill={color} stroke="white" strokeWidth="1.5" />}
-      {shape === 'star'    && <polygon points={starPts(cx, cy, r)}    fill={color} stroke="white" strokeWidth="1.2" />}
+    <g onClick={onClick} style={onClick ? { cursor: 'pointer' } : undefined}>
+      {isActive && (
+        <circle cx={cx} cy={cy} r={r + 8} fill={color} fillOpacity="0.15"
+          stroke={color} strokeWidth="2.2" opacity="0.8" />
+      )}
+      <polygon points={starPts(cx, cy, r)} fill={color} stroke="white" strokeWidth="1.2" />
       <rect x={cx - 11} y={cy + dy - 6.5} width={22} height={13}
         rx="2.5" fill={color} stroke="white" strokeWidth="0.8" opacity="0.95" />
       <text x={cx} y={cy + dy} textAnchor="middle" dominantBaseline="middle"
@@ -104,9 +101,8 @@ function LegendItem({ color, shape, label, y }) {
   const cx = SVG_W - PR + 14
   return (
     <g>
-      {shape === 'diamond' && <polygon points={diamondPts(cx, y, 6)} fill={color} stroke="white" strokeWidth="1" />}
-      {shape === 'star'    && <polygon points={starPts(cx, y, 8)}    fill={color} stroke="white" strokeWidth="1" />}
-      {shape === 'circle'  && <circle cx={cx} cy={y} r={4.5} fill={color} stroke="#999" strokeWidth="0.5" />}
+      {shape === 'star'   && <polygon points={starPts(cx, y, 8)} fill={color} stroke="white" strokeWidth="1" />}
+      {shape === 'circle' && <circle cx={cx} cy={y} r={4.5} fill={color} stroke="#999" strokeWidth="0.5" />}
       <text x={cx + 12} y={y + 3.5} fontSize="9.5" fill="#555">{label}</text>
     </g>
   )
@@ -120,17 +116,42 @@ const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 const POPUP_CATCH = 0.985
 
 export default function IntegratedChart({ data }) {
-  const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if', ball }
+  const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if'|'popup', ball }
+  const [activePos, setActivePos] = useState(null)   // 'LF'|'CF'|'RF'|null
+  const [colorMode, setColorMode] = useState('prob') // 'prob' | 'owner'
+  const [probMin, setProbMin] = useState(0)          // 0–100 integer
+  const [probMax, setProbMax] = useState(100)
+
+  // 外野責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）
+  const ofPositions = data?.optimized?.positions
+  const of_balls_all = data?.of_balls
+  const ballOwner = useMemo(() => {
+    if (!ofPositions || !of_balls_all) return null
+    return of_balls_all.map(b => {
+      if (b.is_wall_ball || b.catch_prob < 0.05) return null
+      return OF_POSITIONS.reduce((best, code) => {
+        const dx = b.x - ofPositions[code].x, dy = b.y - ofPositions[code].y
+        const d = dx * dx + dy * dy
+        return d < best.d ? { code, d } : best
+      }, { code: null, d: Infinity }).code
+    })
+  }, [ofPositions, of_balls_all])
+
   if (!data) return null
-  const { league, optimized, of_balls, if_balls, popup_balls = [], park_boundary = null } = data
+  const { optimized, of_balls, if_balls, popup_balls = [], park_boundary = null } = data
   const nWall = data.stats?.n_wall_balls ?? 0
   const arcPts = dirtArcPath()
+  const inRange = (p) => {
+    const pct = p * 100
+    return pct >= probMin && pct <= probMax
+  }
 
   const tip = hovered ? (() => {
     const { kind, ball } = hovered
     const [bx, by] = clampXY(ball.x, ball.y)
     const lines = kind === 'of'
-      ? [`外野球　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`]
+      ? [`外野球　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`
+         + (ballOwner?.[of_balls.indexOf(ball)] ? `　歸屬 ${ballOwner[of_balls.indexOf(ball)]}` : '')]
       : kind === 'popup'
       ? [
           `內野高飛　${ball.is_out ? '出局' : '安打/失誤'}　接殺機率 ~99%（實證）`,
@@ -143,8 +164,46 @@ export default function IntegratedChart({ data }) {
     return { x: tx(bx), y: ty(by), lines }
   })() : null
 
+  // 責任歸屬模式下，內野球/高飛淡出讓外野歸屬色突出
+  const dimNonOf = colorMode === 'owner' ? 0.18 : null
+
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', background: 'white' }}>
+      {/* ── Controls（同外野主頁：歸屬色切換＋機率範圍）── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '16px',
+        padding: '6px 12px', borderBottom: '1px solid var(--slate-200)', flexWrap: 'wrap',
+      }}>
+        <button onClick={() => { setColorMode(m => m === 'prob' ? 'owner' : 'prob'); setActivePos(null) }} style={{
+          padding: '3px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
+          border: '1px solid #cbd5e1',
+          background: colorMode === 'owner' ? '#1e40af' : 'white',
+          color: colorMode === 'owner' ? 'white' : '#334155',
+        }}>
+          {colorMode === 'prob' ? '切換：外野責任歸屬色' : '切換：接殺機率色'}
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
+          <span>機率範圍</span>
+          <span style={{ minWidth: '28px', textAlign: 'right' }}>{probMin}%</span>
+          <input type="range" min={0} max={100} value={probMin}
+            onChange={e => setProbMin(Math.min(+e.target.value, probMax))}
+            style={{ width: '72px', accentColor: '#4472C4' }} />
+          <span>—</span>
+          <input type="range" min={0} max={100} value={probMax}
+            onChange={e => setProbMax(Math.max(+e.target.value, probMin))}
+            style={{ width: '72px', accentColor: '#4472C4' }} />
+          <span style={{ minWidth: '28px' }}>{probMax}%</span>
+        </div>
+      </div>
+
     <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{ width: '100%', height: 'auto', display: 'block', background: 'white' }}>
+      <defs>
+        <linearGradient id="ic-grad" x1="0" y1="1" x2="0" y2="0">
+          {RDYLGN.map(([t, [r, g, b]]) => (
+            <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
+          ))}
+        </linearGradient>
+      </defs>
       {/* 草地扇形 */}
       <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
         fill="#e8f2e4" />
@@ -166,7 +225,7 @@ export default function IntegratedChart({ data }) {
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
       {/* 內野高飛（展示用，不參與優化——顏色＝實證常數接殺機率，畫在最底層） */}
-      {popup_balls.map((b, i) => {
+      {popup_balls.filter(() => inRange(POPUP_CATCH)).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'popup' && hovered.ball === b
         return (
@@ -175,14 +234,14 @@ export default function IntegratedChart({ data }) {
             r={isHov ? 6 : 3.5}
             fill={rdylgn(POPUP_CATCH)}
             stroke={b.is_out ? '#555' : 'white'} strokeWidth={b.is_out ? 0.9 : 0.6}
-            opacity="0.85"
+            opacity={dimNonOf ?? 0.85}
             onMouseEnter={() => setHovered({ kind: 'popup', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
         )
       })}
       {/* 滾地球（顏色 = 最佳化站位下的 P(out)） */}
-      {if_balls.map((b, i) => {
+      {if_balls.filter(b => inRange(b.p_out_opt)).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'if' && hovered.ball === b
         return (
@@ -191,24 +250,29 @@ export default function IntegratedChart({ data }) {
             r={isHov ? 6 : 4}
             fill={rdylgn(b.p_out_opt)}
             stroke={b.is_out ? '#555' : 'white'} strokeWidth={b.is_out ? 1.1 : 0.6}
-            opacity="0.85"
+            opacity={dimNonOf ?? 0.85}
             onMouseEnter={() => setHovered({ kind: 'if', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 外野球（顏色 = 最佳化站位下的接殺機率；打牆球另畫橘星） */}
+      {/* 外野球（顏色 = 接殺機率或責任歸屬；打牆球另畫橘星） */}
       {of_balls.map((b, i) => {
-        if (b.is_wall_ball) return null
+        if (b.is_wall_ball || !inRange(b.catch_prob)) return null
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'of' && hovered.ball === b
+        const owner = ballOwner?.[i]
+        const mine = !activePos || owner === activePos
+        const fill = colorMode === 'owner'
+          ? (OWNER_COLORS[owner] ?? OWNER_COLORS.null)
+          : rdylgn(b.catch_prob)
         return (
           <circle key={`of-${i}`}
             cx={tx(bx)} cy={ty(by)}
             r={isHov ? 6 : 4}
-            fill={rdylgn(b.catch_prob)}
-            stroke="white" strokeWidth="0.6"
-            opacity="0.85"
+            fill={fill}
+            fillOpacity={mine ? 0.88 : 0.10}
+            stroke={mine ? 'white' : 'gray'} strokeWidth={mine ? 0.6 : 0.2}
             onMouseEnter={() => setHovered({ kind: 'of', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
@@ -227,32 +291,67 @@ export default function IntegratedChart({ data }) {
         )
       })}
 
-      {/* 七人站位：聯盟平均（藍菱形）vs 最佳化（紫星） */}
-      {[...OF_POSITIONS, ...IF_POSITIONS].map(p => (
-        <PosMarker key={`l-${p}`} cx={tx(league.positions[p].x)} cy={ty(league.positions[p].y)}
-          st={STYLES.league} code={p} />
-      ))}
-      {[...OF_POSITIONS, ...IF_POSITIONS].map(p => (
+      {/* 七人站位（最佳化紫星；外野三人可點擊看責任歸屬） */}
+      {OF_POSITIONS.map(p => (
         <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
-          st={STYLES.optimized} code={p} />
+          code={p} isActive={activePos === p}
+          onClick={() => setActivePos(a => a === p ? null : p)} />
+      ))}
+      {IF_POSITIONS.map(p => (
+        <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
+          code={p} />
       ))}
 
       {/* Legend */}
-      <LegendItem color="#1565C0" shape="diamond" label="聯盟平均" y={PT + 8} />
-      <LegendItem color="#7B2FBE" shape="star"    label="最佳化"   y={PT + 28} />
-      <LegendItem color={rdylgn(0.9)} shape="circle" label="接住機率高" y={PT + 52} />
-      <LegendItem color={rdylgn(0.1)} shape="circle" label="接住機率低" y={PT + 70} />
-      {popup_balls.length > 0 &&
-        <LegendItem color={rdylgn(POPUP_CATCH)} shape="circle" label="內野高飛" y={PT + 88} />}
+      <LegendItem color="#7B2FBE" shape="star" label="最佳化站位" y={PT + 8} />
+      {colorMode === 'prob' ? (() => {
+        // 接殺機率色階條
+        const cbX = SVG_W - PR + 10, cbY = PT + 30, cbW = 12, cbH = 96
+        return (
+          <g>
+            <rect x={cbX} y={cbY} width={cbW} height={cbH}
+              fill="url(#ic-grad)" stroke="#bbb" strokeWidth="0.5" />
+            {[0, 0.5, 1].map(t => (
+              <g key={t}>
+                <line x1={cbX + cbW} y1={cbY + cbH * (1 - t)} x2={cbX + cbW + 4}
+                  y2={cbY + cbH * (1 - t)} stroke="#666" strokeWidth="0.8" />
+                <text x={cbX + cbW + 6} y={cbY + cbH * (1 - t) + 3} fontSize="8.5" fill="#555">
+                  {(t * 100).toFixed(0)}%
+                </text>
+              </g>
+            ))}
+            <text x={cbX} y={cbY + cbH + 14} fontSize="8.5" fill="#555">接殺/出局機率</text>
+          </g>
+        )
+      })() : (() => {
+        // 責任歸屬色說明
+        return (
+          <g>
+            {[['LF', OWNER_COLORS.LF], ['CF', OWNER_COLORS.CF], ['RF', OWNER_COLORS.RF],
+              ['其他', OWNER_COLORS.null]].map(([label, color], i) => (
+              <g key={label} transform={`translate(${SVG_W - PR + 10},${PT + 30 + i * 20})`}>
+                <rect width={12} height={12} rx="2.5" fill={color} />
+                <text x={17} y={9.5} fontSize="9" fill="#555">{label}</text>
+              </g>
+            ))}
+            <text x={SVG_W - PR + 10} y={PT + 124} fontSize="8" fill="#aaa">
+              <tspan x={SVG_W - PR + 10} dy="0">點外野星標</tspan>
+              <tspan x={SVG_W - PR + 10} dy="11">高亮其責任球</tspan>
+            </text>
+          </g>
+        )
+      })()}
+      {popup_balls.length > 0 && colorMode === 'prob' &&
+        <LegendItem color={rdylgn(POPUP_CATCH)} shape="circle" label="內野高飛" y={PT + 152} />}
       {nWall > 0 &&
-        <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`} y={PT + 106} />}
-      <text x={SVG_W - PR + 8} y={PT + 128} fontSize="8.5" fill="#999">
+        <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`} y={PT + 172} />}
+      <text x={SVG_W - PR + 8} y={PT + 196} fontSize="8.5" fill="#999">
         <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>
         <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
         {popup_balls.length > 0 &&
           <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
       </text>
-      <text x={SVG_W - PR + 8} y={PT + 176} fontSize="8" fill="#aaa">
+      <text x={SVG_W - PR + 8} y={PT + 244} fontSize="8" fill="#aaa">
         <tspan x={SVG_W - PR + 8} dy="0">球點＝紀錄座標</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>
@@ -275,5 +374,6 @@ export default function IntegratedChart({ data }) {
         </g>
       )}
     </svg>
+    </div>
   )
 }

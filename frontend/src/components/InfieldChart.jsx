@@ -113,7 +113,7 @@ function LegendItem({ color, shape, label, y }) {
 export default function InfieldChart({ data, colorBy, probMin = 0, probMax = 1 }) {
   const [hovered, setHovered] = useState(null)
   if (!data) return null
-  const { league, optimized, balls } = data
+  const { optimized, balls } = data
   const pKey = colorBy === 'league' ? 'p_out_league' : 'p_out_opt'
   const shown = balls.filter(b => b[pKey] >= probMin && b[pKey] <= probMax)
   const arcPts = dirtArcPath()
@@ -167,25 +167,20 @@ export default function InfieldChart({ data, colorBy, probMin = 0, probMax = 1 }
         )
       })}
 
-      {/* 站位：聯盟平均（藍菱形）vs 最佳化（紫星） */}
-      {['1B', '2B', '3B', 'SS'].map(p => (
-        <PosMarker key={`l-${p}`} cx={tx(league.positions[p].x)} cy={ty(league.positions[p].y)}
-          st={STYLES.league} code={p} />
-      ))}
+      {/* 站位：最佳化（紫星）。聯盟平均只留數字比較，圖上不畫 */}
       {['1B', '2B', '3B', 'SS'].map(p => (
         <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
           st={STYLES.optimized} code={p} />
       ))}
 
       {/* Legend */}
-      <LegendItem color="#1565C0" shape="diamond" label="聯盟平均" y={PT + 8} />
-      <LegendItem color="#7B2FBE" shape="star"    label="最佳化"   y={PT + 28} />
-      <LegendItem color={rdylgn(0.9)} shape="circle" label="P(out) 高" y={PT + 52} />
-      <LegendItem color={rdylgn(0.1)} shape="circle" label="P(out) 低" y={PT + 70} />
-      <text x={SVG_W - PR + 8} y={PT + 92} fontSize="8.5" fill="#999">
+      <LegendItem color="#7B2FBE" shape="star"    label="最佳化"   y={PT + 8} />
+      <LegendItem color={rdylgn(0.9)} shape="circle" label="P(out) 高" y={PT + 32} />
+      <LegendItem color={rdylgn(0.1)} shape="circle" label="P(out) 低" y={PT + 50} />
+      <text x={SVG_W - PR + 8} y={PT + 72} fontSize="8.5" fill="#999">
         {shown.length}/{balls.length} 球
       </text>
-      <text x={SVG_W - PR + 8} y={PT + 110} fontSize="8" fill="#aaa">
+      <text x={SVG_W - PR + 8} y={PT + 90} fontSize="8" fill="#aaa">
         <tspan x={SVG_W - PR + 8} dy="0">球點＝紀錄座標</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>

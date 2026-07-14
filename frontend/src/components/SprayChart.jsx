@@ -110,10 +110,10 @@ export default function SprayChart({
   const park = stats?.home_team || ''
   const pos  = positions || {}
 
-  // Which marker sets to draw (matches matplotlib logic)
+  // Which marker sets to draw（聯盟平均只留數字比較，圖上不畫）
   const drawKeys = 'custom'    in pos ? ['custom']
     : 'with_park' in pos              ? ['with_park']
-    : ['league_avg', 'no_park'].filter(k => k in pos)
+    : ['no_park'].filter(k => k in pos)
 
   // Fallback: compute responsible fielder client-side if backend doesn't provide it
   const ballOwner = useMemo(() => {

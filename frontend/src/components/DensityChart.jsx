@@ -105,9 +105,10 @@ export default function DensityChart({
   const park = stats?.home_team || ''
   const pos  = positions || {}
 
+  // 聯盟平均只留數字比較，圖上不畫
   const drawKeys = 'custom'    in pos ? ['custom']
     : 'with_park' in pos              ? ['with_park']
-    : ['league_avg', 'no_park'].filter(k => k in pos)
+    : ['no_park'].filter(k => k in pos)
 
   const legend = []
   if (parkBoundary)
