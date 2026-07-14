@@ -392,11 +392,6 @@ export default function IntegratedChart({ data }) {
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
         </linearGradient>
-        <linearGradient id="ic-grad-d" x1="0" y1="0" x2="1" y2="0">
-          {BLUES.map(([t, [r, g, b]]) => (
-            <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
-          ))}
-        </linearGradient>
       </defs>
       {/* 草地扇形 */}
       <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
@@ -530,7 +525,7 @@ export default function IntegratedChart({ data }) {
           `滾地 ${if_balls.length}` + (popup_balls.length > 0 ? `・高飛 ${popup_balls.length}` : ''),
         ]
         const isProb = colorMode === 'prob'
-        const H = (isProb ? 100 : 144) + (showDensity ? 26 : 0) + (nWall > 0 ? 16 : 0)
+        const H = (isProb ? 100 : 144) + (nWall > 0 ? 16 : 0)
         const W = 178
         const LX = PL + PW - W - 8
         const LY = PT + PH - H - 8
@@ -567,17 +562,6 @@ export default function IntegratedChart({ data }) {
               <text x={10} y={y + 4 * 17 + 8} fontSize="8" fill="#999">點星標高亮其責任球</text>
             </g>)
           y += 4 * 17 + 16
-        }
-        if (showDensity) {
-          rows.push(
-            <g key="dens">
-              <rect x={10} y={y} width={104} height={9}
-                fill="url(#ic-grad-d)" stroke="#bbb" strokeWidth="0.5" />
-              <text x={10} y={y + 20} fontSize="8" fill="#555">疏</text>
-              <text x={114} y={y + 20} fontSize="8" fill="#555" textAnchor="end">密</text>
-              <text x={120} y={y + 8} fontSize="8" fill="#555">落點密度</text>
-            </g>)
-          y += 26
         }
         rows.push(
           <text key="counts" x={10} y={y + 8} fontSize="8.5" fill="#777">
