@@ -190,8 +190,11 @@ export default function OaaRankings() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
-                <tr key={r.name + r.position} style={s.tr}>
+              {/* key 用 player_id：同名同守位的不同球員存在（如 2025 兩位 Max
+                  Muncy 都守 3B），name+position 會撞 key → 重新排序時出現
+                  ghost 重複列（2026-07-14 使用者回報） */}
+              {rows.map((r, i) => (
+                <tr key={`${r.position}-${r.player_id ?? `${r.name}-${i}`}`} style={s.tr}>
                   <td style={{ ...s.td, color: 'var(--gray-400)', fontSize: 11 }}>{r.rank}</td>
                   <td style={tdStyle('name', { fontWeight: 500, textAlign: 'left' })}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 9, whiteSpace: 'nowrap' }}>

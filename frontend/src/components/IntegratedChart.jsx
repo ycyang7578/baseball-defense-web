@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
 // 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）。
@@ -175,6 +175,12 @@ const POPUP_CATCH = 0.985
 
 export default function IntegratedChart({ data }) {
   const svgRef = useRef(null)
+  // SVG defs 的 id 必須每個 instance 唯一：比較模式同頁兩張圖時，
+  // 固定 id 會讓 B 圖引用到 A 圖的 clipPath/漸層（2026-07-14 使用者回報：
+  // B 圖草地邊界跟著 A 圖的球場）
+  const uid = useId().replace(/:/g, '')   // 冒號在 url(#...) 引用有相容性風險
+  const gradId = `ic-grad-h-${uid}`
+  const clipId = `ic-field-clip-${uid}`
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if'|'popup', ball }
   const [activePos, setActivePos] = useState(null)   // 七位置之一或 null
   const [colorMode, setColorMode] = useState('prob') // 'prob' | 'owner'
@@ -424,13 +430,13 @@ export default function IntegratedChart({ data }) {
       style={{ width: '100%', height: 'auto', display: 'block', background: 'white',
                fontFamily: 'system-ui, sans-serif' }}>
       <defs>
-        <linearGradient id="ic-grad-h" x1="0" y1="0" x2="1" y2="0">
+        <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="0">
           {RDYLGN.map(([t, [r, g, b]]) => (
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
         </linearGradient>
         {/* 場地填色的裁切範圍：有球場＝實際牆線多邊形；通用＝400 呎弧扇形 */}
-        <clipPath id="ic-field-clip">
+        <clipPath id={clipId}>
           {park_boundary ? (
             <polygon points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
           ) : (() => {
@@ -444,7 +450,7 @@ export default function IntegratedChart({ data }) {
         </clipPath>
       </defs>
       {/* 草地扇形＋延伸邊線（裁到球場邊界內，超出牆外不填色） */}
-      <g clipPath="url(#ic-field-clip)">
+      <g clipPath={`url(#${clipId})`}>
         <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
           fill="#e8f2e4" />
         <line x1={tx(0)} y1={ty(0)} x2={tx(Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
@@ -591,7 +597,7 @@ export default function IntegratedChart({ data }) {
           rows.push(
             <g key="cb">
               <rect x={8} y={y} width={80} height={8}
-                fill="url(#ic-grad-h)" stroke="#bbb" strokeWidth="0.5" />
+                fill={`url(#${gradId})`} stroke="#bbb" strokeWidth="0.5" />
               <text x={8} y={y + 17} fontSize="7.5" fill="#555">0%</text>
               <text x={88} y={y + 17} fontSize="7.5" fill="#555" textAnchor="end">100%</text>
               <text x={92} y={y + 7.5} fontSize="7.5" fill="#555">接殺/出局</text>
