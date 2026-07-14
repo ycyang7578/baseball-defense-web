@@ -107,31 +107,30 @@ function clampXY(x, y) {
 const OF_POSITIONS = ['LF', 'CF', 'RF']
 const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 
-// ── 密度色圖（Blues，同 seaborn KDE 的感覺）：v∈[0,1] → [r,g,b,alpha] ──
-const DENS_STOPS = [
-  [0.00, [198, 219, 239], 0.00],
-  [0.15, [198, 219, 239], 0.32],
-  [0.35, [158, 202, 225], 0.46],
-  [0.55, [107, 174, 214], 0.56],
-  [0.75, [49, 130, 189], 0.64],
-  [1.00, [8, 81, 156], 0.72],
+// ── 密度色圖：matplotlib "Blues"（同外野頁 seaborn kdeplot 的 cmap）──
+const BLUES = [
+  [0.000, [247, 251, 255]], [0.125, [222, 235, 247]], [0.250, [198, 219, 239]],
+  [0.375, [158, 202, 225]], [0.500, [107, 174, 214]], [0.625, [66, 146, 198]],
+  [0.750, [33, 113, 181]], [0.875, [8, 81, 156]], [1.000, [8, 48, 107]],
 ]
 
-function densColor(v) {
-  v = Math.max(0, Math.min(1, v))
-  for (let i = 0; i < DENS_STOPS.length - 1; i++) {
-    const [t0, c0, a0] = DENS_STOPS[i], [t1, c1, a1] = DENS_STOPS[i + 1]
-    if (v <= t1) {
-      const t = (v - t0) / (t1 - t0)
-      return [Math.round(c0[0] + (c1[0] - c0[0]) * t),
-              Math.round(c0[1] + (c1[1] - c0[1]) * t),
-              Math.round(c0[2] + (c1[2] - c0[2]) * t),
-              a0 + (a1 - a0) * t]
+function bluesColor(t) {
+  t = Math.max(0, Math.min(1, t))
+  for (let i = 0; i < BLUES.length - 1; i++) {
+    const [t0, c0] = BLUES[i], [t1, c1] = BLUES[i + 1]
+    if (t <= t1) {
+      const k = (t - t0) / (t1 - t0)
+      return [Math.round(c0[0] + (c1[0] - c0[0]) * k),
+              Math.round(c0[1] + (c1[1] - c0[1]) * k),
+              Math.round(c0[2] + (c1[2] - c0[2]) * k)]
     }
   }
-  const [, c, a] = DENS_STOPS[DENS_STOPS.length - 1]
-  return [...c, a]
+  return BLUES[BLUES.length - 1][1]
 }
+
+// 同外野頁 seaborn 參數：levels=10、thresh=0.05（最低 5% 不填色）
+const DENS_THRESH = 0.05
+const DENS_EDGES = Array.from({ length: 10 }, (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / 9)
 
 // ── Marching squares：從網格 KDE 取一條等值線的線段集（SVG path 字串）──
 function marchingSquares(grid, gw, gh, level, cell) {
@@ -221,32 +220,39 @@ export default function IntegratedChart({ data }) {
     let maxV = 0
     for (let i = 0; i < grid.length; i++) if (grid[i] > maxV) maxV = grid[i]
 
-    // 填色層：小畫布逐格上 alpha，再平滑放大
-    const small = document.createElement('canvas')
-    small.width = GW
-    small.height = GH
-    const sctx = small.getContext('2d')
-    const img = sctx.createImageData(GW, GH)
-    for (let i = 0; i < grid.length; i++) {
-      const [r, g, b, a] = densColor(Math.pow(grid[i] / maxV, 0.85))
-      img.data[i * 4] = r
-      img.data[i * 4 + 1] = g
-      img.data[i * 4 + 2] = b
-      img.data[i * 4 + 3] = Math.round(255 * a)
-    }
-    sctx.putImageData(img, 0, 0)
+    // 填色層：分段填色（同 seaborn fill=True 的離散色帶）。逐像素對網格
+    // 雙線性取樣→量化到色帶，帶邊界才會像 matplotlib 一樣俐落
     const big = document.createElement('canvas')
     big.width = PW
     big.height = PH
     const bctx = big.getContext('2d')
-    bctx.imageSmoothingEnabled = true
-    bctx.imageSmoothingQuality = 'high'
-    bctx.drawImage(small, 0, 0, PW, PH)
+    const img = bctx.createImageData(PW, PH)
+    const bandW = (1 - DENS_THRESH) / 9
+    for (let py = 0; py < PH; py++) {
+      const gy = py / CELL
+      const iy = Math.min(GH - 2, Math.floor(gy))
+      const fy = gy - iy
+      for (let px = 0; px < PW; px++) {
+        const gx = px / CELL
+        const ix = Math.min(GW - 2, Math.floor(gx))
+        const fx = gx - ix
+        const v = ((grid[iy * GW + ix] * (1 - fx) + grid[iy * GW + ix + 1] * fx) * (1 - fy)
+                   + (grid[(iy + 1) * GW + ix] * (1 - fx) + grid[(iy + 1) * GW + ix + 1] * fx) * fy) / maxV
+        if (v < DENS_THRESH) continue
+        const band = Math.min(8, Math.floor((v - DENS_THRESH) / bandW))
+        const [r, g, b] = bluesColor((band + 1) / 9)
+        const o = (py * PW + px) * 4
+        img.data[o] = r
+        img.data[o + 1] = g
+        img.data[o + 2] = b
+        img.data[o + 3] = Math.round(255 * 0.3)   // 同外野頁 alpha=0.28 的清淡感
+      }
+    }
+    bctx.putImageData(img, 0, 0)
     setDensitySrc(big.toDataURL('image/png'))
 
-    // 等高線：同一份網格取 9 條等值線
-    const levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    setContours(levels.map(t => marchingSquares(grid, GW, GH, t * maxV, CELL)))
+    // 等高線：同 seaborn levels=10 的等值線
+    setContours(DENS_EDGES.map(t => marchingSquares(grid, GW, GH, t * maxV, CELL)))
   }, [showDensity, data, showTypes, probMin, probMax])
 
   // 責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）。
@@ -360,7 +366,7 @@ export default function IntegratedChart({ data }) {
           ))}
         </linearGradient>
         <linearGradient id="ic-grad-d" x1="0" y1="0" x2="1" y2="0">
-          {DENS_STOPS.map(([t, [r, g, b]]) => (
+          {BLUES.map(([t, [r, g, b]]) => (
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
         </linearGradient>
@@ -392,8 +398,8 @@ export default function IntegratedChart({ data }) {
       {showDensity && contours && (
         <g transform={`translate(${PL},${PT})`}>
           {contours.map((d, i) => d && (
-            <path key={i} d={d} fill="none" stroke="#1e3a8a"
-              strokeWidth="0.8" opacity={0.2 + i * 0.07} />
+            <path key={i} d={d} fill="none" stroke="#4a72c4"
+              strokeWidth="0.5" opacity="0.3" />
           ))}
         </g>
       )}
