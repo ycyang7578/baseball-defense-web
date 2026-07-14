@@ -115,7 +115,8 @@ export async function fetchIntegratedBatters(year) {
   return res.json()
 }
 
-export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, outs, homeTeam }) {
+export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, outs,
+                                           homeTeam, ofFielders, ifFielders }) {
   const res = await fetch(`${BASE}/optimize_integrated`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -123,6 +124,8 @@ export async function optimizeIntegrated({ batterId, year, on1b, on2b, on3b, out
       batter_id: batterId, year: year || 2025,
       on_1b: on1b, on_2b: on2b, on_3b: on3b, outs,
       home_team: homeTeam || null,
+      of_fielders: ofFielders && Object.keys(ofFielders).length ? ofFielders : null,
+      if_fielders: ifFielders && Object.keys(ifFielders).length ? ifFielders : null,
     }),
   })
   if (!res.ok) {

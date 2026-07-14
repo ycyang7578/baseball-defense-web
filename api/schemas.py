@@ -196,6 +196,11 @@ class IntegratedRequest(BaseModel):
     # 球場（外野牆因素，同 /api/optimize：打牆球接殺機率強制 0＋第二次
     # warm start 優化）。None = 通用球場。內野無牆不受影響。
     home_team: str | None = None
+    # 指定野手（未指定的位置＝聯盟平均）。外野用球員名（同 /api/optimize，
+    # load_player_params 的鍵）；內野用 player_id（同 /api/if_optimize 的
+    # 貝葉斯球員層效應）。
+    of_fielders: dict[str, str] | None = None   # "LF"/"CF"/"RF" → 球員名
+    if_fielders: dict[str, int] | None = None   # "1B"/"2B"/"3B"/"SS" → player_id
 
 
 class IntegratedSet(BaseModel):
@@ -240,6 +245,7 @@ class IntegratedResponse(BaseModel):
     if_balls:  list[IFBallPoint]
     popup_balls: list[PopupBall] = []  # 展示用（雲端表未 sync 時為空）
     park_boundary: list[ParkCoord] | None = None  # 指定球場時的牆線
+    fielders:  dict[str, str | None] = {}  # 七位置 → 野手名（None=聯盟平均）
     stats:     IntegratedStats
 
 

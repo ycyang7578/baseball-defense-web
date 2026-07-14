@@ -637,8 +637,13 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
   打者，2025 全部 372 位同時有外野資料）→ 比賽狀況（GameStateForm）→ 球場
   選單（2026-07-14 加，同主頁球場因素：打牆球接殺機率強制 0＋no_park 解
   warm start 的 with_park 第二次優化＋牆線/橘星，內野無牆不受影響；多一次
-  優化 Render 上會更慢）→ 計算按鈕（線上計算，Render 上約一分鐘起）
-- 圖寬 maxWidth 1020（2026-07-14 從 760 放大）
+  優化 Render 上會更慢）→ **七人野手選單**（2026-07-14 加：外野傳球員名→
+  球員層 mu、內野傳 player_id→貝葉斯效應，`of_fielders`/`if_fielders` 請求
+  欄位，回應 `fielders` 回七位置名字；選單固定 min 門檻 100 不放滑桿）
+  → 比較模式（A/B 兩組球場＋野手，並排圖＋差異表：總/外野/內野省分＋
+  七人座標差；同 Infield 頁模式）→ 計算按鈕（線上計算，Render 上約一分鐘起）
+- 圖寬 maxWidth 1020（2026-07-14 從 760 放大）、比較模式 1700；
+  視野 Y0=-60（本壘後方界外 popup 99% 在 -49 內，再深夾回下緣）
 - 結果：TitleBar（打者/壘況/球數）＋ IntegratedChart ＋ StatsPanel：總省分大卡
   （vs 聯盟平均，綠/紅）＋外野三人/內野四人分項卡＋七人座標表
 - 文案面向休閒球迷（「七名野手一起排…加總就是省下的分數」），不放方法論

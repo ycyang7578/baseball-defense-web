@@ -3,7 +3,9 @@ import { useState } from 'react'
 // ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
 // 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）
 const PL = 52, PT = 56, PW = 560, PR = 92, PB = 40
-const X0 = -270, X1 = 270, Y0 = -18, Y1 = 430
+// Y0=-60：本壘後方界外 popup 99% 落在 -49 內（precomputed_batter_popups 實測），
+// 再深的夾回下緣
+const X0 = -270, X1 = 270, Y0 = -60, Y1 = 430
 const PH = PW * (Y1 - Y0) / (X1 - X0)          // 等比例，不變形
 const SVG_W = PL + PW + PR
 const SVG_H = PT + PH + PB
@@ -90,11 +92,12 @@ const B1 = [90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 const B2 = [0, 90 * Math.SQRT2]
 const B3 = [-90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 
-// 球點畫在 Statcast 記錄座標；太深的球沿同方向夾回視野邊緣
+// 球點畫在 Statcast 記錄座標；太深的球沿同方向夾回視野邊緣，
+// 本壘後方過深的界外球夾回下緣
 function clampXY(x, y) {
   const r = Math.hypot(x, y)
   const k = r > MAX_R ? MAX_R / r : 1
-  return [x * k, y * k]
+  return [x * k, Math.max(y * k, Y0 + 6)]
 }
 
 function LegendItem({ color, shape, label, y }) {

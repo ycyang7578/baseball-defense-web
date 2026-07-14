@@ -1021,9 +1021,10 @@ def optimize_integrated(req: IntegratedRequest):
     飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位，省分相加即聯合口徑。
     內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
     （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
-    聯盟平均野手。指定 home_team 時外野同 /api/optimize 一般模式：打牆球
-    接殺機率強制 0 計入 RE24，且多跑一次 warm start 的 with_park 優化；
-    內野無牆不受影響。
+    指定 home_team 時外野同 /api/optimize 一般模式：打牆球接殺機率強制 0
+    計入 RE24，且多跑一次 warm start 的 with_park 優化；內野無牆不受影響。
+    指定野手時：外野掛球員層 mu（of_fielders，球員名）、內野掛貝葉斯效應
+    （if_fielders，player_id），未指定的位置＝聯盟平均。
     """
     import math
 
@@ -1073,13 +1074,30 @@ def optimize_integrated(req: IntegratedRequest):
                   if home_team else np.zeros(len(balls_of), dtype=bool))
 
     models_dir = BASE / "models" / str(year)
+
+    # 指定外野手（球員層 mu，同 _run_optimize）；未指定的位置用群體 mu
+    fielder_mus = None
+    if req.of_fielders:
+        fm = {}
+        for pos in POSITIONS:
+            nm = req.of_fielders.get(pos)
+            if nm:
+                try:
+                    fm[pos] = load_player_params("OF", nm, models_dir)
+                except (KeyError, FileNotFoundError):
+                    raise HTTPException(422, f"{pos} 找不到球員 '{nm}' 的模型參數")
+        fielder_mus = fm or None
+    mus_eff = dict(_mus.get(year, {}))
+    if fielder_mus:
+        mus_eff.update(fielder_mus)
+
     with _optimize_semaphore:
         opt_of = optimize_positions(
             batter_id=req.batter_id,
             on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
             years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
             home_team=None, dsn=DSN, balls=balls_of, hit_probs=hit_probs,
-            n_restarts=10,
+            fielder_mus=fielder_mus, n_restarts=10,
         )
         pos_of_opt = {p: opt_of[p] for p in POSITIONS}
         if home_team:
@@ -1089,7 +1107,7 @@ def optimize_integrated(req: IntegratedRequest):
                 on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
                 years=[year], models_dir=models_dir, re24_dir=PRE_DIR,
                 home_team=home_team, dsn=DSN, balls=balls_of, hit_probs=hit_probs,
-                warm_start_xy=pos_of_opt, n_restarts=8,
+                fielder_mus=fielder_mus, warm_start_xy=pos_of_opt, n_restarts=8,
             )
             pos_of_opt = {p: opt_of_park[p] for p in POSITIONS}
     try:
@@ -1099,7 +1117,7 @@ def optimize_integrated(req: IntegratedRequest):
 
     def of_runs(pos_dict):
         probs = np.asarray(compute_ball_catch_probs(
-            pos_dict, balls_of, _scalers.get(year, {}), _mus.get(year, {})),
+            pos_dict, balls_of, _scalers.get(year, {}), mus_eff),
             dtype=float).copy()
         probs[wall_flags] = 0.0                      # 打牆球無論站哪都接不到
         return probs, float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask]))
@@ -1111,23 +1129,28 @@ def optimize_integrated(req: IntegratedRequest):
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
         _load_if_batter(req.batter_id, year)
 
+    # 指定內野手（貝葉斯球員層效應，同 /api/if_optimize）
+    if_fids = {p: (req.if_fielders or {}).get(p) for p in IF_POSITIONS}
+    pe = _if_player_effects(if_fids) if any(if_fids.values()) else None
+
     bw, mean_w = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table, _delta_re, state)
     warm = positions_to_params(warm_angles, warm_depths)
     with _optimize_semaphore:
         res = optimize_infield(balls_if, _if_bayes_model, n_restarts=0,
-                               extra_starts=[warm], ball_weights=bw)
+                               extra_starts=[warm], ball_weights=bw,
+                               player_effects=pe)
 
     lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
     lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
     # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)
     e_if_opt = mean_w - res["exp_outs"]
     e_if_league = mean_w - if_expected_outs(
-        _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=bw)
+        _if_bayes_model, balls_if, lg_angles, lg_depths, pe, ball_weights=bw)
     runs_if_opt = e_if_opt * len(balls_if)
     runs_if_league = e_if_league * len(balls_if)
 
-    p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths)
-    p_if_opt = predict_p_out(_if_bayes_model, balls_if, res["angles"], res["depths"])
+    p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths, pe)
+    p_if_opt = predict_p_out(_if_bayes_model, balls_if, res["angles"], res["depths"], pe)
 
     # ── 組裝（七人站位共用 PositionXY；內野 angle/depth → x/y）──────
     def if_xy(angle: float, depth: float) -> PositionXY:
@@ -1170,6 +1193,9 @@ def optimize_integrated(req: IntegratedRequest):
                   for r, pl, po in zip(ball_rows, p_if_league, p_if_opt)],
         popup_balls=popups,
         park_boundary=(get_park_boundary_coords(home_team) if home_team else None),
+        fielders={**{p: (req.of_fielders or {}).get(p) or None for p in POSITIONS},
+                  **{p: (_name_map.get(if_fids[p], f"#{if_fids[p]}") if if_fids[p] else None)
+                     for p in IF_POSITIONS}},
         stats=IntegratedStats(
             n_of_balls=len(balls_of), n_gb=len(balls_if), n_popups=len(popups),
             n_wall_balls=int(wall_flags.sum()), home_team=home_team,
