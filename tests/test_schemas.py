@@ -55,3 +55,16 @@ def test_integrated_set_holds_seven_positions():
         runs_of=10.0, runs_if=5.0, runs_total=15.0)
     assert len(s.positions) == 7
     assert s.runs_total == s.runs_of + s.runs_if
+
+
+def test_integrated_popup_fields_default_to_empty():
+    """popup 是後加的展示欄位：舊呼叫端（不帶 popup）必須照樣能建構，
+    雲端表未 sync 時 popup_balls 為空、n_popups 為 0。"""
+    from api.schemas import IntegratedStats, PopupBall
+
+    stats = IntegratedStats(n_of_balls=1, n_gb=1, re_state=0.5,
+                            runs_saved_of=0.0, runs_saved_if=0.0,
+                            runs_saved_total=0.0)
+    assert stats.n_popups == 0
+    ball = PopupBall(x=10.0, y=120.0, is_out=True)
+    assert ball.is_out is True

@@ -115,7 +115,7 @@ const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 export default function IntegratedChart({ data }) {
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if', ball }
   if (!data) return null
-  const { league, optimized, of_balls, if_balls } = data
+  const { league, optimized, of_balls, if_balls, popup_balls = [] } = data
   const arcPts = dirtArcPath()
 
   const tip = hovered ? (() => {
@@ -123,6 +123,8 @@ export default function IntegratedChart({ data }) {
     const [bx, by] = clampXY(ball.x, ball.y)
     const lines = kind === 'of'
       ? [`外野球　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`]
+      : kind === 'popup'
+      ? [`內野高飛　${ball.is_out ? '出局' : '安打/失誤'}　不參與站位優化`]
       : [
           `滾地球　${ball.is_out ? '出局' : '安打/失誤'}　EV ${ball.launch_speed.toFixed(0)} mph`,
           `P(out) 平均 ${(ball.p_out_league * 100).toFixed(0)}% → 最佳化 ${(ball.p_out_opt * 100).toFixed(0)}%`,
@@ -152,6 +154,22 @@ export default function IntegratedChart({ data }) {
       <polygon points={basePts(...B3)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
+      {/* 內野高飛（展示用，不參與優化——站位無槓桿，畫在最底層淡灰） */}
+      {popup_balls.map((b, i) => {
+        const [bx, by] = clampXY(b.x, b.y)
+        const isHov = hovered && hovered.kind === 'popup' && hovered.ball === b
+        return (
+          <circle key={`pu-${i}`}
+            cx={tx(bx)} cy={ty(by)}
+            r={isHov ? 6 : 3.5}
+            fill="#a7afba"
+            stroke={b.is_out ? '#777' : 'white'} strokeWidth={b.is_out ? 0.9 : 0.6}
+            opacity="0.55"
+            onMouseEnter={() => setHovered({ kind: 'popup', ball: b })}
+            onMouseLeave={() => setHovered(null)}
+            style={{ cursor: 'pointer' }} />
+        )
+      })}
       {/* 滾地球（顏色 = 最佳化站位下的 P(out)） */}
       {if_balls.map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
@@ -200,14 +218,22 @@ export default function IntegratedChart({ data }) {
       <LegendItem color="#7B2FBE" shape="star"    label="最佳化"   y={PT + 28} />
       <LegendItem color={rdylgn(0.9)} shape="circle" label="接住機率高" y={PT + 52} />
       <LegendItem color={rdylgn(0.1)} shape="circle" label="接住機率低" y={PT + 70} />
-      <text x={SVG_W - PR + 8} y={PT + 92} fontSize="8.5" fill="#999">
+      {popup_balls.length > 0 &&
+        <LegendItem color="#a7afba" shape="circle" label="內野高飛" y={PT + 88} />}
+      <text x={SVG_W - PR + 8} y={PT + 110} fontSize="8.5" fill="#999">
         <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>
         <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
+        {popup_balls.length > 0 &&
+          <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
       </text>
-      <text x={SVG_W - PR + 8} y={PT + 124} fontSize="8" fill="#aaa">
+      <text x={SVG_W - PR + 8} y={PT + 154} fontSize="8" fill="#aaa">
         <tspan x={SVG_W - PR + 8} dy="0">球點＝紀錄座標</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
         <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>
+        {popup_balls.length > 0 && <>
+          <tspan x={SVG_W - PR + 8} dy="14">灰＝內野高飛，</tspan>
+          <tspan x={SVG_W - PR + 8} dy="11">不參與站位優化</tspan>
+        </>}
       </text>
 
       {/* Tooltip */}

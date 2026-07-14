@@ -637,6 +637,14 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
 - 結果：TitleBar（打者/壘況/球數）＋ IntegratedChart ＋ StatsPanel：總省分大卡
   （vs 聯盟平均，綠/紅）＋外野三人/內野四人分項卡＋七人座標表
 - 文案面向休閒球迷（「七名野手一起排…加總就是省下的分數」），不放方法論
+- **展示用內野高飛（2026-07-14）**：popup 站位無槓桿（出局率 98.6%）不參與優化，
+  但為了「打者所有場內球」的視覺完整性畫上去（淡灰小點、tooltip 註明不參與
+  優化）。資料走 `precomputed_batter_popups`（scripts/precompute_batter_popups.py，
+  本機與 Neon 皆已灌 2020–25 共 46,520 筆；hc×2.5 展示座標同 precomputed_if_gbs
+  慣例），端點 `_load_batter_popups` 表缺時回空清單不擋主流程。場內球覆蓋率
+  口徑（2025 實測）：外野側 46.0%＋內野側 40.3%＋popup 7.1%＝93.4%，
+  刻意不畫的剩餘＝全壘打 4.5%、觸擊 0.9%、缺特徵/極端 spray 0.9%、
+  fielders_choice 0.3%
 
 ### 響應式/手機版（2026-07-06）
 專案原本完全沒有 mobile breakpoint，用 Playwright 在 375×812 實測後修的問題：
@@ -661,7 +669,8 @@ Integrated 頁（`src/pages/Integrated.jsx`，`/integrated`，NavBar「七人整
 - 資料庫：Neon（免費方案，region ap-southeast-1 Singapore）。環境變數 `BASEBALL_DSN` 覆寫 `src/config.py` 的 DSN
 - Neon 上**只有**這幾張表（2026-07-14 查核）：`model_oaa`、`oaa_leaderboard`、`fielder_positioning`、
   `model_star_stats`、`precomputed_batter_balls`、`precomputed_batter_stand`、`precomputed_if_positions`、
-  `precomputed_if_gbs`、`if_model_oaa`、`if_oaa_leaderboard`。**沒有** `statcast`（5.1GB，超過免費方案容量，
+  `precomputed_if_gbs`、`precomputed_batter_popups`（整合頁展示用內野高飛，2026-07-14 新增並已 sync）、
+  `if_model_oaa`、`if_oaa_leaderboard`。**沒有** `statcast`（5.1GB，超過免費方案容量，
   只存在本機，訓練/評估/precompute 都只能在本機跑）、沒有 `savant_fielding`（只有評估腳本用得到）、
   也沒有 `fielder_positioning_on1b`／`sprint_speed`（階段B 線上需要的常數已離線預算成
   data/precomputed/if_on1b_constants.json，見階段B 章節）

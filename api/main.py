@@ -42,6 +42,7 @@ from .schemas import (
     IFFielderOption, IFOptimizeRequest, IFOptimizeResponse, IFOptimizeSet,
     IFOptimizeStats, IFPosition, IFPositionSet, IFResultResponse, IFStats,
     IntegratedRequest, IntegratedResponse, IntegratedSet, IntegratedStats,
+    PopupBall,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -956,6 +957,21 @@ def if_optimize(req: IFOptimizeRequest):
 
 # ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──
 
+def _load_batter_popups(batter_id: int, year: int) -> list[PopupBall]:
+    """整合頁展示用內野高飛（scripts/precompute_batter_popups.py 產的表）。
+    popup 不參與優化；表還沒建立/沒 sync 到這顆 DB 時回空清單，不擋主流程。"""
+    try:
+        with psycopg2.connect(DSN) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ball_x, ball_y, is_out FROM precomputed_batter_popups "
+                    "WHERE batter = %s AND game_year = %s", (batter_id, year))
+                return [PopupBall(x=x, y=y, is_out=o) for x, y, o in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"popup 展示球載入失敗（不影響優化）: {e}")
+        return []
+
+
 @app.post("/api/optimize_integrated", response_model=IntegratedResponse)
 def optimize_integrated(req: IntegratedRequest):
     """打者＋壘況 → 七人站位與總省分。
@@ -1067,6 +1083,7 @@ def optimize_integrated(req: IntegratedRequest):
                              runs_of=round(runs_of, 3), runs_if=round(runs_if, 3),
                              runs_total=round(runs_of + runs_if, 3))
 
+    popups = _load_batter_popups(req.batter_id, year)
     raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
     bases = (("1" if req.on_1b else "-") + ("2" if req.on_2b else "-")
              + ("3" if req.on_3b else "-"))
@@ -1088,8 +1105,9 @@ def optimize_integrated(req: IntegratedRequest):
                               is_out=r[5], p_out_league=round(float(pl), 4),
                               p_out_opt=round(float(po), 4))
                   for r, pl, po in zip(ball_rows, p_if_league, p_if_opt)],
+        popup_balls=popups,
         stats=IntegratedStats(
-            n_of_balls=len(balls_of), n_gb=len(balls_if),
+            n_of_balls=len(balls_of), n_gb=len(balls_if), n_popups=len(popups),
             re_state=round(float(_re24_table.get(state, 0.0)), 4),
             runs_saved_of=round(runs_of_league - runs_of_opt, 3),
             runs_saved_if=round(runs_if_league - runs_if_opt, 3),

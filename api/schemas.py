@@ -206,9 +206,17 @@ class IntegratedSet(BaseModel):
     runs_total: float
 
 
+class PopupBall(BaseModel):
+    """展示用內野高飛（不參與優化——站位無槓桿，出局率 98.6%）。"""
+    x:      float
+    y:      float
+    is_out: bool
+
+
 class IntegratedStats(BaseModel):
     n_of_balls:       int
     n_gb:             int
+    n_popups:         int = 0  # 展示用，不在任何 runs 計算內
     re_state:         float
     runs_saved_of:    float   # league − optimized（正=最佳化較省分）
     runs_saved_if:    float
@@ -225,6 +233,7 @@ class IntegratedResponse(BaseModel):
     optimized: IntegratedSet
     of_balls:  list[BallPoint]     # catch_prob 為最佳化站位下的接殺機率
     if_balls:  list[IFBallPoint]
+    popup_balls: list[PopupBall] = []  # 展示用（雲端表未 sync 時為空）
     stats:     IntegratedStats
 
 

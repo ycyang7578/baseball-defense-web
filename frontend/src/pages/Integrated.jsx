@@ -144,6 +144,7 @@ function TitleBar({ data }) {
       </div>
       <div style={{ fontSize: 11, color: 'var(--slate-400)', marginTop: 2 }}>
         壘況 {data.situation}・外野 {data.stats.n_of_balls} 球＋滾地 {data.stats.n_gb} 球
+        {data.stats.n_popups > 0 && `＋高飛 ${data.stats.n_popups} 球（展示）`}
       </div>
     </div>
   )
