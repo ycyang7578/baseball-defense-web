@@ -315,11 +315,19 @@ export default function IntegratedChart({ data }) {
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 球場牆線與打牆球（同外野主頁慣例：綠線＋橘星） */}
-      {park_boundary && (
+      {/* 球場牆線與打牆球（同外野主頁慣例：綠線＋橘星）；
+          通用球場改畫 400 呎虛線弧當距離參考（同外野主頁） */}
+      {park_boundary ? (
         <polyline fill="none" stroke="#00CC55" strokeWidth="2.2" opacity="0.9"
           points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
-      )}
+      ) : (() => {
+        const arcY = Math.sqrt(400 ** 2 - X1 ** 2)          // 弧與視野左右緣的交點
+        const rPx = 400 * PW / (X1 - X0)                    // 400 呎換算像素半徑
+        return (
+          <path d={`M ${tx(X1).toFixed(1)},${ty(arcY).toFixed(1)} A ${rPx.toFixed(1)} ${rPx.toFixed(1)} 0 0 0 ${tx(X0).toFixed(1)},${ty(arcY).toFixed(1)}`}
+            fill="none" stroke="#999" strokeWidth="2" strokeDasharray="8 5" opacity="0.8" />
+        )
+      })()}
       {of_balls.filter(b => b.is_wall_ball && (!b.bb_type || showTypes[b.bb_type])).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         return (

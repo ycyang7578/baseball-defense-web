@@ -267,7 +267,7 @@ export default function Integrated() {
         {/* ── 右側結果區 ── */}
         <div className="app-chart-area" style={s.chartArea}>
           {compareMode && (data || dataB) ? (
-            <div style={{ width: '100%', maxWidth: 1700 }}>
+            <div style={{ width: '100%', maxWidth: 1900 }}>
               <div className="compare-row" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <ChartBox data={data}  park={homeTeam}  label="組合 A" loading={loading} />
                 <ChartBox data={dataB} park={homeTeamB} label="組合 B" loading={loading} />
@@ -275,7 +275,7 @@ export default function Integrated() {
               {data && dataB && !loading && <CompareStats dataA={data} dataB={dataB} />}
             </div>
           ) : (
-            <div style={{ width: '100%', maxWidth: 1020 }}>
+            <div style={{ width: '100%', maxWidth: 1280 }}>
               <div style={{ position: 'relative' }}>
                 {data ? (
                   <>
