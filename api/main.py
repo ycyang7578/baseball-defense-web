@@ -243,11 +243,12 @@ def _load_if_fielder_menu() -> None:
                 return None
             return o["oaa"] / o["n_balls"]
 
-        # OAA/100 降序（同外野選單）；無評價的排最後，再依名字
+        # 純 OAA/100 降序（同外野選單）；無評價的墊底按名字。
+        # 不拿 has_effects 當排序鍵——它會把「有標籤但無效應」的人踢到底部，
+        # 看起來像降序被打斷（2026-07-14 使用者回報）
         for year in opts.values():
             for lst in year.values():
-                lst.sort(key=lambda o: (not o["has_effects"],
-                                        -_oaa_rate(o) if _oaa_rate(o) is not None
+                lst.sort(key=lambda o: (-_oaa_rate(o) if _oaa_rate(o) is not None
                                         else float("inf"),
                                         o["name"]))
         _if_fielder_opts.clear()
