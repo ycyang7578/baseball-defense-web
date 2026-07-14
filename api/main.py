@@ -802,6 +802,46 @@ def if_fielders(year: int = 2025, min_balls: int = 100):
 
 # ── 內野線上優化（外野 /api/optimize 的內野鏡像）──────────────────
 
+def _solve_if_dp(balls, state: tuple, warm_angles, warm_depths, pe: dict | None) -> dict:
+    """階段B DP 解（僅一壘有人、<2 出局）：/api/if_optimize 與整合端點共用。
+
+    balls 就地補 runner_hp_to_1b 常數欄；warm_angles/depths＝precomputed
+    出局率最佳解（含 1B，取 2B/3B/SS 當起點）。起點配置同跨年驗證
+    （LHS 8＋無壘況解＋聯盟站位），指定野手時錨定式精修（anchored_starts
+    避 kink）。scorer 掛 pe 評最佳化組、scorer_base 效應 0 評聯盟基準。
+    """
+    import numpy as np
+
+    balls["runner_hp_to_1b"] = _if_on1b_runner_hp
+    w = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
+    d1, d2 = dp_delta_re(_re24_table, _delta_re, state[3])
+    pinned_1b = _if_on1b_league["1B"]
+    lg3_angles = np.array([_if_on1b_league[p][0] for p in DP_POSITIONS])
+    lg3_depths = np.array([_if_on1b_league[p][1] for p in DP_POSITIONS])
+
+    starts = [positions_to_params_dp(warm_angles[1:], warm_depths[1:]),
+              positions_to_params_dp(lg3_angles, lg3_depths)]
+    with _optimize_semaphore:
+        res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
+                                  pinned_1b, w, d1, d2, n_restarts=8, seed=42,
+                                  extra_starts=starts)
+        if pe is not None:
+            # 錨點常卡在 kink 上（見 anchored_starts docstring），加小抖動起點
+            anchor = positions_to_params_dp(res["angles"], res["depths"])
+            res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
+                                      pinned_1b, w, d1, d2, n_restarts=0,
+                                      extra_starts=anchored_starts(anchor),
+                                      player_effects=pe)
+
+    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w,
+                      d1, d2, pe)
+    scorer_base = scorer if pe is None else DPScorer(
+        _if_dp_out_model, _if_dp_model, balls, pinned_1b, w, d1, d2)
+    return {"angles3": res["angles"], "depths3": res["depths"],
+            "lg3_angles": lg3_angles, "lg3_depths": lg3_depths,
+            "pinned_1b": pinned_1b, "scorer": scorer, "scorer_base": scorer_base}
+
+
 def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     """僅一壘有人（<2 出局）：階段B DP 優化（src/if_dp_optimize.py）。
 
@@ -825,36 +865,13 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls = \
         _load_if_batter(req.batter_id, year)
-    balls["runner_hp_to_1b"] = _if_on1b_runner_hp
 
     fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(fids) if any(fids.values()) else None
 
-    w = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
-    d1, d2 = dp_delta_re(_re24_table, _delta_re, req.outs)
-    pinned_1b = _if_on1b_league["1B"]
-    lg3_angles = np.array([_if_on1b_league[p][0] for p in DP_POSITIONS])
-    lg3_depths = np.array([_if_on1b_league[p][1] for p in DP_POSITIONS])
-
-    starts = [positions_to_params_dp(warm_angles[1:], warm_depths[1:]),
-              positions_to_params_dp(lg3_angles, lg3_depths)]
-    with _optimize_semaphore:
-        res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
-                                  pinned_1b, w, d1, d2, n_restarts=8, seed=42,
-                                  extra_starts=starts)
-        if pe is not None:
-            # 錨點常卡在 kink 上（見 anchored_starts docstring），加小抖動起點
-            anchor = positions_to_params_dp(res["angles"], res["depths"])
-            res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
-                                      pinned_1b, w, d1, d2, n_restarts=0,
-                                      extra_starts=anchored_starts(anchor),
-                                      player_effects=pe)
-
-    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w,
-                      d1, d2, pe)
-    # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
-    scorer_base = scorer if pe is None else DPScorer(
-        _if_dp_out_model, _if_dp_model, balls, pinned_1b, w, d1, d2)
+    sol = _solve_if_dp(balls, state, warm_angles, warm_depths, pe)
+    pinned_1b = sol["pinned_1b"]
+    lg3_angles, lg3_depths = sol["lg3_angles"], sol["lg3_depths"]
 
     def eval_set(angles3, depths3, sc) -> tuple[np.ndarray, float, float]:
         """(逐球 p1, 平均 p1, E[ΔRE]×n_gb)。"""
@@ -862,8 +879,8 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
         runs = sc.expected_re(angles3, depths3) * len(balls)
         return p1, float(p1.mean()), runs
 
-    p1_opt, eo_opt, runs_opt = eval_set(res["angles"], res["depths"], scorer)
-    p1_lg, eo_lg, runs_lg = eval_set(lg3_angles, lg3_depths, scorer_base)
+    p1_opt, eo_opt, runs_opt = eval_set(sol["angles3"], sol["depths3"], sol["scorer"])
+    p1_lg, eo_lg, runs_lg = eval_set(lg3_angles, lg3_depths, sol["scorer_base"])
 
     def positions_dict(angles4, depths4) -> dict[str, IFPosition]:
         out = {}
@@ -874,8 +891,8 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
                                   angle=round(float(a), 2), depth=round(float(d), 2))
         return out
 
-    opt_angles4 = np.concatenate([[pinned_1b[0]], res["angles"]])
-    opt_depths4 = np.concatenate([[pinned_1b[1]], res["depths"]])
+    opt_angles4 = np.concatenate([[pinned_1b[0]], sol["angles3"]])
+    opt_depths4 = np.concatenate([[pinned_1b[1]], sol["depths3"]])
     lg_angles4 = np.concatenate([[pinned_1b[0]], lg3_angles])
     lg_depths4 = np.concatenate([[pinned_1b[1]], lg3_depths])
 
@@ -1035,6 +1052,9 @@ def optimize_integrated(req: IntegratedRequest):
     p̂×ΔRE(out)]、內野 = E[ΔRE]×n_gb（run-value 權重，src/if_runvalue.py）。
     出局讓 ΔRE 下降，所以滾地球為主的內野側常為負（守方賺）。優化可分離
     （滾地歸內野、飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位。
+    僅一壘有人（<2 出局）時內野側切換階段B DP 優化（釘 1B＋雙殺感知，
+    _solve_if_dp，同 /api/if_optimize 的切換），聯盟基準改用一壘有人切分
+    的聯盟站位、內野出局率＝P(≥1 出局)。
     內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
     （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
     指定 home_team 時外野同 /api/optimize 一般模式：打牆球接殺機率強制 0
@@ -1150,7 +1170,8 @@ def optimize_integrated(req: IntegratedRequest):
     probs_of_opt, runs_of_opt = of_runs(pos_of_opt, mus_eff)
     probs_of_league, runs_of_league = of_runs(pos_of_league, _mus.get(year, {}))
 
-    # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修）──
+    # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修；
+    #    僅一壘有人 <2 出局切換階段B DP 優化，同 /api/if_optimize）──────
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
         _load_if_batter(req.batter_id, year)
 
@@ -1158,25 +1179,45 @@ def optimize_integrated(req: IntegratedRequest):
     if_fids = {p: (req.if_fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(if_fids) if any(if_fids.values()) else None
 
-    bw, mean_w = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table, _delta_re, state)
-    warm = positions_to_params(warm_angles, warm_depths)
-    with _optimize_semaphore:
-        res = optimize_infield(balls_if, _if_bayes_model, n_restarts=0,
-                               extra_starts=[warm], ball_weights=bw,
-                               player_effects=pe)
+    dp_state = ((req.on_1b, req.on_2b, req.on_3b) == (1, 0, 0) and req.outs < 2
+                and _if_dp_out_model is not None)
+    if dp_state:
+        # 階段B：釘 1B hold-runner＋雙殺感知計價（E[ΔRE] 本身即完整口徑）；
+        # 顯示的內野出局率＝P(≥1 出局)，聯盟基準＝一壘有人切分的聯盟站位
+        sol = _solve_if_dp(balls_if, state, warm_angles, warm_depths, pe)
+        if_opt_angles = np.concatenate([[sol["pinned_1b"][0]], sol["angles3"]])
+        if_opt_depths = np.concatenate([[sol["pinned_1b"][1]], sol["depths3"]])
+        lg_angles = np.concatenate([[sol["pinned_1b"][0]], sol["lg3_angles"]])
+        lg_depths = np.concatenate([[sol["pinned_1b"][1]], sol["lg3_depths"]])
+        runs_if_opt = sol["scorer"].expected_re(
+            sol["angles3"], sol["depths3"]) * len(balls_if)
+        runs_if_league = sol["scorer_base"].expected_re(
+            sol["lg3_angles"], sol["lg3_depths"]) * len(balls_if)
+        p_if_opt = sol["scorer"].per_ball_p1(sol["angles3"], sol["depths3"])
+        p_if_league = sol["scorer_base"].per_ball_p1(sol["lg3_angles"], sol["lg3_depths"])
+    else:
+        bw, mean_w = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table,
+                                           _delta_re, state)
+        warm = positions_to_params(warm_angles, warm_depths)
+        with _optimize_semaphore:
+            res = optimize_infield(balls_if, _if_bayes_model, n_restarts=0,
+                                   extra_starts=[warm], ball_weights=bw,
+                                   player_effects=pe)
+        if_opt_angles, if_opt_depths = res["angles"], res["depths"]
 
-    lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
-    lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
-    # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)。
-    # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
-    e_if_opt = mean_w - res["exp_outs"]
-    e_if_league = mean_w - if_expected_outs(
-        _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=bw)
-    runs_if_opt = e_if_opt * len(balls_if)
-    runs_if_league = e_if_league * len(balls_if)
+        lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
+        lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
+        # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)。
+        # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
+        e_if_opt = mean_w - res["exp_outs"]
+        e_if_league = mean_w - if_expected_outs(
+            _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=bw)
+        runs_if_opt = e_if_opt * len(balls_if)
+        runs_if_league = e_if_league * len(balls_if)
 
-    p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths)
-    p_if_opt = predict_p_out(_if_bayes_model, balls_if, res["angles"], res["depths"], pe)
+        p_if_league = predict_p_out(_if_bayes_model, balls_if, lg_angles, lg_depths)
+        p_if_opt = predict_p_out(_if_bayes_model, balls_if,
+                                 res["angles"], res["depths"], pe)
 
     # ── 組裝（七人站位共用 PositionXY；內野 angle/depth → x/y）──────
     def if_xy(angle: float, depth: float) -> PositionXY:
@@ -1211,7 +1252,7 @@ def optimize_integrated(req: IntegratedRequest):
         situation=f"{bases}  {req.outs} out",
         league=pack(pos_of_league, lg_angles, lg_depths, runs_of_league, runs_if_league,
                     probs_of_league, p_if_league),
-        optimized=pack(pos_of_opt, res["angles"], res["depths"], runs_of_opt, runs_if_opt,
+        optimized=pack(pos_of_opt, if_opt_angles, if_opt_depths, runs_of_opt, runs_if_opt,
                        probs_of_opt, p_if_opt),
         of_balls=[BallPoint(x=float(balls_of.iloc[i]["ball_x"]),
                             y=float(balls_of.iloc[i]["ball_y"]),
