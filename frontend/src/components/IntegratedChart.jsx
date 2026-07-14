@@ -128,9 +128,9 @@ function bluesColor(t) {
   return BLUES[BLUES.length - 1][1]
 }
 
-// 同外野頁 seaborn 風格：thresh=0.05（最低 5% 不填色）；層數加密到 16
+// 同外野頁 seaborn 風格：levels=10、thresh=0.05（最低 5% 不填色）
 const DENS_THRESH = 0.05
-const DENS_LEVELS = 16
+const DENS_LEVELS = 10
 const DENS_EDGES = Array.from({ length: DENS_LEVELS },
   (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / (DENS_LEVELS - 1))
 
