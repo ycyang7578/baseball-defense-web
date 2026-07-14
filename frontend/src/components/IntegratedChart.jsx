@@ -107,6 +107,41 @@ function clampXY(x, y) {
 const OF_POSITIONS = ['LF', 'CF', 'RF']
 const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 
+// ── Marching squares：從網格 KDE 取一條等值線的線段集（SVG path 字串）──
+function marchingSquares(grid, gw, gh, level, cell) {
+  const parts = []
+  const val = (ix, iy) => grid[iy * gw + ix]
+  for (let iy = 0; iy < gh - 1; iy++) {
+    for (let ix = 0; ix < gw - 1; ix++) {
+      const tl = val(ix, iy), tr = val(ix + 1, iy)
+      const br = val(ix + 1, iy + 1), bl = val(ix, iy + 1)
+      let c = 0
+      if (tl >= level) c |= 8
+      if (tr >= level) c |= 4
+      if (br >= level) c |= 2
+      if (bl >= level) c |= 1
+      if (c === 0 || c === 15) continue
+      const x = ix * cell, y = iy * cell
+      const t = (a, b) => (level - a) / (b - a)
+      const top    = [x + cell * t(tl, tr), y]
+      const right  = [x + cell, y + cell * t(tr, br)]
+      const bottom = [x + cell * t(bl, br), y + cell]
+      const left   = [x, y + cell * t(tl, bl)]
+      const SEGS = {
+        1: [[left, bottom]], 2: [[bottom, right]], 3: [[left, right]],
+        4: [[top, right]], 5: [[top, right], [left, bottom]],
+        6: [[top, bottom]], 7: [[left, top]], 8: [[left, top]],
+        9: [[top, bottom]], 10: [[top, left], [bottom, right]],
+        11: [[top, right]], 12: [[left, right]], 13: [[bottom, right]],
+        14: [[left, bottom]],
+      }
+      for (const [[x1, y1], [x2, y2]] of SEGS[c])
+        parts.push(`M${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}`)
+    }
+  }
+  return parts.join('')
+}
+
 // popup 接殺機率＝聯盟實證常數（2025 例行賽 98.5% 出局；站哪都接得到，
 // 所以不參與優化）。外野模型算 popup 是 OOD、校準比常數差，勿改回模型算。
 const POPUP_CATCH = 0.985
@@ -120,12 +155,14 @@ export default function IntegratedChart({ data }) {
   // 球種篩選（複選）：滾地→內野球、飛球/平飛→外野球（真實 bb_type 標籤）、高飛→popup
   const [showTypes, setShowTypes] = useState(
     { ground_ball: true, fly_ball: true, line_drive: true, popup: true })
-  // 落點密度模式：把目前可見的球（球種勾選＋機率範圍過濾後）算成藍色密度層
+  // 落點密度模式：把目前可見的球（球種勾選＋機率範圍過濾後）算成網格 KDE，
+  // 同一份網格同時產生藍色填色層與等高線（同外野頁 matplotlib KDE 的呈現）
   const [showDensity, setShowDensity] = useState(false)
   const [densitySrc, setDensitySrc] = useState(null)
+  const [contours, setContours] = useState(null)
 
   useEffect(() => {
-    if (!showDensity || !data) { setDensitySrc(null); return }
+    if (!showDensity || !data) { setDensitySrc(null); setContours(null); return }
     const within = (p) => p * 100 >= probMin && p * 100 <= probMax
     const pts = []
     if (showTypes.ground_ball)
@@ -136,28 +173,54 @@ export default function IntegratedChart({ data }) {
     }
     if (showTypes.popup && within(POPUP_CATCH))
       for (const b of (data.popup_balls || [])) pts.push(clampXY(b.x, b.y))
-    if (pts.length === 0) { setDensitySrc(null); return }
+    if (pts.length === 0) { setDensitySrc(null); setContours(null); return }
 
-    // 每球一個放射漸層藍色 blob，重疊即累積密度（同舊 DensityChart 技法，
-    // 但背景透明疊在球場上）
-    const canvas = document.createElement('canvas')
-    canvas.width = PW
-    canvas.height = PH
-    const ctx = canvas.getContext('2d')
-    const R = 26
+    // 網格 KDE（高斯核）
+    const CELL = 4, SIGMA = 3.4                     // 格 4px、頻寬 ~14px
+    const GW = Math.ceil(PW / CELL) + 1
+    const GH = Math.ceil(PH / CELL) + 1
+    const grid = new Float32Array(GW * GH)
+    const win = Math.ceil(SIGMA * 3)
     for (const [x, y] of pts) {
-      const bx = (x - X0) / (X1 - X0) * PW
-      const by = (Y1 - y) / (Y1 - Y0) * PH
-      const g = ctx.createRadialGradient(bx, by, 0, bx, by, R)
-      g.addColorStop(0,   'rgba(30,64,175,0.16)')
-      g.addColorStop(0.4, 'rgba(30,64,175,0.09)')
-      g.addColorStop(1,   'rgba(30,64,175,0)')
-      ctx.fillStyle = g
-      ctx.fillRect(Math.max(0, bx - R), Math.max(0, by - R),
-                   Math.min(PW, bx + R) - Math.max(0, bx - R),
-                   Math.min(PH, by + R) - Math.max(0, by - R))
+      const gx = ((x - X0) / (X1 - X0) * PW) / CELL
+      const gy = ((Y1 - y) / (Y1 - Y0) * PH) / CELL
+      const ix0 = Math.max(0, Math.floor(gx - win)), ix1 = Math.min(GW - 1, Math.ceil(gx + win))
+      const iy0 = Math.max(0, Math.floor(gy - win)), iy1 = Math.min(GH - 1, Math.ceil(gy + win))
+      for (let iy = iy0; iy <= iy1; iy++)
+        for (let ix = ix0; ix <= ix1; ix++) {
+          const d2 = (ix - gx) ** 2 + (iy - gy) ** 2
+          grid[iy * GW + ix] += Math.exp(-d2 / (2 * SIGMA * SIGMA))
+        }
     }
-    setDensitySrc(canvas.toDataURL('image/png'))
+    let maxV = 0
+    for (let i = 0; i < grid.length; i++) if (grid[i] > maxV) maxV = grid[i]
+
+    // 填色層：小畫布逐格上 alpha，再平滑放大
+    const small = document.createElement('canvas')
+    small.width = GW
+    small.height = GH
+    const sctx = small.getContext('2d')
+    const img = sctx.createImageData(GW, GH)
+    for (let i = 0; i < grid.length; i++) {
+      const v = grid[i] / maxV
+      img.data[i * 4] = 30
+      img.data[i * 4 + 1] = 64
+      img.data[i * 4 + 2] = 175
+      img.data[i * 4 + 3] = Math.round(255 * 0.5 * Math.pow(v, 0.75))
+    }
+    sctx.putImageData(img, 0, 0)
+    const big = document.createElement('canvas')
+    big.width = PW
+    big.height = PH
+    const bctx = big.getContext('2d')
+    bctx.imageSmoothingEnabled = true
+    bctx.imageSmoothingQuality = 'high'
+    bctx.drawImage(small, 0, 0, PW, PH)
+    setDensitySrc(big.toDataURL('image/png'))
+
+    // 等高線：同一份網格取 5 條等值線
+    const levels = [0.15, 0.3, 0.45, 0.6, 0.8]
+    setContours(levels.map(t => marchingSquares(grid, GW, GH, t * maxV, CELL)))
   }, [showDensity, data, showTypes, probMin, probMax])
 
   // 責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）。
@@ -294,9 +357,17 @@ export default function IntegratedChart({ data }) {
       <polygon points={basePts(...B3)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
-      {/* 落點密度層（取代球點；輸入吃球種勾選＋機率範圍過濾） */}
+      {/* 落點密度層＋等高線（取代球點；輸入吃球種勾選＋機率範圍過濾） */}
       {showDensity && densitySrc && (
         <image x={PL} y={PT} width={PW} height={PH} href={densitySrc} />
+      )}
+      {showDensity && contours && (
+        <g transform={`translate(${PL},${PT})`}>
+          {contours.map((d, i) => d && (
+            <path key={i} d={d} fill="none" stroke="#1e3a8a"
+              strokeWidth="0.9" opacity={0.28 + i * 0.13} />
+          ))}
+        </g>
       )}
       {/* 內野高飛（展示用，不參與優化——顏色＝實證常數接殺機率，畫在最底層） */}
       {!showDensity && popup_balls.filter(() => showTypes.popup && inRange(POPUP_CATCH)).map((b, i) => {
