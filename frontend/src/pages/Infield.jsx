@@ -444,7 +444,7 @@ function StatsPanel({ data }) {
                       borderRadius: 7, padding: '8px 16px', minWidth: 120,
                       display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
-                        color: saved > 0 ? '#166534' : '#991b1b', marginBottom: 4 }}>省分</div>
+                        color: saved > 0 ? '#166534' : '#991b1b', marginBottom: 4 }}>多守下幾分</div>
           <div style={{ fontSize: 20, fontWeight: 700,
                         color: saved > 0 ? 'var(--green-600)' : 'var(--red-600)' }}>
             {saved > 0 ? '+' : ''}{saved.toFixed(1)} 分

@@ -238,9 +238,18 @@ def _load_if_fielder_menu() -> None:
                          "has_effects": int(fid) in _if_effects,
                          "oaa": oaa_n[0] if oaa_n else None,
                          "n_balls": oaa_n[1] if oaa_n else None}))
+        def _oaa_rate(o):
+            if o["oaa"] is None or not o["n_balls"]:
+                return None
+            return o["oaa"] / o["n_balls"]
+
+        # OAA/100 降序（同外野選單）；無評價的排最後，再依名字
         for year in opts.values():
             for lst in year.values():
-                lst.sort(key=lambda o: (not o["has_effects"], o["name"]))
+                lst.sort(key=lambda o: (not o["has_effects"],
+                                        -_oaa_rate(o) if _oaa_rate(o) is not None
+                                        else float("inf"),
+                                        o["name"]))
         _if_fielder_opts.clear()
         _if_fielder_opts.update(opts)
         logger.info(f"野手選單: {sorted(_if_fielder_opts)} 年份已載入")

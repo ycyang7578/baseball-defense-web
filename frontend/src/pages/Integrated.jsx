@@ -486,11 +486,11 @@ function CompareStats({ dataA, dataB }) {
           </tr>
         </thead>
         <tbody>
-          {numRow('總省分', sA.runs_saved_total.toFixed(2), sB.runs_saved_total.toFixed(2),
+          {numRow('多守下幾分（總）', sA.runs_saved_total.toFixed(2), sB.runs_saved_total.toFixed(2),
                   sA.runs_saved_total - sB.runs_saved_total)}
-          {numRow('外野省分', sA.runs_saved_of.toFixed(2), sB.runs_saved_of.toFixed(2),
+          {numRow('多守下幾分（外野）', sA.runs_saved_of.toFixed(2), sB.runs_saved_of.toFixed(2),
                   sA.runs_saved_of - sB.runs_saved_of)}
-          {numRow('內野省分', sA.runs_saved_if.toFixed(2), sB.runs_saved_if.toFixed(2),
+          {numRow('多守下幾分（內野）', sA.runs_saved_if.toFixed(2), sB.runs_saved_if.toFixed(2),
                   sA.runs_saved_if - sB.runs_saved_if)}
           <tr><td colSpan={4} style={{ padding: '4px 0' }}>
             <hr style={{ border: 'none', borderTop: '1px solid var(--slate-100)', margin: 0 }} />
