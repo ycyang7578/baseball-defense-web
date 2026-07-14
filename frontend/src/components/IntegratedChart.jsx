@@ -128,9 +128,11 @@ function bluesColor(t) {
   return BLUES[BLUES.length - 1][1]
 }
 
-// 同外野頁 seaborn 參數：levels=10、thresh=0.05（最低 5% 不填色）
+// 同外野頁 seaborn 風格：thresh=0.05（最低 5% 不填色）；層數加密到 16
 const DENS_THRESH = 0.05
-const DENS_EDGES = Array.from({ length: 10 }, (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / 9)
+const DENS_LEVELS = 16
+const DENS_EDGES = Array.from({ length: DENS_LEVELS },
+  (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / (DENS_LEVELS - 1))
 
 // ── Marching squares：從網格 KDE 取一條等值線的線段集（SVG path 字串）──
 function marchingSquares(grid, gw, gh, level, cell) {
@@ -227,7 +229,7 @@ export default function IntegratedChart({ data }) {
     big.height = PH
     const bctx = big.getContext('2d')
     const img = bctx.createImageData(PW, PH)
-    const bandW = (1 - DENS_THRESH) / 9
+    const bandW = (1 - DENS_THRESH) / (DENS_LEVELS - 1)
     for (let py = 0; py < PH; py++) {
       const gy = py / CELL
       const iy = Math.min(GH - 2, Math.floor(gy))
@@ -239,8 +241,8 @@ export default function IntegratedChart({ data }) {
         const v = ((grid[iy * GW + ix] * (1 - fx) + grid[iy * GW + ix + 1] * fx) * (1 - fy)
                    + (grid[(iy + 1) * GW + ix] * (1 - fx) + grid[(iy + 1) * GW + ix + 1] * fx) * fy) / maxV
         if (v < DENS_THRESH) continue
-        const band = Math.min(8, Math.floor((v - DENS_THRESH) / bandW))
-        const [r, g, b] = bluesColor((band + 1) / 9)
+        const band = Math.min(DENS_LEVELS - 2, Math.floor((v - DENS_THRESH) / bandW))
+        const [r, g, b] = bluesColor((band + 1) / (DENS_LEVELS - 1))
         const o = (py * PW + px) * 4
         img.data[o] = r
         img.data[o + 1] = g
