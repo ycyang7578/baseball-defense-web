@@ -191,36 +191,49 @@ export default function IntegratedChart({ data }) {
   useEffect(() => {
     if (!showDensity || !data) { setDensitySrc(null); setContours(null); return }
     const within = (p) => p * 100 >= probMin && p * 100 <= probMax
-    const pts = []
+    // 內外野分開收集、各自歸一化——滾地球的密度峰值遠高於外野，
+    // 共用一個歸一化會把外野的結構全壓進最低色帶（2026-07-14 使用者回報）
+    const ptsIF = []
+    const ptsOF = []
     if (showTypes.ground_ball)
-      for (const b of data.if_balls) if (within(b.p_out_opt)) pts.push(clampXY(b.x, b.y))
+      for (const b of data.if_balls) if (within(b.p_out_opt)) ptsIF.push(clampXY(b.x, b.y))
+    if (showTypes.popup && within(POPUP_CATCH))
+      for (const b of (data.popup_balls || [])) ptsIF.push(clampXY(b.x, b.y))
     for (const b of data.of_balls) {
       if (b.is_wall_ball || (b.bb_type && !showTypes[b.bb_type]) || !within(b.catch_prob)) continue
-      pts.push(clampXY(b.x, b.y))
+      ptsOF.push(clampXY(b.x, b.y))
     }
-    if (showTypes.popup && within(POPUP_CATCH))
-      for (const b of (data.popup_balls || [])) pts.push(clampXY(b.x, b.y))
-    if (pts.length === 0) { setDensitySrc(null); setContours(null); return }
+    if (ptsIF.length + ptsOF.length === 0) { setDensitySrc(null); setContours(null); return }
 
     // 網格 KDE（高斯核）
     const CELL = 4, SIGMA = 3.4                     // 格 4px、頻寬 ~14px
     const GW = Math.ceil(PW / CELL) + 1
     const GH = Math.ceil(PH / CELL) + 1
-    const grid = new Float32Array(GW * GH)
     const win = Math.ceil(SIGMA * 3)
-    for (const [x, y] of pts) {
-      const gx = ((x - X0) / (X1 - X0) * PW) / CELL
-      const gy = ((Y1 - y) / (Y1 - Y0) * PH) / CELL
-      const ix0 = Math.max(0, Math.floor(gx - win)), ix1 = Math.min(GW - 1, Math.ceil(gx + win))
-      const iy0 = Math.max(0, Math.floor(gy - win)), iy1 = Math.min(GH - 1, Math.ceil(gy + win))
-      for (let iy = iy0; iy <= iy1; iy++)
-        for (let ix = ix0; ix <= ix1; ix++) {
-          const d2 = (ix - gx) ** 2 + (iy - gy) ** 2
-          grid[iy * GW + ix] += Math.exp(-d2 / (2 * SIGMA * SIGMA))
-        }
+    const kde = (pts) => {
+      const g = new Float32Array(GW * GH)
+      for (const [x, y] of pts) {
+        const gx = ((x - X0) / (X1 - X0) * PW) / CELL
+        const gy = ((Y1 - y) / (Y1 - Y0) * PH) / CELL
+        const ix0 = Math.max(0, Math.floor(gx - win)), ix1 = Math.min(GW - 1, Math.ceil(gx + win))
+        const iy0 = Math.max(0, Math.floor(gy - win)), iy1 = Math.min(GH - 1, Math.ceil(gy + win))
+        for (let iy = iy0; iy <= iy1; iy++)
+          for (let ix = ix0; ix <= ix1; ix++) {
+            const d2 = (ix - gx) ** 2 + (iy - gy) ** 2
+            g[iy * GW + ix] += Math.exp(-d2 / (2 * SIGMA * SIGMA))
+          }
+      }
+      let m = 0
+      for (let i = 0; i < g.length; i++) if (g[i] > m) m = g[i]
+      return [g, m]
     }
-    let maxV = 0
-    for (let i = 0; i < grid.length; i++) if (grid[i] > maxV) maxV = grid[i]
+    const [gIF, mIF] = kde(ptsIF)
+    const [gOF, mOF] = kde(ptsOF)
+    // 疊合：每格取「各自歸一化後」的較大值 → 值域 [0,1]
+    const grid = new Float32Array(GW * GH)
+    for (let i = 0; i < grid.length; i++)
+      grid[i] = Math.max(mIF > 0 ? gIF[i] / mIF : 0, mOF > 0 ? gOF[i] / mOF : 0)
+    const maxV = 1
 
     // 填色層：分段填色（同 seaborn fill=True 的離散色帶）。逐像素對網格
     // 雙線性取樣→量化到色帶，帶邊界才會像 matplotlib 一樣俐落
