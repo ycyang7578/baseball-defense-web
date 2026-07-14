@@ -207,7 +207,8 @@ class IntegratedRequest(BaseModel):
 class IntegratedSet(BaseModel):
     """一組七人站位與其期望失分（打者該季擊球加總，越低越好）。
 
-    runs_of = Σ(1−p̂)×w_j（外野球）；runs_if = E[ΔRE]×n_gb（滾地球）。
+    完整 ΔRE 口徑（內外野同尺度）：runs_of = Σ[(1−p̂)×w_j＋p̂×ΔRE(out)]、
+    runs_if = E[ΔRE]×n_gb。出局的 ΔRE 為負，所以內野側常為負（守方賺）。
     優化可分離（滾地歸內野/飛球歸外野），runs_total = 兩側相加即聯合口徑。
     league 組＝平均站位＋平均參數；optimized 組掛指定野手參數。"""
     positions:  dict[str, PositionXY]   # keys: LF/CF/RF/1B/2B/3B/SS

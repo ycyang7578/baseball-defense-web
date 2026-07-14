@@ -34,7 +34,7 @@ from src.if_dp_optimize import (DP_POSITIONS, DPScorer, anchored_starts,
 from src.if_optimize import (expected_outs as if_expected_outs,
                              optimize_infield, positions_to_params,
                              predict_p_out)
-from src.if_runvalue import gb_miss_costs, runvalue_ball_weights
+from src.if_runvalue import delta_re_out, gb_miss_costs, runvalue_ball_weights
 from .schemas import (
     BatterInfo, OptimizeRequest, OptimizeResponse,
     BallPoint, ParkCoord, PositionSet, PositionXY, OptimizeStats, FielderInfo,
@@ -1021,9 +1021,10 @@ def _load_batter_popups(batter_id: int, year: int) -> list[PopupBall]:
 def optimize_integrated(req: IntegratedRequest):
     """打者＋壘況 → 七人站位與總省分。
 
-    計價統一為期望失分：外野 = Σ(1−p̂)×w_j（現行 objective_re24）、內野 =
-    E[ΔRE]×n_gb（run-value 權重，src/if_runvalue.py）。優化可分離（滾地歸內野、
-    飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位，省分相加即聯合口徑。
+    計價統一為完整 ΔRE 期望失分（內外野同尺度）：外野 = Σ[(1−p̂)×w_j ＋
+    p̂×ΔRE(out)]、內野 = E[ΔRE]×n_gb（run-value 權重，src/if_runvalue.py）。
+    出局讓 ΔRE 下降，所以滾地球為主的內野側常為負（守方賺）。優化可分離
+    （滾地歸內野、飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位。
     內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
     （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
     指定 home_team 時外野同 /api/optimize 一般模式：打牆球接殺機率強制 0
@@ -1120,12 +1121,20 @@ def optimize_integrated(req: IntegratedRequest):
     except Exception:
         pos_of_league = {"LF": (-130.0, 250.0), "CF": (0.0, 310.0), "RF": (130.0, 250.0)}
 
+    # 外野失分＝完整 ΔRE 口徑（與內野同尺度，2026-07-14 使用者要求）：
+    # 漏接計 w_j、接殺計出局的 ΔRE（跑者不推進、出局+1 近似，同滾地球出局
+    # 的計價；犧牲飛球推進忽略）。只改顯示計價，優化目標不動——run-value
+    # vs 出局率兩目標幾乎同解已驗證（runvalue_objective_rows.csv）
+    dre_out_of = delta_re_out(_re24_table, state)
+
     def of_runs(pos_dict, mus_use):
         probs = np.asarray(compute_ball_catch_probs(
             pos_dict, balls_of, _scalers.get(year, {}), mus_use),
             dtype=float).copy()
         probs[wall_flags] = 0.0                      # 打牆球無論站哪都接不到
-        return probs, float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask]))
+        runs = float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask])
+                     + dre_out_of * probs.sum())
+        return probs, runs
 
     # 基準＝平均站位＋平均參數（群體 mu）；最佳化組才掛指定野手的球員 mu
     probs_of_opt, runs_of_opt = of_runs(pos_of_opt, mus_eff)
