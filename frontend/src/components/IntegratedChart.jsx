@@ -392,18 +392,32 @@ export default function IntegratedChart({ data }) {
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
         </linearGradient>
+        {/* 場地填色的裁切範圍：有球場＝實際牆線多邊形；通用＝400 呎弧扇形 */}
+        <clipPath id="ic-field-clip">
+          {park_boundary ? (
+            <polygon points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
+          ) : (() => {
+            const a = 45.2 * Math.PI / 180
+            const fx = 400 * Math.sin(a), fy = 400 * Math.cos(a)
+            const rPx = 400 * PW / (X1 - X0)
+            return (
+              <path d={`M ${tx(0)},${ty(0)} L ${tx(-fx).toFixed(1)},${ty(fy).toFixed(1)} A ${rPx.toFixed(1)} ${rPx.toFixed(1)} 0 0 1 ${tx(fx).toFixed(1)},${ty(fy).toFixed(1)} Z`} />
+            )
+          })()}
+        </clipPath>
       </defs>
-      {/* 草地扇形 */}
-      <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
-        fill="#e8f2e4" />
+      {/* 草地扇形＋延伸邊線（裁到球場邊界內，超出牆外不填色） */}
+      <g clipPath="url(#ic-field-clip)">
+        <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
+          fill="#e8f2e4" />
+        <line x1={tx(0)} y1={ty(0)} x2={tx(Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
+        <line x1={tx(0)} y1={ty(0)} x2={tx(-Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
+      </g>
       {/* 內野土（本壘到土外緣弧） */}
       <path d={`M ${tx(0)} ${ty(0)} L ${arcPts[0]} L ${arcPts.join(' L ')} Z`} fill="#e7d6bd" />
       {/* 內野草皮方塊 */}
       <polygon points={`${tx(0)},${ty(12)} ${tx(B1[0] - 8.5)},${ty(B1[1] + 3.5)} ${tx(0)},${ty(B2[1] - 5)} ${tx(B3[0] + 8.5)},${ty(B3[1] + 3.5)}`}
         fill="#d9ead3" />
-      {/* 壘線（本壘→一壘/三壘延伸為邊線） */}
-      <line x1={tx(0)} y1={ty(0)} x2={tx(Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
-      <line x1={tx(0)} y1={ty(0)} x2={tx(-Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
       <line x1={tx(B1[0])} y1={ty(B1[1])} x2={tx(B2[0])} y2={ty(B2[1])} stroke="#fff" strokeWidth="2" />
       <line x1={tx(B3[0])} y1={ty(B3[1])} x2={tx(B2[0])} y2={ty(B2[1])} stroke="#fff" strokeWidth="2" />
       {/* 投手丘與壘包 */}
