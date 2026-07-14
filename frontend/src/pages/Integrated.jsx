@@ -267,7 +267,7 @@ export default function Integrated() {
         {/* ── 右側結果區 ── */}
         <div className="app-chart-area" style={s.chartArea}>
           {compareMode && (data || dataB) ? (
-            <div style={{ width: '100%', maxWidth: 1900 }}>
+            <div style={{ width: '100%', maxWidth: 2100 }}>
               <div className="compare-row" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <ChartBox data={data}  park={homeTeam}  label="組合 A" loading={loading} />
                 <ChartBox data={dataB} park={homeTeamB} label="組合 B" loading={loading} />
@@ -275,7 +275,7 @@ export default function Integrated() {
               {data && dataB && !loading && <CompareStats dataA={data} dataB={dataB} />}
             </div>
           ) : (
-            <div style={{ width: '100%', maxWidth: 1280 }}>
+            <div style={{ width: '100%', maxWidth: 1520 }}>
               <div style={{ position: 'relative' }}>
                 {data ? (
                   <>
@@ -317,13 +317,18 @@ export default function Integrated() {
 
 function TitleBar({ data, park }) {
   const picked = ALL_POSITIONS.filter(p => data.fielders && data.fielders[p])
+  const nFly = data.of_balls.filter(b => b.bb_type === 'fly_ball').length
+  const nLd = data.of_balls.filter(b => b.bb_type === 'line_drive').length
+  const counts = (nFly + nLd === data.stats.n_of_balls)
+    ? `飛球 ${nFly} 球＋平飛 ${nLd} 球`
+    : `外野 ${data.stats.n_of_balls} 球`   // 舊資料無 bb_type 時退回合計
   return (
     <div style={{ background: 'white', padding: '12px 18px 0' }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--slate-800)' }}>
         {displayName(data.name)}（{data.year}, {data.stand}打）{park ? ` @ ${park}` : ''}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--slate-400)', marginTop: 2 }}>
-        壘況 {data.situation}・外野 {data.stats.n_of_balls} 球＋滾地 {data.stats.n_gb} 球
+      <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--slate-600)', marginTop: 3 }}>
+        壘況 {data.situation}・{counts}＋滾地 {data.stats.n_gb} 球
         {data.stats.n_popups > 0 && `＋高飛 ${data.stats.n_popups} 球（展示）`}
       </div>
       {picked.length > 0 && (

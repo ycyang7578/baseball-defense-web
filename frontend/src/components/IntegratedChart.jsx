@@ -384,12 +384,22 @@ export default function IntegratedChart({ data }) {
       {nWall > 0 &&
         <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`}
           y={PT + (colorMode === 'prob' ? 158 : 218)} />}
-      <text x={SVG_W - PR + 8} y={PT + (colorMode === 'prob' ? 182 : 242)} fontSize="8.5" fill="#999">
-        <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>
-        <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
-        {popup_balls.length > 0 &&
-          <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
-      </text>
+      {(() => {
+        const nFly = of_balls.filter(b => b.bb_type === 'fly_ball').length
+        const nLd = of_balls.filter(b => b.bb_type === 'line_drive').length
+        const hasType = nFly + nLd === of_balls.length
+        return (
+          <text x={SVG_W - PR + 8} y={PT + (colorMode === 'prob' ? 182 : 242)} fontSize="8.5" fill="#999">
+            {hasType ? <>
+              <tspan x={SVG_W - PR + 8} dy="0">飛球 {nFly} 球</tspan>
+              <tspan x={SVG_W - PR + 8} dy="12">平飛 {nLd} 球</tspan>
+            </> : <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>}
+            <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
+            {popup_balls.length > 0 &&
+              <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
+          </text>
+        )
+      })()}
 
       {/* Tooltip */}
       {tip && (
