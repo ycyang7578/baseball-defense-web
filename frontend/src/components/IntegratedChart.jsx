@@ -49,7 +49,12 @@ function starPts(cx, cy, r) {
 }
 
 const OPT_STYLE = { color: '#7B2FBE', r: 10, dy: +20 }
-const OWNER_COLORS = { LF: '#4472C4', CF: '#27AE60', RF: '#E67E22', null: '#aaa' }
+// 責任歸屬色：外野同外野主頁；內野另配四色（避開星標紫與場地綠）
+const OWNER_COLORS = {
+  LF: '#4472C4', CF: '#27AE60', RF: '#E67E22',
+  '1B': '#D81B60', '2B': '#00ACC1', '3B': '#6D4C41', SS: '#F9A825',
+  null: '#aaa',
+}
 
 function PosMarker({ cx, cy, code, isActive, onClick }) {
   const { color, r, dy } = OPT_STYLE
@@ -122,20 +127,27 @@ export default function IntegratedChart({ data }) {
   const [probMin, setProbMin] = useState(0)          // 0–100 integer
   const [probMax, setProbMax] = useState(100)
 
-  // 外野責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）
-  const ofPositions = data?.optimized?.positions
+  // 責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）。
+  // 外野球在 LF/CF/RF 之間分、滾地球在 1B/2B/3B/SS 之間分（球種已定守備側）
+  const optPositions = data?.optimized?.positions
   const of_balls_all = data?.of_balls
+  const if_balls_all = data?.if_balls
+  const nearestOf = (b, codes) => codes.reduce((best, code) => {
+    const dx = b.x - optPositions[code].x, dy = b.y - optPositions[code].y
+    const d = dx * dx + dy * dy
+    return d < best.d ? { code, d } : best
+  }, { code: null, d: Infinity }).code
   const ballOwner = useMemo(() => {
-    if (!ofPositions || !of_balls_all) return null
-    return of_balls_all.map(b => {
-      if (b.is_wall_ball || b.catch_prob < 0.05) return null
-      return OF_POSITIONS.reduce((best, code) => {
-        const dx = b.x - ofPositions[code].x, dy = b.y - ofPositions[code].y
-        const d = dx * dx + dy * dy
-        return d < best.d ? { code, d } : best
-      }, { code: null, d: Infinity }).code
-    })
-  }, [ofPositions, of_balls_all])
+    if (!optPositions || !of_balls_all) return null
+    return of_balls_all.map(b =>
+      (b.is_wall_ball || b.catch_prob < 0.05) ? null : nearestOf(b, OF_POSITIONS))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optPositions, of_balls_all])
+  const ifBallOwner = useMemo(() => {
+    if (!optPositions || !if_balls_all) return null
+    return if_balls_all.map(b => nearestOf(b, IF_POSITIONS))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optPositions, if_balls_all])
 
   if (!data) return null
   const { optimized, of_balls, if_balls, popup_balls = [], park_boundary = null } = data
@@ -164,8 +176,8 @@ export default function IntegratedChart({ data }) {
     return { x: tx(bx), y: ty(by), lines }
   })() : null
 
-  // 責任歸屬模式下，內野球/高飛淡出讓外野歸屬色突出
-  const dimNonOf = colorMode === 'owner' ? 0.18 : null
+  // 責任歸屬模式下高飛淡出（不參與優化、無歸屬）
+  const dimPopup = colorMode === 'owner' ? 0.18 : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'white' }}>
@@ -180,7 +192,7 @@ export default function IntegratedChart({ data }) {
           background: colorMode === 'owner' ? '#1e40af' : 'white',
           color: colorMode === 'owner' ? 'white' : '#334155',
         }}>
-          {colorMode === 'prob' ? '切換：外野責任歸屬色' : '切換：接殺機率色'}
+          {colorMode === 'prob' ? '切換：責任歸屬色' : '切換：接殺機率色'}
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
           <span>機率範圍</span>
@@ -234,23 +246,30 @@ export default function IntegratedChart({ data }) {
             r={isHov ? 6 : 3.5}
             fill={rdylgn(POPUP_CATCH)}
             stroke={b.is_out ? '#555' : 'white'} strokeWidth={b.is_out ? 0.9 : 0.6}
-            opacity={dimNonOf ?? 0.85}
+            opacity={dimPopup ?? 0.85}
             onMouseEnter={() => setHovered({ kind: 'popup', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 滾地球（顏色 = 最佳化站位下的 P(out)） */}
-      {if_balls.filter(b => inRange(b.p_out_opt)).map((b, i) => {
+      {/* 滾地球（顏色 = P(out) 或責任歸屬） */}
+      {if_balls.map((b, i) => {
+        if (!inRange(b.p_out_opt)) return null
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'if' && hovered.ball === b
+        const owner = ifBallOwner?.[i]
+        const mine = !activePos || owner === activePos
+        const fill = colorMode === 'owner'
+          ? (OWNER_COLORS[owner] ?? OWNER_COLORS.null)
+          : rdylgn(b.p_out_opt)
         return (
           <circle key={`if-${i}`}
             cx={tx(bx)} cy={ty(by)}
             r={isHov ? 6 : 4}
-            fill={rdylgn(b.p_out_opt)}
-            stroke={b.is_out ? '#555' : 'white'} strokeWidth={b.is_out ? 1.1 : 0.6}
-            opacity={dimNonOf ?? 0.85}
+            fill={fill}
+            fillOpacity={mine ? 0.88 : 0.10}
+            stroke={mine ? (b.is_out ? '#555' : 'white') : 'gray'}
+            strokeWidth={mine ? (b.is_out ? 1.1 : 0.6) : 0.2}
             onMouseEnter={() => setHovered({ kind: 'if', ball: b })}
             onMouseLeave={() => setHovered(null)}
             style={{ cursor: 'pointer' }} />
@@ -291,15 +310,11 @@ export default function IntegratedChart({ data }) {
         )
       })}
 
-      {/* 七人站位（最佳化紫星；外野三人可點擊看責任歸屬） */}
-      {OF_POSITIONS.map(p => (
+      {/* 七人站位（最佳化紫星；點任一人高亮其責任球） */}
+      {[...OF_POSITIONS, ...IF_POSITIONS].map(p => (
         <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
           code={p} isActive={activePos === p}
           onClick={() => setActivePos(a => a === p ? null : p)} />
-      ))}
-      {IF_POSITIONS.map(p => (
-        <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
-          code={p} />
       ))}
 
       {/* Legend */}
@@ -324,42 +339,30 @@ export default function IntegratedChart({ data }) {
           </g>
         )
       })() : (() => {
-        // 責任歸屬色說明
+        // 責任歸屬色說明（七人＋其他）
         return (
           <g>
-            {[['LF', OWNER_COLORS.LF], ['CF', OWNER_COLORS.CF], ['RF', OWNER_COLORS.RF],
-              ['其他', OWNER_COLORS.null]].map(([label, color], i) => (
-              <g key={label} transform={`translate(${SVG_W - PR + 10},${PT + 30 + i * 20})`}>
-                <rect width={12} height={12} rx="2.5" fill={color} />
+            {[...OF_POSITIONS, ...IF_POSITIONS, '其他'].map((label, i) => (
+              <g key={label} transform={`translate(${SVG_W - PR + 10},${PT + 30 + i * 19})`}>
+                <rect width={12} height={12} rx="2.5" fill={OWNER_COLORS[label] ?? OWNER_COLORS.null} />
                 <text x={17} y={9.5} fontSize="9" fill="#555">{label}</text>
               </g>
             ))}
-            <text x={SVG_W - PR + 10} y={PT + 124} fontSize="8" fill="#aaa">
-              <tspan x={SVG_W - PR + 10} dy="0">點外野星標</tspan>
-              <tspan x={SVG_W - PR + 10} dy="11">高亮其責任球</tspan>
+            <text x={SVG_W - PR + 10} y={PT + 192} fontSize="8" fill="#aaa">
+              <tspan x={SVG_W - PR + 10} dy="0">點星標高亮</tspan>
+              <tspan x={SVG_W - PR + 10} dy="11">其責任球</tspan>
             </text>
           </g>
         )
       })()}
-      {popup_balls.length > 0 && colorMode === 'prob' &&
-        <LegendItem color={rdylgn(POPUP_CATCH)} shape="circle" label="內野高飛" y={PT + 152} />}
       {nWall > 0 &&
-        <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`} y={PT + 172} />}
-      <text x={SVG_W - PR + 8} y={PT + 196} fontSize="8.5" fill="#999">
+        <LegendItem color="#FF6B00" shape="star" label={`打牆球 (${nWall})`}
+          y={PT + (colorMode === 'prob' ? 158 : 218)} />}
+      <text x={SVG_W - PR + 8} y={PT + (colorMode === 'prob' ? 182 : 242)} fontSize="8.5" fill="#999">
         <tspan x={SVG_W - PR + 8} dy="0">外野 {of_balls.length} 球</tspan>
         <tspan x={SVG_W - PR + 8} dy="12">滾地 {if_balls.length} 球</tspan>
         {popup_balls.length > 0 &&
           <tspan x={SVG_W - PR + 8} dy="12">高飛 {popup_balls.length} 球</tspan>}
-      </text>
-      <text x={SVG_W - PR + 8} y={PT + 244} fontSize="8" fill="#aaa">
-        <tspan x={SVG_W - PR + 8} dy="0">球點＝紀錄座標</tspan>
-        <tspan x={SVG_W - PR + 8} dy="11">（出局≈處理位置</tspan>
-        <tspan x={SVG_W - PR + 8} dy="11">　安打≈撿球位置）</tspan>
-        {popup_balls.length > 0 && <>
-          <tspan x={SVG_W - PR + 8} dy="14">高飛≈99% 接殺</tspan>
-          <tspan x={SVG_W - PR + 8} dy="11">（聯盟實證），</tspan>
-          <tspan x={SVG_W - PR + 8} dy="11">不參與站位優化</tspan>
-        </>}
       </text>
 
       {/* Tooltip */}
