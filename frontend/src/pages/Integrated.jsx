@@ -42,6 +42,7 @@ export default function Integrated() {
   const [gameState, setGameState]   = useState({ on1b: 0, on2b: 0, on3b: 0, outs: 0 })
   const [ofOpts, setOfOpts]         = useState(null)   // pos → options
   const [ifOpts, setIfOpts]         = useState(null)
+  const [minOpp, setMinOpp]         = useState(100)    // 最低守備次數（內外野共用）
 
   const [homeTeam, setHomeTeam]     = useState('')
   const [selOf, setSelOf]           = useState(EMPTY_OF)
@@ -68,9 +69,13 @@ export default function Integrated() {
   useEffect(() => {
     if (year === null) return
     fetchIntegratedBatters(year).then(data => { setBatters(data); setBatterId('') }).catch(console.error)
-    fetchFielders(100, year).then(setOfOpts).catch(() => setOfOpts(null))
     fetchIfFielderOptions(year).then(setIfOpts).catch(() => setIfOpts(null))
   }, [year])
+
+  useEffect(() => {
+    if (year === null) return
+    fetchFielders(minOpp, year).then(setOfOpts).catch(() => setOfOpts(null))
+  }, [year, minOpp])
 
   // 換年份時清掉野手選擇：先前選的球員在新年份可能沒有模型參數
   useEffect(() => {
@@ -150,7 +155,7 @@ export default function Integrated() {
               <SearchSelect
                 options={[
                   { value: '', label: '聯盟平均' },
-                  ...(ifOpts?.[p] || []).filter(f => (f.n_balls || 0) >= 100)
+                  ...(ifOpts?.[p] || []).filter(f => (f.n_balls || 0) >= minOpp)
                     .map(f => ({ value: String(f.player_id), label: fielderLabel(f, 'n_balls') })),
                 ]}
                 value={ifSel[p]}
@@ -228,6 +233,17 @@ export default function Integrated() {
           </Sec>
 
           <Sec title="野手">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <span style={{ fontSize: 10, color: 'var(--slate-400)', whiteSpace: 'nowrap' }}>最低守備次數</span>
+              <input
+                type="range" min={0} max={400} step={25}
+                value={minOpp}
+                onChange={e => setMinOpp(Number(e.target.value))}
+                style={{ flex: 1, accentColor: 'var(--blue-600)' }}
+              />
+              <span style={{ fontSize: 11, color: 'var(--slate-600)', minWidth: 28,
+                             textAlign: 'right', fontWeight: 600 }}>{minOpp}</span>
+            </div>
             <div style={{ fontSize: 9, color: '#cbd5e1', marginBottom: 10, lineHeight: 1.6 }}>
               括號內為模型估計 OAA/100，非 Statcast 官方數值。指定野手時以該球員的守備參數微調站位
             </div>
