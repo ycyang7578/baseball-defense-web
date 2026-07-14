@@ -539,60 +539,61 @@ export default function IntegratedChart({ data }) {
           `滾地 ${if_balls.length}` + (popup_balls.length > 0 ? `・高飛 ${popup_balls.length}` : ''),
         ]
         const isProb = colorMode === 'prob'
-        const H = (isProb ? 100 : 144) + (nWall > 0 ? 16 : 0)
-        const W = 178
-        const LX = PL + PW - W - 8
-        const LY = PT + PH - H - 8
-        let y = 14
+        const W = 140
+        let y = 11
         const rows = []
         // 最佳化站位
         rows.push(
           <g key="star">
-            <polygon points={starPts(16, y, 7)} fill="#7B2FBE" stroke="white" strokeWidth="1" />
-            <text x={28} y={y + 3.5} fontSize="9.5" fill="#555">最佳化站位</text>
+            <polygon points={starPts(13, y, 6)} fill="#7B2FBE" stroke="white" strokeWidth="1" />
+            <text x={23} y={y + 3} fontSize="8.5" fill="#555">最佳化站位</text>
           </g>)
-        y += 14
+        y += 11
         if (isProb) {
           // 水平色階條
           rows.push(
             <g key="cb">
-              <rect x={10} y={y} width={104} height={9}
+              <rect x={8} y={y} width={80} height={8}
                 fill="url(#ic-grad-h)" stroke="#bbb" strokeWidth="0.5" />
-              <text x={10} y={y + 20} fontSize="8" fill="#555">0%</text>
-              <text x={114} y={y + 20} fontSize="8" fill="#555" textAnchor="end">100%</text>
-              <text x={120} y={y + 8} fontSize="8" fill="#555">接殺/出局</text>
+              <text x={8} y={y + 17} fontSize="7.5" fill="#555">0%</text>
+              <text x={88} y={y + 17} fontSize="7.5" fill="#555" textAnchor="end">100%</text>
+              <text x={92} y={y + 7.5} fontSize="7.5" fill="#555">接殺/出局</text>
             </g>)
-          y += 26
+          y += 22
         } else {
           // 七人歸屬色塊（兩欄）
           rows.push(
             <g key="own">
               {[...OF_POSITIONS, ...IF_POSITIONS, '其他'].map((label, i) => (
-                <g key={label} transform={`translate(${10 + (i % 2) * 88},${y + Math.floor(i / 2) * 17})`}>
-                  <rect width={10} height={10} rx="2" fill={OWNER_COLORS[label] ?? OWNER_COLORS.null} />
-                  <text x={14} y={8.5} fontSize="8.5" fill="#555">{label}</text>
+                <g key={label} transform={`translate(${8 + (i % 2) * 66},${y + Math.floor(i / 2) * 14})`}>
+                  <rect width={9} height={9} rx="2" fill={OWNER_COLORS[label] ?? OWNER_COLORS.null} />
+                  <text x={12.5} y={7.5} fontSize="8" fill="#555">{label}</text>
                 </g>
               ))}
-              <text x={10} y={y + 4 * 17 + 8} fontSize="8" fill="#999">點星標高亮其責任球</text>
+              <text x={8} y={y + 4 * 14 + 7} fontSize="7.5" fill="#999">點星標高亮其責任球</text>
             </g>)
-          y += 4 * 17 + 16
+          y += 4 * 14 + 13
         }
         rows.push(
-          <text key="counts" x={10} y={y + 8} fontSize="8.5" fill="#777">
-            <tspan x={10} dy="0">{countLines[0]}</tspan>
-            <tspan x={10} dy="12">{countLines[1]}</tspan>
+          <text key="counts" x={8} y={y + 7} fontSize="8" fill="#777">
+            <tspan x={8} dy="0">{countLines[0]}</tspan>
+            <tspan x={8} dy="11">{countLines[1]}</tspan>
           </text>)
-        y += 30
+        y += 24
         if (nWall > 0) {
           rows.push(
             <g key="wall">
-              <polygon points={starPts(16, y, 6)} fill="#FF6B00" stroke="black" strokeWidth="0.4" />
-              <text x={26} y={y + 3} fontSize="8.5" fill="#555">打牆球 ({nWall})</text>
+              <polygon points={starPts(13, y + 2, 5.5)} fill="#FF6B00" stroke="black" strokeWidth="0.4" />
+              <text x={22} y={y + 5} fontSize="8" fill="#555">打牆球 ({nWall})</text>
             </g>)
+          y += 13
         }
+        const H = y + 4
+        const LX = PL + PW - W - 8
+        const LY = PT + PH - H - 8
         return (
           <g transform={`translate(${LX},${LY})`}>
-            <rect width={W} height={H} rx="6" fill="white" fillOpacity="0.88"
+            <rect width={W} height={H} rx="5" fill="white" fillOpacity="0.88"
               stroke="#ccc" strokeWidth="0.8" />
             {rows}
           </g>
