@@ -12,7 +12,7 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 
-from _savant_leaderboard import fetch_outfield_leaderboard_raw
+from _savant_leaderboard import fetch_leaderboard_raw
 
 POS_MAP = {"7": "LF", "8": "CF", "9": "RF"}
 
@@ -27,7 +27,7 @@ INT_COLS = [
 
 
 def fetch_leaderboard(year: int) -> pd.DataFrame:
-    raw = fetch_outfield_leaderboard_raw(year)
+    raw = fetch_leaderboard_raw("outfield_directional_outs_above_average", {"year": year})
 
     df = pd.DataFrame({
         "player_id":          raw["resp_fielder_id"].astype(int),

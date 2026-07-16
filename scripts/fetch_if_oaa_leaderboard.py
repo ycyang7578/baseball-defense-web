@@ -2,23 +2,19 @@
 
 Source: GET /leaderboard/outs_above_average?type=Fielder&pos=if&startYear=&endYear=
 The CSV export omits attempt counts, so we parse the page's `var data` JSON instead
-(same approach as fetch_oaa_leaderboard.py). The JSON's year field is empty; we fill
-it from the requested year.
+via _savant_leaderboard.fetch_leaderboard_raw (same approach as fetch_oaa_leaderboard.py).
+The JSON's year field is empty; we fill it from the requested year.
 """
-import json
-import re
 import sys
 from pathlib import Path
 
 import pandas as pd
 import psycopg2
-import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 
-BASE_URL = "https://baseballsavant.mlb.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+from _savant_leaderboard import fetch_leaderboard_raw
 
 # (df欄位, JSON欄位) 對照；INSERT 欄位順序也依這裡
 COLUMNS = [
@@ -45,18 +41,11 @@ FLOAT_COLS = {"actual_success_rate", "adj_estimated_success_rate"}
 
 
 def fetch_leaderboard(year: int) -> pd.DataFrame:
-    r = requests.get(
-        f"{BASE_URL}/leaderboard/outs_above_average",
-        params={"type": "Fielder", "startYear": year, "endYear": year, "split": "no",
-                "team": "", "range": "year", "min": 1, "pos": "if", "roles": "",
-                "viz": "hide"},
-        headers=HEADERS, timeout=30,
-    )
-    r.raise_for_status()
-    match = re.search(r"var data\s*=\s*(\[.*?\]);", r.text, re.DOTALL)
-    if not match:
-        raise ValueError("找不到 leaderboard var data，頁面結構可能已更新")
-    raw = pd.DataFrame(json.loads(match.group(1)))
+    raw = fetch_leaderboard_raw("outs_above_average", {
+        "type": "Fielder", "startYear": year, "endYear": year, "split": "no",
+        "team": "", "range": "year", "min": 1, "pos": "if", "roles": "",
+        "viz": "hide",
+    })
 
     df = pd.DataFrame({dst: pd.to_numeric(raw[src], errors="coerce")
                        if dst not in ("player_name", "primary_pos") else raw[src]

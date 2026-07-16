@@ -16,14 +16,14 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from _savant_leaderboard import BASE_URL, HEADERS, fetch_outfield_leaderboard_raw
+from _savant_leaderboard import BASE_URL, HEADERS, fetch_leaderboard_raw
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "savant_fielding"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def fetch_leaderboard(year: int) -> pd.DataFrame:
-    raw = fetch_outfield_leaderboard_raw(year)
+    raw = fetch_leaderboard_raw("outfield_directional_outs_above_average", {"year": year})
     return pd.DataFrame({
         "player_id": raw["resp_fielder_id"].astype(int),
         "player_name": raw["name_display_last_first"],
