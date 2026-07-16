@@ -1387,9 +1387,8 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     if not mask.any():
         raise HTTPException(422, "No balls with positive w_j for this game state")
 
-    # ── RE24 狀態期望值 ──────────────────────────────────────────
-    re_table, _ = load_re24(PRE_DIR)
-    re_state    = float(re_table.get((req.on_1b, req.on_2b, req.on_3b, req.outs), 0.0))
+    # ── RE24 狀態期望值（用啟動時已載入的快取，不重新讀檔）─────────
+    re_state = float(_re24_table.get((req.on_1b, req.on_2b, req.on_3b, req.outs), 0.0))
 
     # ── 指定外野手（player-level 能力）；未指定的位置用聯盟平均 group mu ──
     fielder_mus = None
