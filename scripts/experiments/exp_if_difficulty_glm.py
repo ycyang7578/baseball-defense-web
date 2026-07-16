@@ -17,7 +17,7 @@
 輸出：2025 樣本外 AUC/Brier/校準 + 最佳 GLM 的官方 OAA 相關（qualified R、
 分位置、scale），供拍板是否換入生產。
 
-執行：python scripts/exp_if_difficulty_glm.py
+執行：python scripts/experiments/exp_if_difficulty_glm.py
 """
 import sys
 from pathlib import Path
@@ -27,7 +27,7 @@ import pandas as pd
 import psycopg2
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.config import DSN
 from src.if_dataset import build_gb_dataset
 from src.if_eval import aggregate_players, score_test_year

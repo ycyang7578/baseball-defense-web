@@ -9,7 +9,7 @@
   p1 解 → DP 解   ：雙殺感知的淨貢獻    [關鍵數字]
 
 逐打者 checkpoint，中斷後重跑續算。
-執行：python scripts/exp_if_dp_decompose.py
+執行：python scripts/experiments/exp_if_dp_decompose.py
 """
 import sys
 from pathlib import Path
@@ -18,7 +18,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.if_dp_optimize import (DPScorer, dp_delta_re,
                                 league_average_positions_on1b,
                                 league_median_runner_speed,
@@ -30,7 +30,7 @@ from src.re24 import load_re24
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 OUTS = 0
-BASE = Path(__file__).resolve().parent.parent
+BASE = Path(__file__).resolve().parent.parent.parent
 _MODEL_DIR = BASE / "models" / "if_gb" / "on1b"
 VALID_ROWS = _MODEL_DIR / "validation_dp_rows_2025.csv"
 CKPT = _MODEL_DIR / "decompose_p1_rows.csv"

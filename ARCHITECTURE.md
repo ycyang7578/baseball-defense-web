@@ -437,7 +437,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   - **B5 跨年驗證＋增益分解（2026-07-13 完成，n=212、一壘有人 0 出局、皆評
     2025 球、分/GB）**：DP 解 vs 聯盟一壘有人站位 **+0.0723**（450GB≈+32.5 分、
     100% 打者正增益、t=51.8、保留率 83.4%——結構性成分大所以跨年保留率比
-    無人在壘的 65% 高）。分解（exp_if_dp_decompose.py，p1-only 中間基準）：
+    無人在壘的 65% 高）。分解（scripts/experiments/exp_if_dp_decompose.py，p1-only 中間基準）：
     | 成分 | 分/GB |
     |---|---|
     | 聯盟 → 無壘況解（照搬空壘佈局） | **−0.0173**（1B 被拉走留洞，50% 打者為負、左打最慘 −0.24） |
@@ -502,8 +502,8 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   「指定野手 → 站位建議跟著變」。前提檢定：能力必須與幾何交互才會改變 argmax（純截距
   不動最佳解）。用 ad_eff = ad_min × scale(能力)^γ 掃描 γ，兩種能力 proxy 都是 γ=0 最佳
   且單調變差：①sprint speed（train 2021–23→val 2024，league/within 兩變體，
-  `scripts/exp_if_speed_scaling.py`）②前一年官方 OAA rate 含橫向分解
-  （球 2024←proxy 2023→球 2025←proxy 2024，無洩漏，`scripts/exp_if_oaa_scaling.py`）。
+  `scripts/experiments/exp_if_speed_scaling.py`）②前一年官方 OAA rate 含橫向分解
+  （球 2024←proxy 2023→球 2025←proxy 2024，無洩漏，`scripts/experiments/exp_if_oaa_scaling.py`）。
   解讀：野手整體轉換力確實有差（評價 R=0.52），但那是截距性質（手套/轉傳/站位品質）；
   會改變站位的「橫向 range × 幾何」成分在 MLB 選材壓縮（sprint P10–P90 僅 ±6%）＋
   賽季平均站位誤差（ad_min 本身帶噪，同 SS R=0.33 根源）下量測不到。
@@ -518,7 +518,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   r=0.225。產物（scripts/export_if_bayes.py）：後驗平均匯出成 sklearn pipeline
   （drop-in 換 GLM，等價 2e-16）＋ IF_player_effects.csv（578 位野手 alpha/g）。
   優化器：`optimize_infield(..., player_effects=)`，效應加在最近野手、個人化時槽位
-  綁定不重排（tests 9/9）。**量級實驗**（exp_if_personalized_positions.py v2，
+  綁定不重排（tests 9/9）。**量級實驗**（scripts/experiments/exp_if_personalized_positions.py v2，
   25 打者）：外插診斷乾淨（ad_min 位移 <0.2°，優化器沒鑽 g·ad_z 線性外插漏洞）；
   但 repositioning gain 中位僅 +0.0002~+0.0006/GB（450GB ≈ +0.1~0.3 出局/季），
   站位移動中位 23-28 呎是**平坦地形的等值漂移**（gain 小、移動大 = 高原上換點）。
@@ -534,7 +534,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     先毀（3.1hr 全失）——已改為**取樣後立即存檔再列印**（b68de4f），長跑腳本啟動
     一律帶 PYTHONIOENCODING=utf-8
 - **Tango 競速結構特徵實驗（2026-07-12，backlog 關案：零增益）**：
-  `scripts/exp_if_structural_features.py`（訓練 2023–24、2025 樣本外）。
+  `scripts/experiments/exp_if_structural_features.py`（訓練 2023–24、2025 樣本外）。
   race_margin = hp_to_1b − (c·ball_time + throw_dist/v)，c/v 訓練集 grid search；
   required_speed = lat_ft/ball_time。結果：①加在現行 GLM 上 +0.0001 AUC（採納線
   0.003，關案）——spline+tensor 交互已吸收全部競速結構訊號；②純結構 2–4 特徵版
@@ -544,7 +544,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   但多為例行出局），c=3.0/v=140 撞 grid 邊界即症狀。官方三段結構成立的前提是逐球
   實測時間且競速條件於「已攔到」，公開資料無條件迴歸重建不出來（論文可用的負結果）。
   同時確認 margin<0 剔除訓練集的想法不可行（那群球 82.7% 是出局）
-- **特徵形式消融（2026-07-12）**：`scripts/exp_if_drop_features.py`（訓練 2023–24、
+- **特徵形式消融（2026-07-12）**：`scripts/experiments/exp_if_drop_features.py`（訓練 2023–24、
   選擇驗證 2023→2024、最終 2025）。
   ①**stand_R 已移除**（使用者決定）：2025 AUC −0.0006、校準反而略好——hp_to_1b 是
   實測本壘到一壘秒數、已含左打站位優勢；OPTIMIZER_FEATURES 與 _FastGLMObjective
@@ -572,7 +572,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   場地幾何不隨打者鏡像）+ w_j 計價（對齊外野 compute_w_j 慣例）+ ΔRE(out)
   跑者不推進近似（無人在壘精確）。E[ΔRE] = mean(w_j) − mean(p×(w_j−ΔRE_out))，
   optimize 傳 ball_weights = w_j−ΔRE_out。
-  **實驗結論（2026-07-13，`exp_if_runvalue_objective.py`，n=212、2025 樣本外）**：
+  **實驗結論（2026-07-13，`scripts/experiments/exp_if_runvalue_objective.py`，n=212、2025 樣本外）**：
   Melville「wOBA 目標連出局都更好」（樣本內）在跨年設定**不重現**——兩目標實務
   無差（出局率差 mean −0.00010、失分差 mean +0.00001，450 GB≈0 分/−0.05 出局，
   逐列在 `models/if_gb/runvalue_objective_rows.csv`）。含意：run-value 計價對出局
@@ -589,7 +589,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   outs 目標 +4.80，再次確認兩目標等價。
   階段B（有人在壘 out 模型 force/DP）另立研究
 - **評價用難度模型改為可解釋 GLM（2026-07-12，使用者決定：不用無法說明的模型）**：
-  `scripts/exp_if_difficulty_glm.py` → `make_difficulty_glm()` 進生產（if_model.py），
+  `scripts/experiments/exp_if_difficulty_glm.py` → `make_difficulty_glm()` 進生產（if_model.py），
   GBM 降為 benchmark。特徵：spray 左打鏡像（Melville 同款）+ spray(8 節點)/LA/EV/hp
   splines + spray×EV、spray×hp 交互——評價不搬野手、無反事實需求，內生性禁令不適用，
   spray 與彈性形狀在此全部合法。實測（全量球群 2023-24→2025）：逐球 AUC 0.770 vs

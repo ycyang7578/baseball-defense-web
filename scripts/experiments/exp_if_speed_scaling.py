@@ -11,7 +11,7 @@
 2025 只在選定後最終評估碰一次。安慰劑對照：v 在同 (位置, 年) 內隨機重排，
 若 γ 增益不消失代表是假訊號。
 
-執行：python scripts/exp_if_speed_scaling.py
+執行：python scripts/experiments/exp_if_speed_scaling.py
 """
 import sys
 from pathlib import Path
@@ -21,7 +21,7 @@ import pandas as pd
 import psycopg2
 from sklearn.metrics import log_loss, roc_auc_score
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.config import DSN
 from src.if_dataset import INFIELD_COLS, build_gb_dataset
 from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm

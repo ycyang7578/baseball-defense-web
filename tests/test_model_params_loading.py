@@ -19,6 +19,10 @@ def test_load_model_params_returns_scaler_and_full_mu_dict(pos):
 
 
 def test_resolve_model_dir_uses_position_specific_files_when_present():
+    # 這裡只測 _resolve_model_dir 本身的 fallback 優先順序（低階函式行為）。
+    # production 呼叫端（api/main.py、optimize_positions）一律明確傳 "OF"，
+    # 不依賴這個「有分位置目錄就優先用」的偏好——曾因此讓優化器與顯示層
+    # 在 2025 用兩套曲面，見 ARCHITECTURE.md「外野優化器曲面 bug」。
     d, prefix = _resolve_model_dir("CF", MODELS_DIR)
 
     assert prefix == "CF"
@@ -39,8 +43,10 @@ def test_resolve_model_dir_falls_back_to_unified_of_when_position_missing(tmp_pa
 
 
 def test_load_player_params_returns_same_key_structure_as_group_mu():
-    # "Tucker, Kyle" 是 CF 位置 player-level 參數裡實際存在的球員（models/2025/CF/CF_summary_players.csv）
-    player_dict = load_player_params("CF", "Tucker, Kyle", MODELS_DIR)
+    # api/main.py 呼叫 load_player_params 一律傳 "OF"（統一模型，見 optimize_positions
+    # 的「模型參數口徑」決策），這裡跟著測 production 實際走的路徑，而不是舊的分位置模型。
+    # "Tucker, Kyle" 在 models/2025/OF/OF_summary_players.csv 裡實際存在。
+    player_dict = load_player_params("OF", "Tucker, Kyle", MODELS_DIR)
 
     assert set(player_dict.keys()) == MU_KEYS
     assert all(isinstance(v, float) for v in player_dict.values())
@@ -48,4 +54,4 @@ def test_load_player_params_returns_same_key_structure_as_group_mu():
 
 def test_load_player_params_raises_key_error_for_unknown_player():
     with pytest.raises(KeyError):
-        load_player_params("CF", "Definitely Not A Real Player Name", MODELS_DIR)
+        load_player_params("OF", "Definitely Not A Real Player Name", MODELS_DIR)

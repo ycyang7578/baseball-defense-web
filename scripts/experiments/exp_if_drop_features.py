@@ -3,7 +3,7 @@
 使用者提議精簡特徵（2026-07-12）。訓練 2023-24、2025 樣本外，
 判準沿用結構特徵實驗：AUC 差 <0.003 視為等價、校準不得惡化。
 
-執行：python scripts/exp_if_drop_features.py
+執行：python scripts/experiments/exp_if_drop_features.py
 """
 import sys
 from pathlib import Path
@@ -16,7 +16,7 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import SplineTransformer, StandardScaler
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.if_dataset import build_gb_dataset
 
 TRAIN_YEARS = [2023, 2024]

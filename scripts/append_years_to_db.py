@@ -7,7 +7,6 @@ Usage:
     python append_years_to_db.py 2017 2018 2019
     python append_years_to_db.py --positioning-only 2017 2018 2019
 """
-import io
 import sys
 from pathlib import Path
 
@@ -17,16 +16,10 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 
+from _pg_load import copy_dataframe as _copy
+from _pg_load import dedupe_positioning
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
-
-
-def _copy(conn, table: str, df: pd.DataFrame) -> None:
-    buf = io.StringIO()
-    df.to_csv(buf, index=False, header=False, na_rep="")
-    buf.seek(0)
-    with conn.cursor() as cur:
-        cur.copy_expert(f"COPY {table} FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-    conn.commit()
 
 
 def append_statcast(conn, year: int) -> None:
@@ -57,9 +50,7 @@ def append_positioning(conn, year: int) -> None:
     if deleted:
         print(f"[delete positioning] {year}: removed {deleted} existing rows")
     df = pd.read_parquet(path)
-    df = df.sort_values("pa", ascending=False).drop_duplicates(
-        subset=["fielder_id", "season", "position"], keep="first"
-    )
+    df = dedupe_positioning(df)
     _copy(conn, "fielder_positioning", df)
     print(f"[loaded positioning] {year}: {len(df):,} rows")
 

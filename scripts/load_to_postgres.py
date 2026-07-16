@@ -3,7 +3,6 @@
 Re-runnable: each table is TRUNCATEd before reload, so this always rebuilds the DB
 from data/raw/ from scratch (e.g. on a fresh machine).
 """
-import io
 import sys
 from pathlib import Path
 
@@ -13,17 +12,11 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 
+from _pg_load import copy_dataframe as _copy
+from _pg_load import dedupe_positioning
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 YEARS = range(2020, 2026)
-
-
-def _copy(conn, table: str, df: pd.DataFrame) -> None:
-    buf = io.StringIO()
-    df.to_csv(buf, index=False, header=False, na_rep="")
-    buf.seek(0)
-    with conn.cursor() as cur:
-        cur.copy_expert(f"COPY {table} FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-    conn.commit()
 
 
 def load_statcast(conn) -> None:
@@ -44,10 +37,7 @@ def load_fielder_positioning(conn) -> None:
     for year in YEARS:
         path = DATA_DIR / "positioning" / f"{year}.parquet"
         df = pd.read_parquet(path)
-        # 同名球員轉隊會有多筆同位置同年資料，保留出賽數較多的球隊紀錄
-        df = df.sort_values("pa", ascending=False).drop_duplicates(
-            subset=["fielder_id", "season", "position"], keep="first"
-        )
+        df = dedupe_positioning(df)
         _copy(conn, "fielder_positioning", df)
         print(f"[loaded] fielder_positioning {year}: {len(df):,} rows")
 
@@ -62,9 +52,7 @@ def load_fielder_positioning_on1b(conn) -> None:
         if not path.exists():
             continue
         df = pd.read_parquet(path)
-        df = df.sort_values("pa", ascending=False).drop_duplicates(
-            subset=["fielder_id", "season", "position"], keep="first"
-        )
+        df = dedupe_positioning(df)
         _copy(conn, "fielder_positioning_on1b", df)
         print(f"[loaded] fielder_positioning_on1b {year}: {len(df):,} rows")
 

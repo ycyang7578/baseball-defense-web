@@ -12,7 +12,7 @@
 
 逐打者 checkpoint（這台機器會 BSOD），中斷後重跑同指令續算。
 
-執行：python scripts/exp_if_runvalue_objective.py
+執行：python scripts/experiments/exp_if_runvalue_objective.py
 """
 import sys
 from pathlib import Path
@@ -22,14 +22,14 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.if_optimize import expected_outs, fetch_batter_gbs, optimize_infield
 from src.if_runvalue import (XB_FEATURES, delta_re_out, fetch_gb_hits,
                              gb_miss_costs, make_gb_xb_model,
                              runvalue_ball_weights)
 from src.re24 import load_re24
 
-BASE = Path(__file__).resolve().parent.parent
+BASE = Path(__file__).resolve().parent.parent.parent
 MODEL = BASE / "models" / "if_gb" / "bayes" / "if_bayes_group_pipeline.joblib"
 VALID_ROWS = BASE / "models" / "if_gb" / "validation_rows_2025.csv"
 CKPT = BASE / "models" / "if_gb" / "runvalue_objective_rows.csv"

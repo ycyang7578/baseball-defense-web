@@ -12,7 +12,7 @@ v1 教訓：不同效應設定的 exp_outs 不可直接相減（g 的 ad_z 中�
 陣容設定：全隊 g=P90 / 全隊 g=P10 / 只有 SS 槽 g=P90（單槽解讀）。
 25 位 2025 年 GB 最多的打者。
 
-執行：python scripts/exp_if_personalized_positions.py
+執行：python scripts/experiments/exp_if_personalized_positions.py
 """
 import json
 import sys
@@ -23,13 +23,13 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.config import DSN
 from src.if_optimize import (expected_outs, fetch_batter_gbs,
                              league_average_positions, optimize_infield,
                              positions_to_params)
 
-BAYES_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb" / "bayes"
+BAYES_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "if_gb" / "bayes"
 YEAR = 2025
 N_BATTERS = 25
 N_RESTARTS = 20

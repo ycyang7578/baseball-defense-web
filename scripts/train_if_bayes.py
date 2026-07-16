@@ -6,7 +6,7 @@
   交互），品質對齊 GLM（2025 AUC 0.753），不因貝葉斯化犧牲非線性
 - 球員層（非中心化）：alpha_j（隨機截距=整體轉換力）＋ g_j×ad_z（隨機斜率=
   range 形狀）。事前已知：γ 掃描顯示外部 proxy 的 range 訊號測不到
-  （exp_if_speed_scaling / exp_if_oaa_scaling），外野自己的斜率 shrinkage 比值
+  （scripts/experiments/exp_if_speed_scaling / scripts/experiments/exp_if_oaa_scaling），外野自己的斜率 shrinkage 比值
   也 <1（beta_dist 0.65）——預期 g_j 會被 shrink 到很小，靠 shrinkage 當安全網，
   這是使用者知情後的方向決定
 

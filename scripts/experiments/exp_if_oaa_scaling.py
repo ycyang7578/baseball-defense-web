@@ -12,7 +12,7 @@ OAA rate 在同 primary_pos-年內的 z 分數（proxy 永遠取球年份的前�
 （proxy 2024）。此掃描即最終答案（事前註冊 γ 網格，不再調），若有改善加跑
 安慰劑（z 同位置-年內重排）。
 
-執行：python scripts/exp_if_oaa_scaling.py
+執行：python scripts/experiments/exp_if_oaa_scaling.py
 """
 import sys
 from pathlib import Path
@@ -22,7 +22,7 @@ import pandas as pd
 import psycopg2
 from sklearn.metrics import log_loss, roc_auc_score
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.config import DSN
 from src.if_dataset import INFIELD_COLS, build_gb_dataset
 from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm

@@ -89,11 +89,11 @@ def fetch_year(year: int, sleep_sec: float = 1.0) -> None:
 
 def reload_db(years: list[int]) -> None:
     """將指定年份的 parquet 追加進 savant_fielding（不 TRUNCATE，只插入缺少的年份）。"""
-    import io
     import sys
     import psycopg2
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src.config import DSN
+    from _pg_load import copy_dataframe
     with psycopg2.connect(DSN) as conn:
         for year in years:
             path = OUTPUT_DIR / f"{year}.parquet"
@@ -105,12 +105,7 @@ def reload_db(years: list[int]) -> None:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM savant_fielding WHERE game_date >= %s AND game_date < %s",
                             (f"{year}-01-01", f"{year+1}-01-01"))
-            buf = io.StringIO()
-            df.to_csv(buf, index=False, header=False, na_rep="")
-            buf.seek(0)
-            with conn.cursor() as cur:
-                cur.copy_expert("COPY savant_fielding FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-            conn.commit()
+            copy_dataframe(conn, "savant_fielding", df)
             print(f"[db] savant_fielding {year}: {len(df):,} rows loaded")
 
 

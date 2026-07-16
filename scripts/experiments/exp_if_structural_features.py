@@ -17,7 +17,7 @@ required_speed = lat_ft / ball_time：野手到位所需橫移速度（官方「
 判準（事先定）：結構配置落後 A 在 0.003 AUC 內且校準不惡化 → 可採納精簡版；
 S4-S3 < 0.003 → launch_speed 可拿掉。
 
-執行：python scripts/exp_if_structural_features.py
+執行：python scripts/experiments/exp_if_structural_features.py
 """
 import sys
 from pathlib import Path
@@ -29,7 +29,7 @@ from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.if_dataset import build_gb_dataset
 from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm
 

@@ -9,7 +9,7 @@
    位置固定情境下的聯盟平均難度模型（xBA 式），spray 位置模式合法且應該用；
    評價不搬野手、無反事實需求，內生性禁令（raw spray/彈性形狀）不適用。
    **2026-07-12 起改用可解釋的 spline GLM 取代 GBM**（使用者決定：不用無法
-   說明的模型，接受準確度代價）。實測代價（exp_if_difficulty_glm.py，
+   說明的模型，接受準確度代價）。實測代價（scripts/experiments/exp_if_difficulty_glm.py，
    全量滾地球 2023-24→2025）：逐球 AUC 0.770 vs GBM 0.824，但評價是數百球
    加總，qualified R 僅 0.525→0.514、scale 同樣健康（SD 8.3 vs 官方 6.9）。
    特徵工程：spray 左打鏡像（Melville 同款）+ spray/LA/EV/hp splines +
@@ -31,7 +31,7 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 
 # 優化用 GLM 的輸入欄位（野手相對幾何 + 球質 + 跑者）
 # stand_R 於 2026-07-12 移除：hp_to_1b 是實測本壘到一壘秒數、已含左打站位優勢，
-# 消融顯示 stand_R 冗餘（2025 AUC −0.0006、校準略好，exp_if_drop_features.py）
+# 消融顯示 stand_R 冗餘（2025 AUC −0.0006、校準略好，scripts/experiments/exp_if_drop_features.py）
 OPTIMIZER_FEATURES = ["ad_min", "ball_time", "launch_angle", "launch_speed",
                       "throw_dist", "hp_to_1b"]
 # 評價用 GBM 的輸入欄位（無任何野手資訊）
@@ -47,7 +47,7 @@ class FielderGeometryFeatures(BaseEstimator, TransformerMixin):
     throw_dist/hp_to_1b **刻意維持線性**：throw_dist 是攔截幾何（spray×深度）的
     確定函數，給彈性形狀會從後門重新編碼被排除的 raw spray 區域訊號（2026-07-12
     實驗：throw_dist spline 單獨 +0.012 AUC，但偏效應呈守位身分的波浪、105 呎谷
-    對應 2B/SS 交界的中間地帶——優化器會追假凸起，見 exp_if_drop_features.py）。
+    對應 2B/SS 交界的中間地帶——優化器會追假凸起，見 scripts/experiments/exp_if_drop_features.py）。
     交互作用（2024 驗證選定）：
     - tensor spline(ad_min)×spline(ball_time)：強襲球正面 vs 慢滾球遠處是不同的 play
     - spline(ad_min)×launch_speed
