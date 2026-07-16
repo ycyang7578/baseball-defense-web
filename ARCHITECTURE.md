@@ -41,8 +41,8 @@ figures/validation_scatter_v2.png          同上，改良版視覺設計（y=x 
 figures/reliability_diagram.png            Reliability Diagram（自用，勿放入 web）
 models/2025/OF/                            定案模型（合併外野手，speed, cos, sin, fielder_dist；訓練年 2021–2024）
 models/2025/{LF,CF,RF}/                   已棄用的分位置模型（史料對照用，生產路徑不讀）
-scripts/sql/                               四張資料表的 CREATE TABLE DDL
-tests/                                      pytest 測試（51 個，`python -m pytest tests/ -v`）
+scripts/sql/                               資料表的 CREATE TABLE DDL（13 個檔案，隨內野擴展增加）
+tests/                                      pytest 測試（91 個，`python -m pytest tests/ -v`）
                                             預設跳過標 @pytest.mark.integration 的測試（見 pytest.ini）
 pytest.ini                                  定義 integration marker，預設 -m "not integration"
 ```
@@ -755,6 +755,23 @@ OAA 排名頁（`src/pages/OaaRankings.jsx`，`/rankings`）：
   後到的請求排隊等待+執行）。
   **注意：semaphore 只解決「互相拖慢」，沒有解決「總運算量」**——比較模式最壞情況（雙邊都跑 no_park+with_park）
   仍需排隊跑滿 4 次運算，最後排到的請求總時間仍可能到 3~5 分鐘，這是結構性問題，尚未解決。
+- **⚠️ 找到並修復一個一直存在的重複讀檔問題（2026-07-17）**：`optimize_positions()`
+  （`src/optimization.py`）內部每次呼叫都會自己 `load_re24()` + `load_hit_prob()`——
+  重新讀 `delta_re.json` 並重新 `joblib.load()` 整包 `hit_type_kde.joblib` KDE
+  bundle，即使 `api/main.py` 啟動時早就把兩者快取成 `_delta_re`/`_hit_bundle`
+  全域變數。單一 `/api/optimize` 請求呼叫本函式 1~2 次（`no_park`+`with_park`），
+  比較模式/整合頁最多到 4 次，等於每次都重複付出這筆 I/O＋反序列化成本——
+  上面實測的 44~50 秒有多少比例是這個造成的沒有單獨量測過，但方向必然是壞的。
+  同一支檔案的 `_run_optimize` 也另外重複讀了一次 `re24_table.json`（連
+  `delta_re` 半部都沒用到，純粹浪費）。**已修復**：`optimize_positions()`
+  加了可選的 `delta_re`/`hit_bundle` 參數（預設 `None` 會照舊讀檔，維持
+  scripts/tests 不帶快取時的相容行為），`api/main.py` 五個呼叫點都改傳入
+  已快取的全域版本；`_run_optimize` 的 `re_state` 查詢也改直接用 `_re24_table`
+  全域，不再呼叫 `load_re24()`。已用本機啟動的伺服器實測 `/api/optimize`
+  （BOS 主場、no_park+with_park）與 `/api/optimize_integrated` 回應數值正確、
+  91 個 pytest 全過。**尚未在 Render 上實測量化省了多少秒**，如果之後要驗證
+  這筆修復對「已知效能限制」的實際貢獻，可以比較這次修復前後的
+  `[timing] optimize_positions(...)` log。
 - 之後如果要同時兼顧速度與正確性，可行方向：
   1. 升級付費方案（Starter $7/月，0.5 CPU）換更多 CPU，`n_restarts` 也能調回更高（50 或 100）換取正確性
   2. **`with_park` 用 `no_park` 的解當 warm start，且把 `n_restarts` 從 20 降到 8（2026-07-05 已實作並上線，
