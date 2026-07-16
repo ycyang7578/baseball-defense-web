@@ -279,6 +279,8 @@ def optimize_positions(
     balls: pd.DataFrame | None = None,
     hit_probs: np.ndarray | None = None,
     warm_start_xy: dict | None = None,
+    delta_re: dict | None = None,
+    hit_bundle: dict | None = None,
 ) -> dict:
     """
     Compute optimal outfield positions for a given batter and game state.
@@ -295,6 +297,11 @@ def optimize_positions(
         典型用法：with_park 用 no_park 的解 warm start，因為兩者只差在
         是否排除打牆球，目標函數幾乎一樣。
 
+    delta_re / hit_bundle: 選填，呼叫端若已有快取好的版本（如 api/main.py
+        startup 時載入的全域）可直接傳入，跳過重新讀 delta_re.json /
+        重新 joblib.load(hit_type_kde.joblib)。單一請求常呼叫本函式 2 次
+        （no_park + with_park），未傳入時每次都會各自重新讀檔。
+
     Returns:
         {
           'LF': (x, y), 'CF': (x, y), 'RF': (x, y),
@@ -308,9 +315,11 @@ def optimize_positions(
     if hit_prob_dir is None:
         hit_prob_dir = re24_dir
 
-    # 載入預計算資料
-    _, delta_re = load_re24(re24_dir)
-    hit_bundle = load_hit_prob(hit_prob_dir)
+    # 載入預計算資料（呼叫端未提供快取版本時才讀檔）
+    if delta_re is None:
+        _, delta_re = load_re24(re24_dir)
+    if hit_bundle is None:
+        hit_bundle = load_hit_prob(hit_prob_dir)
 
     # 載入模型參數：統一 OF 模型——LF/CF/RF 共用同一 scaler 與群體層參數，
     # 與 precompute_model_oaa 及 API 顯示層同一口徑（2026-07-13 定案）。
