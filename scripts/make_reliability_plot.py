@@ -5,7 +5,6 @@ Output: data/reliability_diagram.png
 import sys
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -16,20 +15,14 @@ from sklearn.metrics import brier_score_loss, log_loss
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.defender_features import get_defender_opportunities
 
+from _of_validation import FEATURE_COLS, POSITIONS, load_of_model, sigmoid
+
 MODELS_DIR   = Path(__file__).resolve().parent.parent / "models" / "2025"
 OUT_PATH     = Path(__file__).resolve().parent.parent / "figures" / "reliability_diagram.png"
-POSITIONS    = ["LF", "CF", "RF"]
-FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 N_BINS       = 20
 
 # 統一 OF 模型
-OF_DIR  = MODELS_DIR / "OF"
-scaler  = joblib.load(OF_DIR / "OF_scaler.joblib")
-_mu_raw = pd.read_csv(OF_DIR / "OF_summary_group.csv", encoding="utf-8-sig", index_col=0)["mean"]
-
-
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+scaler, _mu_raw = load_of_model(MODELS_DIR)
 
 
 def get_probs(pos: str) -> pd.DataFrame:

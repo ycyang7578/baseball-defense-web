@@ -8,12 +8,9 @@ Usage:
     python make_validation_plot_v2.py [year]   # default 2025
 """
 import sys
-import re
 import argparse
-import unicodedata
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -21,11 +18,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from scipy import stats
-import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.defender_features import get_defender_opportunities, mark_official
 from src.config import DSN
+
+from _of_validation import load_model_oaa, load_official_oaa
 
 _parser = argparse.ArgumentParser()
 _parser.add_argument("year", type=int, nargs="?", default=2025)
@@ -35,63 +32,20 @@ TARGET_YEAR = _args.year
 BASE         = Path(__file__).resolve().parent.parent
 MODELS_DIR   = BASE / "models" / str(TARGET_YEAR)
 OUT_PATH     = BASE / "figures" / "validation_scatter_v2.png"
-POSITIONS    = ["LF", "CF", "RF"]
-FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 
 # Okabe-Ito colorblind-safe palette
 COLOR_POINTS = "#0072B2"   # blue
 COLOR_FIT    = "#D55E00"   # vermillion
 COLOR_REF    = "#888888"   # neutral gray (reference line, de-emphasized)
 
-# 統一 OF 模型
-OF_DIR   = MODELS_DIR / "OF"
-_scaler  = joblib.load(OF_DIR / "OF_scaler.joblib")
-_mu_raw  = pd.read_csv(OF_DIR / "OF_summary_group.csv", encoding="utf-8-sig", index_col=0)["mean"]
-
-
-def norm(name: str) -> str:
-    name = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z]+", "_", name.lower()).strip("_")
-
-
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
-
-
-def compute_model_oaa(pos: str) -> pd.DataFrame:
-    df = get_defender_opportunities(pos, TARGET_YEAR)
-    df = df.rename(columns={"required_speed": "speed"})
-    df = df.dropna(subset=FEATURE_COLS + ["caught", "name_fielder"])
-    df = mark_official(df)
-    df = df[df["is_official"]].copy()
-
-    X = _scaler.transform(df[FEATURE_COLS])
-    logit = (_mu_raw["mu_alpha"]
-             + _mu_raw["mu_beta_speed"] * X[:, 0]
-             + _mu_raw["mu_beta_cos"]   * X[:, 1]
-             + _mu_raw["mu_beta_sin"]   * X[:, 2]
-             + _mu_raw["mu_beta_dist"]  * X[:, 3])
-
-    df["catch_prob"] = sigmoid(logit)
-    df["oaa_play"] = df["caught"].astype(float) - df["catch_prob"]
-    return df[["name_fielder", "oaa_play"]]
-
 
 def main():
     # ── 計算 model OAA（群體層 mu，絕不用 player-level）──────────
-    all_plays = pd.concat([compute_model_oaa(p) for p in POSITIONS], ignore_index=True)
-    model_oaa = all_plays.groupby("name_fielder", as_index=False)["oaa_play"].sum()
-    model_oaa["key"] = model_oaa["name_fielder"].apply(norm)
+    model_oaa = load_model_oaa(MODELS_DIR, TARGET_YEAR)
     print(f"Model OAA 球員數: {len(model_oaa)}")
 
     # ── 官方 OAA（is_qualified=True，跨位置加總）────────────────
-    with psycopg2.connect(DSN) as conn:
-        raw_off = pd.read_sql(
-            f"SELECT player_name, oaa FROM oaa_leaderboard WHERE year={TARGET_YEAR} AND is_qualified=TRUE",
-            conn,
-        )
-    official = raw_off.groupby("player_name", as_index=False)["oaa"].sum()
-    official["key"] = official["player_name"].apply(norm)
+    official = load_official_oaa(DSN, TARGET_YEAR)
     print(f"官方 OAA (qualified) 球員數: {len(official)}")
 
     # ── 合併 ─────────────────────────────────────────────────────

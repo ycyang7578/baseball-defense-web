@@ -39,7 +39,8 @@ data/precomputed/hit_type_kde.joblib       KDE 模型 P(1B|j)/P(2B|j)/P(3B|j)
 figures/validation_scatter.png             Model OAA vs 官方 OAA 驗證散點圖（自用，勿放入 web）
 figures/validation_scatter_v2.png          同上，改良版視覺設計（y=x 參考線＋邊際分布；自用，勿放入 web）
 figures/reliability_diagram.png            Reliability Diagram（自用，勿放入 web）
-models/2025/{LF,CF,RF}/                   定案模型（speed, cos, sin, fielder_dist；訓練年 2021–2024）
+models/2025/OF/                            定案模型（合併外野手，speed, cos, sin, fielder_dist；訓練年 2021–2024）
+models/2025/{LF,CF,RF}/                   已棄用的分位置模型（史料對照用，生產路徑不讀）
 scripts/sql/                               四張資料表的 CREATE TABLE DDL
 tests/                                      pytest 測試（51 個，`python -m pytest tests/ -v`）
                                             預設跳過標 @pytest.mark.integration 的測試（見 pytest.ini）
@@ -236,8 +237,10 @@ w_j = Σ_k P(k|j) × ΔRE(k, s)
   - 特徵設計選 dist 而非 time：避免 speed+time 的三角共線（speed=dist/time），VIF 全 < 1.5
 
 ## 訓練與評估腳本（scripts/）
-- `train_dist.py [LF CF RF]` → `models/2025/`（定案模型；內部 import `src.model_training`）
-- `evaluate_2025.py` — 2025 樣本外 OAA 相關係數評估（official 子集）：**R=0.7952**
+- `train_dist.py [LF CF RF]` → `models/2025/{LF,CF,RF}/`（**已棄用的分位置模型**，僅供史料對照；
+  生產模型是下方 #9「合併外野手模型」的 `train_of.py` → `models/2025/OF/`）
+- `evaluate_2025.py` — 2025 樣本外 OAA 相關係數評估（official 子集）：**R=0.7961**（改用統一 OF 模型後與
+  `make_validation_plot.py` 一致；2026-07-16 修正前誤讀 `models/2025/{LF,CF,RF}/` 分位置舊模型，得 R=0.7952）
   做的事：取 2025 `is_official` 子集 → 用**群體層後驗平均 mu_*** 算 catch_prob
   → 逐球 OAA=caught−catch_prob → 加總到球員 → 與 `oaa_leaderboard`（is_qualified=True，n=89）算 Pearson R
 - `make_validation_plot.py` — 繪製 Model OAA vs 官方 OAA 驗證散點圖 → `figures/validation_scatter.png`（自用）
