@@ -19,7 +19,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-import psycopg2
 from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -32,6 +31,8 @@ from src.if_optimize import fetch_batter_gbs, optimize_infield
 from src.if_runvalue import gb_miss_costs
 from src.re24 import load_re24
 
+from _if_validation import qualifying_batters
+
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 OUTS = 0                      # 一壘有人、0 出局
@@ -39,25 +40,6 @@ BASE = Path(__file__).resolve().parent.parent
 _MODEL_DIR = BASE / "models" / "if_gb" / "on1b"
 OUT_PATH = _MODEL_DIR / "validation_dp_2025.json"
 ROWS_PATH = _MODEL_DIR / "validation_dp_rows_2025.csv"
-
-
-def qualifying_batters(min_train: int, min_test: int) -> pd.DataFrame:
-    sql = """
-        SELECT batter, max(stand) AS stand,
-               count(*) FILTER (WHERE game_year = ANY(%(tr)s)) AS n_train,
-               count(*) FILTER (WHERE game_year = %(te)s) AS n_test
-        FROM statcast
-        WHERE bb_type = 'ground_ball' AND hc_x IS NOT NULL
-          AND game_year = ANY(%(all)s)
-        GROUP BY batter
-        HAVING count(*) FILTER (WHERE game_year = ANY(%(tr)s)) >= %(mtr)s
-           AND count(*) FILTER (WHERE game_year = %(te)s) >= %(mte)s
-        ORDER BY batter
-    """
-    with psycopg2.connect(DSN) as conn:
-        return pd.read_sql(sql, conn, params={
-            "tr": TRAIN_YEARS, "te": TEST_YEAR, "all": TRAIN_YEARS + [TEST_YEAR],
-            "mtr": min_train, "mte": min_test})
 
 
 def main(min_train: int = 150, min_test: int = 80) -> None:
@@ -74,7 +56,7 @@ def main(min_train: int = 150, min_test: int = 80) -> None:
     runner_hp = league_median_runner_speed(TRAIN_YEARS)
     d1, d2 = dp_delta_re(re24, delta_re, OUTS)
 
-    batters = qualifying_batters(min_train, min_test)
+    batters = qualifying_batters(DSN, TRAIN_YEARS, TEST_YEAR, min_train, min_test)
     print(f"合格打者（train GB>={min_train}, test GB>={min_test}）: {len(batters)} 位",
           flush=True)
 

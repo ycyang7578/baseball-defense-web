@@ -20,7 +20,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-import psycopg2
 from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,6 +27,8 @@ from src.config import DSN
 from src.if_optimize import (expected_outs, fetch_batter_gbs,
                              league_average_positions, optimize_infield,
                              positions_to_params)
+
+from _if_validation import qualifying_batters
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
@@ -37,31 +38,12 @@ ROWS_PATH = _MODEL_DIR / "validation_rows_2025.csv"   # checkpoint：逐打者�
 MODEL = _MODEL_DIR / "bayes" / "if_bayes_group_pipeline.joblib"   # 群體層＝生產優化器
 
 
-def qualifying_batters(min_train: int, min_test: int) -> pd.DataFrame:
-    sql = """
-        SELECT batter, max(stand) AS stand,
-               count(*) FILTER (WHERE game_year = ANY(%(tr)s)) AS n_train,
-               count(*) FILTER (WHERE game_year = %(te)s) AS n_test
-        FROM statcast
-        WHERE bb_type = 'ground_ball' AND hc_x IS NOT NULL
-          AND game_year = ANY(%(all)s)
-        GROUP BY batter
-        HAVING count(*) FILTER (WHERE game_year = ANY(%(tr)s)) >= %(mtr)s
-           AND count(*) FILTER (WHERE game_year = %(te)s) >= %(mte)s
-        ORDER BY batter
-    """
-    with psycopg2.connect(DSN) as conn:
-        return pd.read_sql(sql, conn, params={
-            "tr": TRAIN_YEARS, "te": TEST_YEAR, "all": TRAIN_YEARS + [TEST_YEAR],
-            "mtr": min_train, "mte": min_test})
-
-
 def main(min_train: int = 150, min_test: int = 80) -> None:
     model = joblib.load(MODEL)
     avg_angles, avg_depths = league_average_positions(TRAIN_YEARS)
     avg_start = positions_to_params(avg_angles, avg_depths)
 
-    batters = qualifying_batters(min_train, min_test)
+    batters = qualifying_batters(DSN, TRAIN_YEARS, TEST_YEAR, min_train, min_test)
     print(f"合格打者（train GB>={min_train}, test GB>={min_test}）: {len(batters)} 位")
 
     # checkpoint：已算過的打者直接沿用（長批次在這台機器上要能從當機中續跑）
