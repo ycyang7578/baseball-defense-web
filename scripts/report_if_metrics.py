@@ -24,16 +24,16 @@ from src.if_dataset import INFIELD_COLS, build_gb_dataset
 from src.if_model import (DIFFICULTY_FEATURES, OPTIMIZER_FEATURES,
                           make_difficulty_glm, make_difficulty_gbm)
 
+from _metrics import calibration_table
+
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb"
 
 
 def calibration_max_dev(y, p, bins: int = 10) -> float:
-    df = pd.DataFrame({"p": p, "y": y})
-    df["bin"] = pd.qcut(df["p"], bins, duplicates="drop")
-    g = df.groupby("bin", observed=True).agg(pred=("p", "mean"), obs=("y", "mean"))
-    return float((g["pred"] - g["obs"]).abs().max())
+    g = calibration_table(y, p, bins)
+    return float((g["pred"] - g["actual"]).abs().max())
 
 
 def metrics_row(name, y, p, ref_rate):

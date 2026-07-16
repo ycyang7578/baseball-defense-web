@@ -30,16 +30,11 @@ from src.if_model import (DIFFICULTY_FEATURES, OPTIMIZER_FEATURES,
                           make_optimizer_glm)
 from src.if_runvalue import XB_FEATURES, fetch_gb_hits, make_gb_xb_model
 
+from _metrics import calibration_table
+
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb"
-
-
-def calibration_table(y, p, bins: int = 10) -> pd.DataFrame:
-    df = pd.DataFrame({"p": p, "y": y})
-    df["bin"] = pd.qcut(df["p"], bins, duplicates="drop")
-    return df.groupby("bin", observed=True).agg(
-        pred=("p", "mean"), actual=("y", "mean"), n=("y", "size"))
 
 
 def evaluate(name: str, model, feats: list[str],
