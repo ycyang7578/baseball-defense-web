@@ -20,7 +20,6 @@ _STYLES = {
     "custom":     dict(color="#7B2FBE", marker="*", size=480, label="Selected Fielders", offset=16),
 }
 _WALL_COLOR = "#FF6B00"
-_ORDER = ["league_avg", "no_park", "with_park"]
 
 
 def _draw_field(ax):
