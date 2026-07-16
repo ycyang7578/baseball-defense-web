@@ -3,17 +3,16 @@
 Source: GET /leaderboard/outfield_directional_outs_above_average?year={year}
 Stores per-player OAA, total opportunities, and 0~5-star breakdown.
 """
-import json
-import re
 import sys
 from pathlib import Path
 
 import pandas as pd
 import psycopg2
-import requests
 
-BASE_URL = "https://baseballsavant.mlb.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import DSN
+
+from _savant_leaderboard import fetch_outfield_leaderboard_raw
 
 POS_MAP = {"7": "LF", "8": "CF", "9": "RF"}
 
@@ -28,15 +27,7 @@ INT_COLS = [
 
 
 def fetch_leaderboard(year: int) -> pd.DataFrame:
-    r = requests.get(
-        f"{BASE_URL}/leaderboard/outfield_directional_outs_above_average",
-        params={"year": year}, headers=HEADERS, timeout=30,
-    )
-    r.raise_for_status()
-    match = re.search(r"var data\s*=\s*(\[.*?\]);", r.text, re.DOTALL)
-    if not match:
-        raise ValueError("找不到 leaderboard var data，頁面結構可能已更新")
-    raw = pd.DataFrame(json.loads(match.group(1)))
+    raw = fetch_outfield_leaderboard_raw(year)
 
     df = pd.DataFrame({
         "player_id":          raw["resp_fielder_id"].astype(int),
@@ -67,8 +58,7 @@ def fetch_leaderboard(year: int) -> pd.DataFrame:
 
 
 def load_to_postgres(df: pd.DataFrame, year: int) -> None:
-    conn = psycopg2.connect(host="localhost", dbname="baseball",
-                            user="postgres", password="postgres")
+    conn = psycopg2.connect(DSN)
     cur = conn.cursor()
 
     cur.execute("DELETE FROM oaa_leaderboard WHERE year = %s", (year,))

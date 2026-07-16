@@ -10,28 +10,20 @@ This is the play set that Baseball Savant's own OAA computation is based on -- u
 our own evaluation to the same population when comparing against real_2025_oaa.csv.
 """
 import json
-import re
 import time
 from pathlib import Path
 
 import pandas as pd
 import requests
 
+from _savant_leaderboard import BASE_URL, HEADERS, fetch_outfield_leaderboard_raw
+
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "savant_fielding"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-BASE_URL = "https://baseballsavant.mlb.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
 
 def fetch_leaderboard(year: int) -> pd.DataFrame:
-    r = requests.get(f"{BASE_URL}/leaderboard/outfield_directional_outs_above_average",
-                      params={"year": year}, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    match = re.search(r"var data\s*=\s*(\[.*?\]);", r.text, re.DOTALL)
-    if not match:
-        raise ValueError("找不到 leaderboard var data，頁面結構可能已更新")
-    raw = pd.DataFrame(json.loads(match.group(1)))
+    raw = fetch_outfield_leaderboard_raw(year)
     return pd.DataFrame({
         "player_id": raw["resp_fielder_id"].astype(int),
         "player_name": raw["name_display_last_first"],
