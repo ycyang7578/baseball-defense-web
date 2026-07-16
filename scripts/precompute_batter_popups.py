@@ -14,7 +14,6 @@ Usage:
     python scripts/precompute_batter_popups.py --years 2023 2024 2025 --target-dsn "postgresql://..."
 """
 import argparse
-import io
 import sys
 from pathlib import Path
 
@@ -25,6 +24,8 @@ import psycopg2
 
 from src.config import DSN
 from src.if_dataset import HOME_X, HOME_Y
+
+from _pg_load import copy_dataframe
 
 SQL_DIR = Path(__file__).resolve().parent / "sql"
 FT_PER_UNIT = 2.5   # 同 scripts/precompute_if_optimize.py 的展示座標換算
@@ -75,13 +76,7 @@ def main():
                         .read_text(encoding="utf-8"))
             cur.execute("TRUNCATE precomputed_batter_popups")
         conn.commit()
-        buf = io.StringIO()
-        df.to_csv(buf, index=False, header=False, na_rep="")
-        buf.seek(0)
-        with conn.cursor() as cur:
-            cur.copy_expert(
-                "COPY precomputed_batter_popups FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-        conn.commit()
+        copy_dataframe(conn, "precomputed_batter_popups", df)
 
     target_label = target_dsn.split("@")[-1] if "@" in target_dsn else target_dsn
     print(f"完成：precomputed_batter_popups {len(df):,} 筆 → {target_label}")

@@ -17,7 +17,6 @@ Usage:
     python scripts/precompute_if_optimize.py --load-only --target-dsn "postgresql://..."
 """
 import argparse
-import io
 import json
 import sys
 import time
@@ -35,6 +34,8 @@ from src.if_dataset import HOME_X, HOME_Y, OUT_EVENTS
 from src.if_optimize import (POSITIONS, expected_outs, fetch_batter_gbs,
                              geometry_features, league_average_positions,
                              optimize_infield, positions_to_params)
+
+from _pg_load import copy_dataframe
 
 # Savant hc 座標單位 → 呎（慣用換算；出局球換算後中位深度 ~118 呎落在內野手
 # 深度帶、對得上歸責野手位置，經驗上成立）
@@ -190,15 +191,6 @@ def refresh_gbs() -> None:
             print(f"  [{i}/{len(pos)}] 剩餘約 {rate * (len(pos) - i) / 60:.0f} 分", flush=True)
 
 
-def _copy(conn, table: str, df: pd.DataFrame) -> None:
-    buf = io.StringIO()
-    df.to_csv(buf, index=False, header=False, na_rep="")
-    buf.seek(0)
-    with conn.cursor() as cur:
-        cur.copy_expert(f"COPY {table} FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-    conn.commit()
-
-
 def load_to_db(target_dsn: str) -> None:
     pos = pd.read_csv(POS_CSV)[POS_COLS]
     gbs = pd.read_csv(GBS_CSV)[GBS_COLS]
@@ -214,8 +206,8 @@ def load_to_db(target_dsn: str) -> None:
                         "create_precomputed_if_gbs_table.sql"):
                 cur.execute((SQL_DIR / ddl).read_text(encoding="utf-8"))
         conn.commit()
-        _copy(conn, "precomputed_if_positions", pos)
-        _copy(conn, "precomputed_if_gbs", gbs)
+        copy_dataframe(conn, "precomputed_if_positions", pos)
+        copy_dataframe(conn, "precomputed_if_gbs", gbs)
     label = target_dsn.split("@")[-1] if "@" in target_dsn else "本機"
     print(f"完成：precomputed_if_positions {len(pos):,} 筆、"
           f"precomputed_if_gbs {len(gbs):,} 筆 → {label}")

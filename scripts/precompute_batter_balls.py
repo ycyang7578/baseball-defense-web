@@ -12,7 +12,6 @@ Usage:
     python scripts/precompute_batter_balls.py --years 2024 2025 --target-dsn "postgresql://..."
 """
 import argparse
-import io
 import sys
 from pathlib import Path
 
@@ -24,6 +23,8 @@ import psycopg2
 
 from src import physics
 from src.config import DSN
+
+from _pg_load import copy_dataframe
 
 SQL_DIR = Path(__file__).resolve().parent / "sql"
 
@@ -52,15 +53,6 @@ _STAND_QUERY = """
     WHERE game_year = ANY(%(years)s)
     GROUP BY batter, game_year, stand
 """
-
-
-def _copy(conn, table: str, df: pd.DataFrame) -> None:
-    buf = io.StringIO()
-    df.to_csv(buf, index=False, header=False, na_rep="")
-    buf.seek(0)
-    with conn.cursor() as cur:
-        cur.copy_expert(f"COPY {table} FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-    conn.commit()
 
 
 def build_batter_balls(source_dsn: str, years: list[int]) -> pd.DataFrame:
@@ -115,8 +107,8 @@ def main():
             cur.execute((SQL_DIR / "create_precomputed_batter_stand_table.sql").read_text(encoding="utf-8"))
             cur.execute("TRUNCATE precomputed_batter_stand")
         conn.commit()
-        _copy(conn, "precomputed_batter_balls", balls_df)
-        _copy(conn, "precomputed_batter_stand", stand_df)
+        copy_dataframe(conn, "precomputed_batter_balls", balls_df)
+        copy_dataframe(conn, "precomputed_batter_stand", stand_df)
 
     target_label = target_dsn.split("@")[-1] if "@" in target_dsn else target_dsn
     print(f"完成：precomputed_batter_balls {len(balls_df):,} 筆、"

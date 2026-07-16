@@ -15,7 +15,6 @@ Usage:
     python scripts/precompute_if_model_oaa.py --target-dsn "postgresql://..."
 """
 import argparse
-import io
 import sys
 from pathlib import Path
 
@@ -26,6 +25,8 @@ import psycopg2
 
 from src.config import DSN
 from src.if_eval import aggregate_players, score_test_year
+
+from _pg_load import copy_dataframe
 
 SQL_DIR = Path(__file__).resolve().parent / "sql"
 TRAIN_YEARS = [2023, 2024]
@@ -61,13 +62,7 @@ def main():
                         .read_text(encoding="utf-8"))
             cur.execute("DELETE FROM if_model_oaa WHERE year = %s", (test_year,))
         conn.commit()
-        buf = io.StringIO()
-        df.to_csv(buf, index=False, header=False, na_rep="")
-        buf.seek(0)
-        with conn.cursor() as cur:
-            cur.copy_expert(
-                "COPY if_model_oaa FROM STDIN WITH (FORMAT csv, NULL '')", buf)
-        conn.commit()
+        copy_dataframe(conn, "if_model_oaa", df)
     print(f"完成：if_model_oaa {len(df)} 筆（year={test_year}）")
 
 
