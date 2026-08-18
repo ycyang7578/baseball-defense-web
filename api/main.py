@@ -29,7 +29,7 @@ from src.optimization import (
     compute_ball_catch_probs,
     get_league_avg_positions, get_batter_stand, load_qualifying_batters,
     load_model_params, load_player_params,
-    GroupMu, OutfieldXY, QualifyingBatter, POSITIONS,
+    GroupMu, OptimizeResult, OutfieldXY, QualifyingBatter, POSITIONS,
 )
 from src.config import DSN
 from src.hit_prob import HitProbBundle, predict_hit_probs_batch, load_hit_prob
@@ -735,6 +735,11 @@ def _fielder_display_name(fids: dict[str, int | None], pos: str) -> str | None:
     return _name_map.get(player_id, f"#{player_id}")
 
 
+def _outfield_xy(result: OptimizeResult) -> OutfieldXY:
+    """optimize_positions() 回傳的 OptimizeResult 只取 LF/CF/RF 站位座標。"""
+    return {"LF": result["LF"], "CF": result["CF"], "RF": result["RF"]}
+
+
 def _if_position_set(pairs: dict[str, tuple[float, float]], exp_outs: float) -> IFPositionSet:
     positions: dict[str, IFPosition] = {}
     for pos, (angle, depth) in pairs.items():
@@ -1240,7 +1245,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
             fielder_mus=fielder_mus, n_restarts=10,
             delta_re=_delta_re, hit_bundle=_hit_bundle,
         )
-        pos_of_opt = {p: opt_of[p] for p in POSITIONS}
+        pos_of_opt = _outfield_xy(opt_of)
         if home_team:
             # 同 _run_optimize：no_park 解 warm start 的 with_park 精修
             opt_of_park = optimize_positions(
@@ -1251,7 +1256,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
                 fielder_mus=fielder_mus, warm_start_xy=pos_of_opt, n_restarts=8,
                 delta_re=_delta_re, hit_bundle=_hit_bundle,
             )
-            pos_of_opt = {p: opt_of_park[p] for p in POSITIONS}
+            pos_of_opt = _outfield_xy(opt_of_park)
     try:
         pos_of_league = get_league_avg_positions(year, DSN)
     except Exception:
@@ -1370,6 +1375,10 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
     logger.info(f"[timing] optimize_integrated TOTAL: {time.perf_counter() - t_start:.2f}s "
                 f"(batter={req.batter_id}, year={year}, state={state})")
 
+    boundary_coords = get_park_boundary_coords(home_team) if home_team else None
+    park_boundary = ([ParkCoord(x=c["x"], y=c["y"]) for c in boundary_coords]
+                     if boundary_coords else None)
+
     return IntegratedResponse(
         batter_id=req.batter_id,
         name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
@@ -1391,7 +1400,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
                               p_out_opt=round(float(po), 4))
                   for r, pl, po in zip(ball_rows, p_if_league, p_if_opt)],
         popup_balls=popups,
-        park_boundary=(get_park_boundary_coords(home_team) if home_team else None),
+        park_boundary=park_boundary,
         fielders={**{p: (req.of_fielders or {}).get(p) or None for p in POSITIONS},
                   **{p: _fielder_display_name(if_fids, p) for p in IF_POSITIONS}},
         stats=IntegratedStats(
@@ -1406,11 +1415,11 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
 
 
 @app.get("/api/park_boundary/{team}", response_model=list[ParkCoord] | None)
-def park_boundary(team: str) -> list[dict]:
+def park_boundary_endpoint(team: str) -> list[ParkCoord]:
     coords = get_park_boundary_coords(team.upper())
     if coords is None:
         raise HTTPException(status_code=404, detail=f"Park boundary not found for {team}")
-    return coords
+    return [ParkCoord(x=c["x"], y=c["y"]) for c in coords]
 
 
 @app.post("/api/optimize", response_model=OptimizeResponse)
@@ -1556,7 +1565,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
                 delta_re=_delta_re, hit_bundle=_hit_bundle,
             )
         logger.info(f"[timing] optimize_positions(custom): {time.perf_counter() - t_opt:.2f}s")
-        pos_custom = {p: opt_custom[p] for p in POSITIONS}
+        pos_custom = _outfield_xy(opt_custom)
         probs_custom, re_custom, catch_custom = eval_positions(pos_custom)
         positions_out: dict[str, PositionSet] = {"custom": make_pos_set(pos_custom, re_custom, catch_custom)}
         scatter_probs = probs_custom
@@ -1574,7 +1583,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
                 delta_re=_delta_re, hit_bundle=_hit_bundle,
             )
         logger.info(f"[timing] optimize_positions(no_park): {time.perf_counter() - t_opt:.2f}s")
-        pos_no_park = {p: opt_no_park[p] for p in POSITIONS}
+        pos_no_park = _outfield_xy(opt_no_park)
         probs_no_park, re_no_park, catch_no_park = eval_positions(pos_no_park)
         _, re_league, catch_league = eval_positions(league_avg_pos)
         positions_out = {
@@ -1595,7 +1604,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
                     delta_re=_delta_re, hit_bundle=_hit_bundle,
                 )
             logger.info(f"[timing] optimize_positions(with_park): {time.perf_counter() - t_opt:.2f}s")
-            pos_with_park = {p: opt_with_park_res[p] for p in POSITIONS}
+            pos_with_park = _outfield_xy(opt_with_park_res)
             probs_with_park, re_with_park, catch_with_park = eval_positions(pos_with_park)
             positions_out["with_park"] = make_pos_set(pos_with_park, re_with_park, catch_with_park)
             scatter_probs = probs_with_park
@@ -1615,8 +1624,11 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         code: np.hypot(bx_arr - primary_pos[code][0], by_arr - primary_pos[code][1])
         for code in POSITIONS
     }
-    nearest = [min(POSITIONS, key=lambda position_code, i=i: dists[position_code][i])
-              for i in range(len(balls_all))]
+
+    def _nearest_fielder(i: int) -> str:
+        return min(POSITIONS, key=lambda position_code: dists[position_code][i])
+
+    nearest = [_nearest_fielder(i) for i in range(len(balls_all))]
 
     balls_out = [
         BallPoint(
@@ -1643,8 +1655,9 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     if home_team:
         title += f" @ {home_team}"
     if fielder_mus:
+        assert req.fielders is not None
         tags = [
-            f"{p}:{req.fielders.get(p).split(',')[0]}" if req.fielders.get(p) else f"{p}:avg"
+            f"{p}:{fielder_name.split(',')[0]}" if (fielder_name := req.fielders.get(p)) else f"{p}:avg"
             for p in POSITIONS
         ]
         title += " | " + " ".join(tags)
