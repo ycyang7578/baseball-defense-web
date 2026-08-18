@@ -32,5 +32,7 @@ pydantic==2.12.5
 pybaseball==2.2.7
 requests==2.32.5
 
-# 測試
+# 測試（httpx2 是 starlette TestClient 的必要相依，沒裝新版 starlette 會直接
+# collection error，見 tests/test_api_main.py）
 pytest==9.1.1
+httpx2==2.11.0
