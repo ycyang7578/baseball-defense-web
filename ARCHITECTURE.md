@@ -13,7 +13,7 @@
 `prepare_batter_balls`/`get_batter_stand`/`load_qualifying_batters`（`src/optimization.py`）
 改成查 `precomputed_batter_balls`/`precomputed_batter_stand` 這兩張精簡衍生表，而不是即時查
 `statcast`。這兩張表本身仍在 PostgreSQL 裡（不是 CSV），只是內容由
-`scripts/precompute_batter_balls.py` 預先從 `statcast` 算好。原本直查 `statcast` 的版本在 git 歷史
+`scripts/precompute/precompute_batter_balls.py` 預先從 `statcast` 算好。原本直查 `statcast` 的版本在 git 歷史
 （2026-07-04 之前）。改動後跟改動前的 `/api/optimize` 輸出比對過，數值差異在 1e-8 量級（浮點數
 經 PostgreSQL COPY 文字格式往返造成，非行為改變）。
 
@@ -41,7 +41,14 @@ figures/validation_scatter_v2.png          同上，改良版視覺設計（y=x 
 figures/reliability_diagram.png            Reliability Diagram（自用，勿放入 web）
 models/2025/OF/                            定案模型（合併外野手，speed, cos, sin, fielder_dist；訓練年 2021–2024）
 models/2025/{LF,CF,RF}/                   已棄用的分位置模型（史料對照用，生產路徑不讀）
+scripts/fetch/                             資料擷取／灌進 PostgreSQL（append_years_to_db, fetch_*, load_to_postgres）
+scripts/precompute/                        離線預算（precompute_*，含 precompute.py 已改名 precompute_re24_kde.py）
+scripts/train/                             模型訓練（train_*）
+scripts/validate/                          驗證／評估／報表繪圖（evaluate_*, report_*, validate_*, make_*_plot*）
 scripts/sql/                               資料表的 CREATE TABLE DDL（13 個檔案，隨內野擴展增加）
+scripts/experiments/                       已完成的一次性研究實驗腳本（歸檔用，不隨主線同步維護）
+scripts/_pg_load.py 等（底線開頭）          跨分類共用模組，留在 scripts/ 根目錄；一律用
+                                            `from scripts._xxx import ...` 匯入、`python -m scripts.category.xxx` 執行
 tests/                                      pytest 測試（91 個，`python -m pytest tests/ -v`）
                                             預設跳過標 @pytest.mark.integration 的測試（見 pytest.ini）
 pytest.ini                                  定義 integration marker，預設 -m "not integration"
@@ -60,31 +67,31 @@ PostgreSQL 資料表：
 - `oaa_leaderboard` — 每位外野手的官方 OAA 匯總（2025，326 人；含 0–5 星分類）
 - `model_oaa` — 我方模型算的 OAA（2025，602 筆 = LF 214 + CF 172 + RF 216）
   - 欄位：`name_fielder, position, year, model_oaa, n_opp`
-  - 由 `scripts/precompute_model_oaa.py` 產生，算法：對 `is_official` 子集逐球 `oaa_play=caught−catch_prob` 後加總
+  - 由 `scripts/precompute/precompute_model_oaa.py` 產生，算法：對 `is_official` 子集逐球 `oaa_play=caught−catch_prob` 後加總
   - ⚠️ 系統性偏正（avg ≈ CF +4, LF +2, RF +2），根本原因是用賽季平均站位而非每球實際站位。API 端點已做中心化校正
 - `precomputed_batter_balls`（2026-07-04 新增，29MB，299,345 筆）— 服務 `/api/optimize` 即時查詢，
   取代直查 `statcast`。欄位是已算好的物理衍生值（`ball_x/ball_y/flight_time/spray_angle` 等），由
-  `scripts/precompute_batter_balls.py` 產生，**這張表需要部署到雲端**
+  `scripts/precompute/precompute_batter_balls.py` 產生，**這張表需要部署到雲端**
 - `precomputed_batter_stand`（2026-07-04 新增，560KB，8,016 筆）— 服務 `get_batter_stand`，同上由
-  `scripts/precompute_batter_balls.py` 產生，**這張表需要部署到雲端**
+  `scripts/precompute/precompute_batter_balls.py` 產生，**這張表需要部署到雲端**
 
 ## 資料管線（依序）
-1. `scripts/fetch_statcast.py` — pybaseball 抓整年逐球 Statcast → parquet
-2. `scripts/fetch_positioning.py` — 抓 Savant `/visuals/position_data` 球員平均站位（非官方 API，DevTools 逆向）。
+1. `scripts/fetch/fetch_statcast.py` — pybaseball 抓整年逐球 Statcast → parquet
+2. `scripts/fetch/fetch_positioning.py` — 抓 Savant `/visuals/position_data` 球員平均站位（非官方 API，DevTools 逆向）。
    位置代碼用 MLB 標準編號（3=1B … 9=RF），Savant 5xx 會自動重試。
-   單獨重載站位不動 statcast：`python scripts/append_years_to_db.py --positioning-only 2017 ... 2025`
-3. `scripts/fetch_savant_fielding.py` — 抓 Savant 官方守備機會逐球（leaderboard + gamelogs 兩個非官方端點），
+   單獨重載站位不動 statcast：`python -m scripts.fetch.append_years_to_db --positioning-only 2017 ... 2025`
+3. `scripts/fetch/fetch_savant_fielding.py` — 抓 Savant 官方守備機會逐球（leaderboard + gamelogs 兩個非官方端點），
    作為「官方 OAA 所用球集」，評估時用來把樣本限制在同一母體
-4. `scripts/fetch_oaa_leaderboard.py` — 抓 Savant OAA leaderboard 匯總資料 → `oaa_leaderboard` 資料表。
+4. `scripts/fetch/fetch_oaa_leaderboard.py` — 抓 Savant OAA leaderboard 匯總資料 → `oaa_leaderboard` 資料表。
    每位外野手一列，含官方 OAA、全部守備機會（n_opp，含 0 星）、1~5 星的接殺數與機會數、達標旗標。
-   執行：`python scripts/fetch_oaa_leaderboard.py 2025 [2024 ...]`（支援多年）。
+   執行：`python -m scripts.fetch.fetch_oaa_leaderboard 2025 [2024 ...]`（支援多年）。
    ⚠️ savant_fielding 的 `catch_prob`（xban）是難度分數（0=容易、1=最難），**不是**接殺機率，無法直接還原官方 OAA。
-5. `scripts/fetch_if_oaa_leaderboard.py` — 抓內野官方 OAA（`/leaderboard/outs_above_average?pos=if`）→ `if_oaa_leaderboard`。
+5. `scripts/fetch/fetch_if_oaa_leaderboard.py` — 抓內野官方 OAA（`/leaderboard/outs_above_average?pos=if`）→ `if_oaa_leaderboard`。
    CSV 匯出缺機會數，所以改解析頁面 `var data` JSON；頁面 year 欄為空，由腳本以請求年份補。
-   執行：`python scripts/fetch_if_oaa_leaderboard.py 2023 2024 2025`
-6. `scripts/fetch_sprint_speed.py` — 抓 Savant sprint speed leaderboard（含 hp_to_1b）→ parquet
+   執行：`python -m scripts.fetch.fetch_if_oaa_leaderboard 2023 2024 2025`
+6. `scripts/fetch/fetch_sprint_speed.py` — 抓 Savant sprint speed leaderboard（含 hp_to_1b）→ parquet
    （內野滾地球模型見下方「內野擴展」章節）
-7. `scripts/load_to_postgres.py` — 把 statcast/positioning/sprint_speed/savant_fielding 四種 parquet 用 COPY 灌進 PostgreSQL（可重跑，每次先 TRUNCATE 重建）
+7. `scripts/fetch/load_to_postgres.py` — 把 statcast/positioning/sprint_speed/savant_fielding 四種 parquet 用 COPY 灌進 PostgreSQL（可重跑，每次先 TRUNCATE 重建）
 
 ## API（FastAPI）
 - `api/main.py` — FastAPI 主程式，startup 快取打者清單、姓名、各位置外野手清單、模型參數
@@ -125,8 +132,8 @@ PostgreSQL 資料表：
     official_oaa/official_n_opp（統一排名頁對照用）
 
 ## 站位優化管線（需先 precompute，再 optimize）
-1. `scripts/precompute_model_oaa.py` — 對 `is_official` 子集逐球算 `oaa_play=caught−catch_prob`（用群體層 mu_*），按球員加總後寫入 `data/precomputed/model_oaa_2025.csv`，再 UPSERT 進 `model_oaa` 表。執行：`python scripts/precompute_model_oaa.py`
-2. `scripts/precompute.py` — 一次性預計算，輸出三個檔到 `data/precomputed/`：
+1. `scripts/precompute/precompute_model_oaa.py` — 對 `is_official` 子集逐球算 `oaa_play=caught−catch_prob`（用群體層 mu_*），按球員加總後寫入 `data/precomputed/model_oaa_2025.csv`，再 UPSERT 進 `model_oaa` 表。執行：`python -m scripts.precompute.precompute_model_oaa`
+2. `scripts/precompute/precompute_re24_kde.py` — 一次性預計算，輸出三個檔到 `data/precomputed/`：
    - `re24_table.json`：從 statcast 2021–2024 算出 24 種壘上/出局的預期得分
    - `delta_re.json`：確定性跑壘推進算出 ΔRE(k, 狀態)，3 型別 × 24 狀況 = 72 筆
    - `hit_type_kde.joblib`：KDE 模型 P(1B|j)/P(2B|j)/P(3B|j)（按打者左右手分開）
@@ -271,7 +278,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     不是 AUC
   - 交互作用配置用 train 2023→val 2024 選定（tensor ad×bt、ad×EV、hp×throw、hp×bt），
     2025 只在最終評估碰一次
-- `scripts/train_if_gb.py` — 訓練（2023–2024，見下方「訓練年份實驗」的改回紀錄）＋樣本外評估（2025）→ `models/if_gb/`
+- `scripts/train/train_if_gb.py` — 訓練（2023–2024，見下方「訓練年份實驗」的改回紀錄）＋樣本外評估（2025）→ `models/if_gb/`
   - 主範圍「無人在壘 + Standard 佈陣」（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）
   - **2026-07-12 現行結果（訓練 2023–2024、GLM 移除 stand_R，n_train=39,354、
     n_test=18,404）**：優化用 GLM AUC=0.7530、Brier=0.163、校準最大偏差 0.024；
@@ -281,7 +288,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     GBM AUC=0.8165/校準 0.020）
   - （歷史對照 2026-07-06，訓練 2023–2024：GLM AUC=0.754/校準 0.029；GBM AUC=0.815/
     校準 0.026——擴充訓練年份差異在雜訊內，見下方「訓練年份實驗」）
-- `scripts/evaluate_if_2025.py` — 階段 2 球員評價：difficulty GBM 當 p̂（2021–24 訓練、
+- `scripts/validate/evaluate_if_2025.py` — 階段 2 球員評價：difficulty GBM 當 p̂（2021–24 訓練、
   2025 評分，無球員資訊→無循環論證），球員 model OAA = Σ(is_out − p̂)，對照
   `if_oaa_leaderboard` 官方數字
   - 歸責規則：出局球給實際處理者（`hit_location` 3–6，92.5% 的出局球適用，其中 26.9%
@@ -312,7 +319,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
 - `scripts/optimize_if_demo.py` — demo：2023–24 滾地球最多的打者，最佳化 vs 聯盟平均站位
   - **2026-07-06 結果**：期望出局率增益 +0.011~+0.029（每 450 顆滾地球約 +5~13 個出局），
     解符合直覺（右打：3B 顧線+SS 顧洞+右側收中間的合法 shade）
-- `scripts/validate_if_positioning.py` — 階段 5 跨年驗證 → `models/if_gb/validation_2025.json`
+- `scripts/validate/validate_if_positioning.py` — 階段 5 跨年驗證 → `models/if_gb/validation_2025.json`
   - 對每位合格打者（train GB≥150、test GB≥80，n=212）：跨年增益 =「2023–24 球優化的站位」
     vs 聯盟平均，**兩者都評估在 2025 球上**；同年上限用 2025 球自己優化再評 2025（同樣
     樣本，可直接比較）。成效是 optimizer GLM 模型評分——反事實站位下的實際出局不可觀測，
@@ -345,7 +352,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   n=20 中位落後 0.00003、容忍 1e-3 時 miss 1/30；n=12 以下 miss rate 20%+。
   結論：**離線預算用 50+，線上即時算（如果未來要做）n=20 是下限**。
   checkpoint `models/if_gb/convergence_rows.csv`
-- `scripts/precompute_if_optimize.py`：對每個 (打者, 年份)（2023–2025、該年 GB≥50，
+- `scripts/precompute/precompute_if_optimize.py`：對每個 (打者, 年份)（2023–2025、該年 GB≥50，
   各年約 390 位）用 n_restarts=50 優化，寫入 `precomputed_if_positions`（站位+期望出局率）
   與 `precomputed_if_gbs`（逐球 spray/ball_x/ball_y/EV/is_out/兩組站位下的 P(out)，
   前端畫點與上色用）。逐 (打者, 年份) checkpoint（positions 列是 commit marker，
@@ -358,7 +365,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   （P10-P90 15~55）；一壘安打深度中位 224 呎（外野撿球帶）、P10=70 呎（內野安打）。
   結論：hc ≈ 球被處理/撿起的位置附近（精確語意無法從資料分辨），但**確定是結果與守備的
   函數**（同一顆球出局 vs 穿出去座標差一倍）→ 只能展示，不能拿來建打者分布（角度除外）
-- `scripts/precompute_if_model_oaa.py`：排名頁資料 → `if_model_oaa` 表（2025 樣本外，
+- `scripts/precompute/precompute_if_model_oaa.py`：排名頁資料 → `if_model_oaa` 表（2025 樣本外，
   349 位）。計算邏輯與 evaluate_if_2025.py 共用 `src/if_eval.py`（GBM 評分＋hit_location
   歸責＋分位置中心化），重構後驗證所有評估數字不變（qualified R=0.525 等）
 - API 端點（全部查表即回，無運算；startup 快取，缺表不中斷啟動——Neon 還沒 sync 時
@@ -465,7 +472,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
     連旁邊 −4.5e-5 的小改善都撿不到）——精修起點用 `anchored_starts`（錨點
     ＋8 個小抖動：角度 ±0.75°、frac ±0.05），維持錨定語意同時避開 kink。
     1B 效應仍參與逐球評估（他附近的球還是他處理），但站位釘死不動。聯盟一壘有人
-    站位＋跑者中位速度改走離線常數 JSON（scripts/precompute_if_on1b_constants.py
+    站位＋跑者中位速度改走離線常數 JSON（scripts/precompute/precompute_if_on1b_constants.py
     → data/precomputed/if_on1b_constants.json，startup 讀、缺了退回無壘況精修）
     ——**雲端因此不需要 `fielder_positioning_on1b`／`sprint_speed` 表**，部署
     前提只剩 models/if_gb/on1b/ 兩支 GLM（已入 git）。本機實測 DP 分支
@@ -481,7 +488,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   2023 年 ~70/391 暫停~~（**已全部跑完並同步**——2026-07-14 查核本機與 Neon 的
   precomputed_if_* 完全一致：371/383/372 位打者、142,189 球。歷史脈絡：當時
   checkpoint 續跑機制在 data/precomputed/if_*_rows.csv，模型不變時重跑
-  `python scripts/precompute_if_optimize.py` 即續算）
+  `python -m scripts.precompute.precompute_if_optimize` 即續算）
 - **訓練年份實驗（2026-07-09）**：使用者提議訓練改用 2021–2024（Standard 子集篩選下
   shift 時代資料理論上可用）。實驗結果（同一 2025 樣本外）：GLM AUC 0.7531 vs 現行
   0.7540、GBM 0.8165 vs 0.8150、球員評價 R 0.521 vs 0.525——資料翻倍後三指標全在
@@ -512,7 +519,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   賽季平均站位誤差（ad_min 本身帶噪，同 SS R=0.33 根源）下量測不到。
   ~~結論：公開資料下不值得投入~~（使用者知情後仍決定對齊外野架構，後續實作推翻了
   proxy 結論的一半，見下一條）。
-- **內野貝葉斯球員層（2026-07-10，使用者決定對齊外野方式）**：`scripts/train_if_bayes.py`
+- **內野貝葉斯球員層（2026-07-10，使用者決定對齊外野方式）**：`scripts/train/train_if_bayes.py`
   （73k 球、7hr MCMC、r_hat 1.000）。最近野手歸責、群體層=GLM 完整設計矩陣（品質無損：
   2025 AUC 0.7533 vs GLM 0.7531）、球員層=隨機截距 alpha＋ad_z 隨機斜率 g（非中心化）。
   **關鍵發現：直接從轉換資料估的球員效應有跨年訊號**（+alpha logloss −0.0008、
@@ -583,7 +590,7 @@ savant units vs 安打 ~91），所以位置資訊只能用 spray angle（1D）�
   用 precomputed 出局率最佳解 warm start＋run-value 權重精修（n_restarts=0）即可。
   **已落地（2026-07-13）**：XB 模型進 train_if_gb.py cascade（if_gb_xb_model.joblib，
   2025 AUC 0.9167）；`POST /api/optimize_integrated`＋前端 `/integrated` 頁（見
-  API/前端章節）；跨年驗證失分口徑＝`scripts/validate_if_runvalue.py`
+  API/前端章節）；跨年驗證失分口徑＝`scripts/validate/validate_if_runvalue.py`
   （validation_runvalue_2025.json）。
   **失分口徑跨年驗證結果（2026-07-13，n=212、皆評 2025 球）**：跨年增益
   +0.01067 分/GB（**450 GB≈+4.80 分**）、正增益 96.7%、t=22.01（p≈1.5e-56）、
@@ -684,7 +691,7 @@ OAA 排名頁（`src/pages/OaaRankings.jsx`，`/rankings`）：
   OF 群體 μ，Brier 0.0243 **輸給常數 0.986 的 0.0148**；失敗模式＝OOD 尾巴，
   138 顆球模型說平均 11% 接殺、實際 88.4% 出局（滯空 6.7s 中位遠超外野
   訓練分布，內野手接 popup 是等球不是追球）。
-  資料走 `precomputed_batter_popups`（scripts/precompute_batter_popups.py，
+  資料走 `precomputed_batter_popups`（scripts/precompute/precompute_batter_popups.py，
   本機與 Neon 皆已灌 2020–25 共 46,520 筆；hc×2.5 展示座標同 precomputed_if_gbs
   慣例），端點 `_load_batter_popups` 表缺時回空清單不擋主流程。場內球覆蓋率
   口徑（2025 實測）：外野側 46.0%＋內野側 40.3%＋popup 7.1%＝93.4%，
@@ -722,7 +729,7 @@ OAA 排名頁（`src/pages/OaaRankings.jsx`，`/rankings`）：
   data/precomputed/if_on1b_constants.json，見階段B 章節）
 
 **更新雲端資料的方式**（例如匯入新年份的 statcast 之後）：
-1. 本機重跑 `python scripts/precompute_batter_balls.py`（source=target=本機 DSN，更新本機的兩張精簡表）
+1. 本機重跑 `python -m scripts.precompute.precompute_batter_balls`（source=target=本機 DSN，更新本機的兩張精簡表）
 2. 需要把新資料同步到 Neon 時，本機讀出 dataframe 後用 `psycopg2.connect('')`（空字串，靠 `PG*` 環境變數連線，
    見下方「Windows/Git Bash 已知問題」）連到 Neon 寫入，或用 `pg_dump`/`psql` 匯出匯入四張小表
 3. 改完 `src/`/`api/` 程式碼後：`git add` → `git commit` → 用 **GitHub Desktop** push（見下方已知問題，

@@ -25,6 +25,9 @@ __pycache__/
 .devtool/
 .vscode/
 
+# 本機用的目錄樹快照（tree /F /A 產生），非專案內容
+project_structure.txt
+
 # Frontend
 frontend/node_modules/
 frontend/dist/
