@@ -290,14 +290,16 @@ def _load_if_fielder_menu() -> None:
                 return None
             return option["oaa"] / option["n_balls"]
 
+        def _sort_key(option: IFFielderOptionEntry) -> tuple[float, str]:
+            rate = _oaa_rate(option)
+            return (-rate if rate is not None else float("inf"), option["name"])
+
         # 純 OAA/100 降序（同外野選單）；無評價的墊底按名字。
         # 不拿 has_effects 當排序鍵——它會把「有標籤但無效應」的人踢到底部，
         # 看起來像降序被打斷（2026-07-14 使用者回報）
         for year_options in opts.values():
             for position_options in year_options.values():
-                position_options.sort(key=lambda option: (-_oaa_rate(option) if _oaa_rate(option) is not None
-                                                           else float("inf"),
-                                                           option["name"]))
+                position_options.sort(key=_sort_key)
         _if_fielder_opts.clear()
         _if_fielder_opts.update(opts)
         logger.info(f"野手選單: {sorted(_if_fielder_opts)} 年份已載入")
@@ -316,10 +318,11 @@ def _load_fielders(year: int) -> dict[str, list[FielderCacheEntry]]:
         return {pos: [] for pos in POSITIONS}
 
     df_players = pd.read_csv(players_csv, index_col=0, encoding="utf-8-sig")
-    of_names = {
-        re.match(r"alpha\[(.+)\]", str(i)).group(1)
-        for i in df_players.index if str(i).startswith("alpha[")
-    }
+    of_names: set[str] = set()
+    for i in df_players.index:
+        match = re.match(r"alpha\[(.+)\]", str(i))
+        if match is not None:
+            of_names.add(match.group(1))
     _model_names[year] = {pos: of_names for pos in POSITIONS}
 
     _SQL = """
@@ -617,6 +620,8 @@ def if_years() -> list[int]:
 def if_batters(year: int | None = None) -> list[IFBatterEntry]:
     if year is None and _if_years:
         year = _if_years[-1]
+    if year is None:
+        return []
     return _if_batters_cache.get(year, [])
 
 
@@ -709,12 +714,25 @@ def _load_if_batter(batter_id: int, year: int) -> IfBatterData:
 
 def _if_player_effects(fids: dict[str, int | None]) -> PlayerEffects:
     """指定野手 → 球員層效應（未指定=聯盟平均，效應 0）。"""
-    alpha = np.array([_if_effects.get(fids[p], (0.0, 0.0))[0] if fids[p] else 0.0
-                      for p in IF_POSITIONS])
-    g = np.array([_if_effects.get(fids[p], (0.0, 0.0))[1] if fids[p] else 0.0
-                  for p in IF_POSITIONS])
+    assert _if_ad_norm is not None
+
+    def _effect(player_id: int | None, component: int) -> float:
+        if player_id is None:
+            return 0.0
+        return _if_effects.get(player_id, (0.0, 0.0))[component]
+
+    alpha = np.array([_effect(fids[p], 0) for p in IF_POSITIONS])
+    g = np.array([_effect(fids[p], 1) for p in IF_POSITIONS])
     return {"alpha": alpha, "g": g,
             "ad_mean": _if_ad_norm[0], "ad_std": _if_ad_norm[1]}
+
+
+def _fielder_display_name(fids: dict[str, int | None], pos: str) -> str | None:
+    """指定野手的顯示名稱；未指定（None）時回傳 None（前端顯示為聯盟平均）。"""
+    player_id = fids.get(pos)
+    if player_id is None:
+        return None
+    return _name_map.get(player_id, f"#{player_id}")
 
 
 def _if_position_set(pairs: dict[str, tuple[float, float]], exp_outs: float) -> IFPositionSet:
@@ -754,7 +772,9 @@ def if_result(batter_id: int, year: int) -> IFResultResponse:
     stand, n_gb, hp_to_1b, exp_league, exp_opt = row[:5]
     opt_pairs = {pos: (row[5 + i * 2], row[6 + i * 2])
                  for i, pos in enumerate(IF_POSITIONS)}
-    league_pairs = {pos: tuple(_if_league[year][pos]) for pos in IF_POSITIONS}
+    league_pairs: dict[str, tuple[float, float]] = {
+        pos: (_if_league[year][pos][0], _if_league[year][pos][1]) for pos in IF_POSITIONS
+    }
     gain = exp_opt - exp_league
     return IFResultResponse(
         batter_id=batter_id,
@@ -805,7 +825,9 @@ def if_result_custom(batter_id: int, year: int,
         res = optimize_infield(balls, _if_bayes_model, n_restarts=0,
                                extra_starts=[warm], player_effects=pe)
 
-    league_pairs = {pos: tuple(_if_league[year][pos]) for pos in IF_POSITIONS}
+    league_pairs: dict[str, tuple[float, float]] = {
+        pos: (_if_league[year][pos][0], _if_league[year][pos][1]) for pos in IF_POSITIONS
+    }
     lg_angles = np.array([league_pairs[p][0] for p in IF_POSITIONS])
     lg_depths = np.array([league_pairs[p][1] for p in IF_POSITIONS])
     # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
@@ -821,8 +843,7 @@ def if_result_custom(batter_id: int, year: int,
         batter_id=batter_id,
         name=_name_map.get(batter_id, f"#{batter_id}"),
         year=year, stand=stand,
-        fielders={p: (_name_map.get(fids[p], f"#{fids[p]}") if fids[p] else None)
-                  for p in IF_POSITIONS},
+        fielders={p: _fielder_display_name(fids, p) for p in IF_POSITIONS},
         league=_if_position_set(league_pairs, round(exp_league, 6)),
         optimized=_if_position_set(custom_pairs, round(res["exp_outs"], 6)),
         baseline_exp_outs=round(baseline, 6),
@@ -899,6 +920,7 @@ def _solve_if_dp(balls: pd.DataFrame, state: BaseOutState, warm_angles: np.ndarr
     （LHS 8＋無壘況解＋聯盟站位），指定野手時錨定式精修（anchored_starts
     避 kink）。scorer 掛 pe 評最佳化組、scorer_base 效應 0 評聯盟基準。
     """
+    assert _re24_table is not None and _delta_re is not None
     balls["runner_hp_to_1b"] = _if_on1b_runner_hp
     miss_cost = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
     single_out_delta_re, double_play_delta_re = dp_delta_re(_re24_table, _delta_re, state[3])
@@ -946,6 +968,7 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     零效應解的起點配置同跨年驗證（scripts/validate_if_dp.py）：LHS 8＋
     無壘況最佳解＋聯盟站位，勿在未重做收斂測試前調低。
     """
+    assert _re24_table is not None
     t_start = time.perf_counter()
     year = req.year
     state: BaseOutState = (req.on_1b, req.on_2b, req.on_3b, req.outs)
@@ -996,8 +1019,7 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
         name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
         year=year, stand=stand,
         situation=f"1--  {req.outs} out",
-        fielders={p: (_name_map.get(fids[p], f"#{fids[p]}") if fids[p] else None)
-                  for p in IF_POSITIONS},
+        fielders={p: _fielder_display_name(fids, p) for p in IF_POSITIONS},
         league=IFOptimizeSet(positions=positions_dict(lg_angles4, lg_depths4),
                              exp_outs=round(eo_lg, 6), runs=round(runs_lg, 3)),
         optimized=IFOptimizeSet(positions=positions_dict(opt_angles4, opt_depths4),
@@ -1035,6 +1057,7 @@ def if_optimize(req: IFOptimizeRequest) -> IFOptimizeResponse:
     if ((req.on_1b, req.on_2b, req.on_3b) == (1, 0, 0) and req.outs < 2
             and _if_dp_out_model is not None):
         return _if_optimize_dp(req)
+    assert _re24_table is not None and _delta_re is not None
 
     t_start = time.perf_counter()
     year = req.year
@@ -1092,8 +1115,7 @@ def if_optimize(req: IFOptimizeRequest) -> IFOptimizeResponse:
         name=raw_name.replace(", ", " ") if ", " in raw_name else raw_name,
         year=year, stand=stand,
         situation=f"{bases}  {req.outs} out",
-        fielders={p: (_name_map.get(fids[p], f"#{fids[p]}") if fids[p] else None)
-                  for p in IF_POSITIONS},
+        fielders={p: _fielder_display_name(fids, p) for p in IF_POSITIONS},
         league=IFOptimizeSet(positions=positions_dict(lg_angles, lg_depths),
                              exp_outs=round(eo_lg, 6), runs=round(runs_lg, 3)),
         optimized=IFOptimizeSet(positions=positions_dict(res["angles"], res["depths"]),
@@ -1158,11 +1180,12 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
         raise HTTPException(404, f"No infield data for year {req.year}. Available: {_if_years}")
     if req.year not in _if_league:
         raise HTTPException(500, f"if_league_positions.json 缺 {req.year}")
+    assert _re24_table is not None and _delta_re is not None and _hit_bundle is not None
 
     t_start = time.perf_counter()
     year = req.year
     home_team = req.home_team.upper() if req.home_team else None
-    state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
+    state: BaseOutState = (req.on_1b, req.on_2b, req.on_3b, req.outs)
 
     # ── 外野側（同 /api/optimize 一般模式；共用打者球快取）──────────
     yr_balls_cache = _batter_balls_cache.setdefault(year, {})
@@ -1370,8 +1393,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
         popup_balls=popups,
         park_boundary=(get_park_boundary_coords(home_team) if home_team else None),
         fielders={**{p: (req.of_fielders or {}).get(p) or None for p in POSITIONS},
-                  **{p: (_name_map.get(if_fids[p], f"#{if_fids[p]}") if if_fids[p] else None)
-                     for p in IF_POSITIONS}},
+                  **{p: _fielder_display_name(if_fids, p) for p in IF_POSITIONS}},
         stats=IntegratedStats(
             n_of_balls=len(balls_of), n_gb=len(balls_if), n_popups=len(popups),
             n_wall_balls=int(wall_flags.sum()), home_team=home_team,
@@ -1430,6 +1452,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         raise HTTPException(422, f"Unsupported team '{req.home_team}'. Use GET /api/teams.")
     if req.year not in _AVAILABLE_YEARS:
         raise HTTPException(422, f"No model for year {req.year}. Available: {_AVAILABLE_YEARS}")
+    assert _re24_table is not None and _delta_re is not None and _hit_bundle is not None
 
     year      = req.year
     models_dir = BASE / "models" / str(year)
