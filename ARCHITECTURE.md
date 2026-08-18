@@ -24,6 +24,7 @@
 - PyMC 採樣前必設 `PYTENSOR_FLAGS=optimizer_excluding=constant_folding`
   （本機 msys64 g++ 對 -inf 常數節點的 constant_folding 重寫會靜默失敗；完全停用 C 後端則慢到不可行）
 - 訓練年份 `2021–2024`，`2025` 一律留作樣本外驗證（與 Model_3 的 pass18_2124 對齊，方便直接比較）
+- 型別檢查：`src/`/`api/`/`scripts/` 共用模組全數補上完整型別提示，`mypy` 在 `api/main.py` 上跑出零錯誤（除了缺第三方 stub 套件的雜訊，如 `pandas-stubs`/`types-psycopg2`）；CI（`.github/workflows/tests.yml`）跑 91-test 預設 pytest 套件，不含 mypy
 
 ## 資料夾結構
 ```
