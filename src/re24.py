@@ -16,11 +16,18 @@ Usage:
 """
 import json
 from pathlib import Path
+from typing import Callable
+
 import numpy as np
 import pandas as pd
 import psycopg2
 
 from .config import DSN
+
+# 壘況鍵：(on_1b, on_2b, on_3b, outs_when_up)，各壘為 0/1、outs 為 0~2
+BaseOutState = tuple[int, int, int, int]
+# ΔRE 鍵：(hit_type, on_1b, on_2b, on_3b, outs_when_up)
+HitDeltaKey = tuple[str, int, int, int, int]
 
 # 只取有 events 的打席（每個打席的最後一球），且為例行賽
 _QUERY = """
@@ -48,7 +55,7 @@ def _load_pa_data(years: list[int], dsn: str = DSN) -> pd.DataFrame:
     return df
 
 
-def build_re24_table(years: list[int], dsn: str = DSN) -> dict:
+def build_re24_table(years: list[int], dsn: str = DSN) -> dict[BaseOutState, float]:
     """
     Compute empirical RE24 table from statcast data.
 
@@ -76,41 +83,41 @@ def build_re24_table(years: list[int], dsn: str = DSN) -> dict:
 
 
 # 確定性跑壘推進模型（實測樣本不足時的理論備援）
-# 返回 (new_on_1b, new_on_2b, new_on_3b, runs_scored)
-_ADVANCE = {
+# 每個 advance 函式回傳 (new_on_1b, new_on_2b, new_on_3b, runs_scored)
+_ADVANCE: dict[str, Callable[[int, int, int], tuple[int, int, int, int]]] = {
     "1B": lambda b1, b2, b3: (1,  b1, b2,          b3         ),
     "2B": lambda b1, b2, b3: (0,  1,  b1,           b2 + b3   ),
     "3B": lambda b1, b2, b3: (0,  0,  1,             b1+b2+b3 ),
 }
 
 
-def build_delta_re_deterministic(re24: dict) -> dict:
+def build_delta_re_deterministic(re24: dict[BaseOutState, float]) -> dict[HitDeltaKey, float]:
     """
     Compute ΔRE(k, on_1b, on_2b, on_3b, outs) using deterministic runner advancement.
     跑者固定推進（理論值），作為實測樣本不足時的備援。
     """
-    delta: dict = {}
+    delta: dict[HitDeltaKey, float] = {}
     for b1 in (0, 1):
         for b2 in (0, 1):
             for b3 in (0, 1):
                 for outs in (0, 1, 2):
                     old_re = re24.get((b1, b2, b3, outs), 0.0)
-                    for k, advance in _ADVANCE.items():
+                    for hit_type, advance in _ADVANCE.items():
                         n1, n2, n3, runs = advance(b1, b2, b3)
                         new_re = re24.get((n1, n2, n3, outs), 0.0)
-                        delta[(k, b1, b2, b3, outs)] = runs + new_re - old_re
+                        delta[(hit_type, b1, b2, b3, outs)] = runs + new_re - old_re
     return delta
 
 
-_HIT_MAP = {"single": "1B", "double": "2B", "triple": "3B"}
+_HIT_MAP: dict[str, str] = {"single": "1B", "double": "2B", "triple": "3B"}
 
 
 def build_delta_re(
-    re24: dict,
+    re24: dict[BaseOutState, float],
     years: list[int],
     dsn: str = DSN,
     min_n: int = 30,
-) -> dict:
+) -> dict[HitDeltaKey, float]:
     """
     Compute ΔRE(k, on_1b, on_2b, on_3b, outs) using *empirical* runner advancement.
 
@@ -145,18 +152,18 @@ def build_delta_re(
     hits["hit_type"] = hits["events"].map(_HIT_MAP)
     hits["runs_scored"] = (hits["post_bat_score"] - hits["bat_score"]).clip(lower=0)
 
-    def _emp(row):
-        old = (int(row.on_1b), int(row.on_2b), int(row.on_3b), int(row.outs_when_up))
-        new = (int(row.post_on_1b), int(row.post_on_2b), int(row.post_on_3b), int(row.outs_when_up))
-        if old not in re24 or new not in re24:
+    def _compute_empirical_delta_re(row: pd.Series) -> float:
+        old_state = (int(row.on_1b), int(row.on_2b), int(row.on_3b), int(row.outs_when_up))
+        new_state = (int(row.post_on_1b), int(row.post_on_2b), int(row.post_on_3b), int(row.outs_when_up))
+        if old_state not in re24 or new_state not in re24:
             return np.nan
-        return row.runs_scored + re24[new] - re24[old]
+        return row.runs_scored + re24[new_state] - re24[old_state]
 
-    hits["demp"] = hits.apply(_emp, axis=1)
+    hits["demp"] = hits.apply(_compute_empirical_delta_re, axis=1)
     hits = hits[hits["demp"].notna()]
 
     # 以理論值為底，足量樣本的格子覆寫為實測值
-    delta = dict(theory)
+    delta: dict[HitDeltaKey, float] = dict(theory)
     for (b1, b2, b3, outs), g in hits.groupby(["on_1b", "on_2b", "on_3b", "outs_when_up"]):
         for ht in ("1B", "2B", "3B"):
             sub = g[g["hit_type"] == ht]
@@ -165,7 +172,7 @@ def build_delta_re(
     return delta
 
 
-def save_re24(re24: dict, delta: dict, out_dir: Path) -> None:
+def save_re24(re24: dict[BaseOutState, float], delta: dict[HitDeltaKey, float], out_dir: Path) -> None:
     """Save both tables to JSON in out_dir."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -181,18 +188,20 @@ def save_re24(re24: dict, delta: dict, out_dir: Path) -> None:
         json.dump(delta_str, f, indent=2)
 
 
-def load_re24(data_dir: Path) -> tuple[dict, dict]:
+def load_re24(data_dir: Path) -> tuple[dict[BaseOutState, float], dict[HitDeltaKey, float]]:
     """Load RE24 table and ΔRE dict from out_dir."""
     data_dir = Path(data_dir)
 
     with open(data_dir / "re24_table.json", encoding="utf-8") as f:
-        re24_str = json.load(f)
+        re24_str: dict[str, float] = json.load(f)
     with open(data_dir / "delta_re.json", encoding="utf-8") as f:
-        delta_str = json.load(f)
+        delta_str: dict[str, float] = json.load(f)
 
-    re24 = {tuple(int(x) for x in k.split("-")): v for k, v in re24_str.items()}
+    re24: dict[BaseOutState, float] = {
+        tuple(int(x) for x in k.split("-")): v for k, v in re24_str.items()
+    }
 
-    delta: dict = {}
+    delta: dict[HitDeltaKey, float] = {}
     for k_str, v in delta_str.items():
         parts = k_str.split("-")
         # parts[0] = hit_type (e.g. "1B"), parts[1:5] = ints

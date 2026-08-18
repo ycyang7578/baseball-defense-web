@@ -11,11 +11,11 @@ import re
 import pandas as pd
 import requests
 
-BASE_URL = "https://baseballsavant.mlb.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+BASE_URL: str = "https://baseballsavant.mlb.com"
+HEADERS: dict[str, str] = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
-def fetch_leaderboard_raw(endpoint: str, params: dict) -> pd.DataFrame:
+def fetch_leaderboard_raw(endpoint: str, params: dict[str, str | int]) -> pd.DataFrame:
     """打指定 leaderboard 端點，回傳未整理欄位的原始 JSON。"""
     r = requests.get(
         f"{BASE_URL}/leaderboard/{endpoint}",

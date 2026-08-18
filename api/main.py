@@ -7,31 +7,38 @@ POST /api/optimize 系列耗時受 n_restarts/併發影響，實測數字見 ARC
 """
 import json
 import logging
+import math
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator, TypedDict
 
+import numpy as np
+import pandas as pd
 import psycopg2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from src.optimization import (
     optimize_positions, prepare_batter_balls, compute_w_j,
     compute_ball_catch_probs,
     get_league_avg_positions, get_batter_stand, load_qualifying_batters,
-    load_model_params, load_player_params, POSITIONS,
+    load_model_params, load_player_params,
+    GroupMu, OutfieldXY, QualifyingBatter, POSITIONS,
 )
 from src.config import DSN
-from src.hit_prob import predict_hit_probs_batch, load_hit_prob
-from src.re24 import load_re24
+from src.hit_prob import HitProbBundle, predict_hit_probs_batch, load_hit_prob
+from src.re24 import BaseOutState, HitDeltaKey, load_re24
 from src.stadium_walls import SUPPORTED_TEAMS, get_park_boundary_coords, is_wall_ball
 from src.if_dp_optimize import (DP_POSITIONS, DPScorer, anchored_starts,
                                 dp_delta_re, optimize_infield_dp,
                                 positions_to_params_dp)
-from src.if_optimize import (expected_outs as if_expected_outs,
+from src.if_optimize import (PlayerEffects, expected_outs as if_expected_outs,
                              optimize_infield, positions_to_params,
                              predict_p_out)
 from src.if_runvalue import delta_re_out, gb_miss_costs, runvalue_ball_weights
@@ -48,9 +55,50 @@ from .schemas import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BASE    = Path(__file__).parent.parent
-PRE_DIR = BASE / "data" / "precomputed"
-_MIN_BALLS = 30
+BASE:    Path = Path(__file__).parent.parent
+PRE_DIR: Path = BASE / "data" / "precomputed"
+_MIN_BALLS: int = 30
+
+
+class BatterEntry(TypedDict):
+    batter_id: int
+    name: str
+    n_balls: int
+
+
+class IFBatterEntry(TypedDict):
+    batter_id: int
+    name: str
+    n_gb: int
+    stand: str
+
+
+class FielderCacheEntry(TypedDict):
+    """_load_fielders() 的精簡快取形狀（僅供啟動時存在性檢查/計數，
+    完整欄位見 get_fielders() 端點自己查的 FielderEntry）。"""
+    name: str
+    oaa: float
+    n_opp: int
+    player_id: int | None
+
+
+class FielderEntry(TypedDict):
+    name: str
+    oaa: float
+    n_opp: int
+    player_id: int | None
+    team_id: int | None
+    official_oaa: int | None
+    official_n_opp: int | None
+
+
+class IFFielderOptionEntry(TypedDict):
+    player_id: int
+    name: str
+    has_effects: bool
+    oaa: float | None
+    n_balls: int | None
+
 
 # Render 免費方案只有 0.1 CPU：多個 optimize_positions 同時跑會互搶 CPU、
 # 讓每一個都變慢（實測：單獨跑 50s，兩個同時跑各要 70~80s）。用 semaphore
@@ -62,45 +110,45 @@ _AVAILABLE_YEARS: list[int] = sorted(
     y for y in range(2020, 2030)
     if (BASE / "models" / str(y) / "OF" / "OF_summary_players.csv").exists()
 )
-_DEFAULT_YEAR = _AVAILABLE_YEARS[-1] if _AVAILABLE_YEARS else 2025
+_DEFAULT_YEAR: int = _AVAILABLE_YEARS[-1] if _AVAILABLE_YEARS else 2025
 
 # ── 啟動快取 ──────────────────────────────────────────────────────
 _name_map:    dict[int, str]  = {}
-_re24_table = None
-_delta_re   = None
-_hit_bundle = None
+_re24_table: dict[BaseOutState, float] | None = None
+_delta_re:   dict[HitDeltaKey, float] | None = None
+_hit_bundle: HitProbBundle | None = None
 
 # year-keyed caches
-_scalers:       dict[int, dict] = {}          # year → pos → scaler
-_mus:           dict[int, dict] = {}          # year → pos → mus
-_batters_cache: dict[int, list[dict]] = {}    # year → list[{batter_id, name, n_balls}]
+_scalers:       dict[int, dict[str, StandardScaler]] = {}   # year → pos → scaler
+_mus:           dict[int, dict[str, GroupMu]] = {}           # year → pos → mus
+_batters_cache: dict[int, list[BatterEntry]] = {}             # year → list[{batter_id, name, n_balls}]
 
 # ── 打者資料快取（同打者換壘況時跳過 DB 查詢與 KDE）───────────────
-_batter_balls_cache:    dict[int, dict[int, object]] = {}  # year → batter_id → DataFrame
-_batter_hitprobs_cache: dict[int, dict[int, object]] = {}  # year → batter_id → ndarray
+_batter_balls_cache:    dict[int, dict[int, pd.DataFrame]] = {}  # year → batter_id → DataFrame
+_batter_hitprobs_cache: dict[int, dict[int, np.ndarray]] = {}    # year → batter_id → ndarray
 
 # ── Rankings 多年份快取（year → ...）────────────────────────────
-_fielders_cache: dict[int, dict[str, list[dict]]] = {}  # year → pos → list
-_model_names:    dict[int, dict[str, set]]        = {}  # year → pos → name set
-_team_map:       dict[int, dict[int, int]]        = {}  # year → player_id → team_id
+_fielders_cache: dict[int, dict[str, list[FielderCacheEntry]]] = {}  # year → pos → list
+_model_names:    dict[int, dict[str, set[str]]]           = {}  # year → pos → name set
+_team_map:       dict[int, dict[int, int]]                = {}  # year → player_id → team_id
 
 # ── 內野快取（結果全部離線預算，見 scripts/precompute_if_optimize.py）──
-IF_POSITIONS = ("1B", "2B", "3B", "SS")
+IF_POSITIONS: tuple[str, ...] = ("1B", "2B", "3B", "SS")
 _if_years:          list[int] = []                       # precomputed_if_positions 有的年份
 _if_ranking_years:  list[int] = []                       # if_model_oaa 有的年份
-_if_batters_cache:  dict[int, list[dict]] = {}           # year → [{batter_id, name, n_gb, stand}]
+_if_batters_cache:  dict[int, list[IFBatterEntry]] = {}      # year → [{batter_id, name, n_gb, stand}]
 _if_league:         dict[int, dict[str, list[float]]] = {}  # year → pos → [angle, depth]
 _if_team_map:       dict[int, dict[int, int]] = {}       # year → player_id → team_id
 # 個人化站位（貝葉斯球員層，見 scripts/train_if_bayes.py / export_if_bayes.py）
-_if_bayes_model = None                                    # 群體層 pipeline（joblib）
+_if_bayes_model: Pipeline | None = None                   # 群體層 pipeline（joblib）
 _if_effects:        dict[int, tuple[float, float]] = {}  # player_id → (alpha, g)
 _if_ad_norm:        tuple[float, float] | None = None    # (ad_mean, ad_std)
-_if_fielder_opts:   dict[int, dict[str, list[dict]]] = {}  # year → pos → options
+_if_fielder_opts:   dict[int, dict[str, list[IFFielderOptionEntry]]] = {}  # year → pos → options
 # 安打類型模型（run-value 計價，內外野整合頁用，見 src/if_runvalue.py）
-_if_xb_model = None
+_if_xb_model: Pipeline | None = None
 # 階段B：一壘有人 DP 優化資產（models/if_gb/on1b/，見 src/if_dp_optimize.py）
-_if_dp_out_model = None                                   # 兩段 GLM：P(≥1 出局)
-_if_dp_model = None                                       # 兩段 GLM：P(DP|≥1 出局)
+_if_dp_out_model: Pipeline | None = None                  # 兩段 GLM：P(≥1 出局)
+_if_dp_model: Pipeline | None = None                      # 兩段 GLM：P(DP|≥1 出局)
 _if_on1b_league: dict[str, tuple[float, float]] = {}      # pos → (angle, depth)
 _if_on1b_runner_hp: float | None = None                   # 聯盟跑者 hp_to_1b 中位數
 
@@ -188,7 +236,6 @@ def _load_if_bayes() -> None:
     啟動，/api/if_fielder_options 與 /api/if_result_custom 回 404/503。"""
     global _if_bayes_model, _if_ad_norm
     import joblib
-    import pandas as pd
 
     bayes_dir = BASE / "models" / "if_gb" / "bayes"
     try:
@@ -209,7 +256,7 @@ def _load_if_fielder_menu() -> None:
     """野手選單快取。獨立成函式：啟動時對 DB 的暫時性失敗不該讓功能死到重啟
     （2026-07-13 線上實例即因此選單 404），if_fielder_options 會惰性重試。"""
     try:
-        opts: dict[int, dict[str, list[dict]]] = {}
+        opts: dict[int, dict[str, list[IFFielderOptionEntry]]] = {}
         with psycopg2.connect(DSN) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('fielder_positioning')")
@@ -217,7 +264,7 @@ def _load_if_fielder_menu() -> None:
                     logger.warning("fielder_positioning 不存在，野手選單停用")
                     return
                 # 該年該位置的模型評價（標籤 OAA/100 與最低守備次數滑桿用）
-                oaa_map: dict[tuple, tuple[float, int]] = {}
+                oaa_map: dict[tuple[int, str, int], tuple[float, int]] = {}
                 cur.execute("SELECT to_regclass('if_model_oaa')")
                 if cur.fetchone()[0] is not None:
                     cur.execute(
@@ -238,19 +285,19 @@ def _load_if_fielder_menu() -> None:
                          "has_effects": int(fid) in _if_effects,
                          "oaa": oaa_n[0] if oaa_n else None,
                          "n_balls": oaa_n[1] if oaa_n else None}))
-        def _oaa_rate(o):
-            if o["oaa"] is None or not o["n_balls"]:
+        def _oaa_rate(option: IFFielderOptionEntry) -> float | None:
+            if option["oaa"] is None or not option["n_balls"]:
                 return None
-            return o["oaa"] / o["n_balls"]
+            return option["oaa"] / option["n_balls"]
 
         # 純 OAA/100 降序（同外野選單）；無評價的墊底按名字。
         # 不拿 has_effects 當排序鍵——它會把「有標籤但無效應」的人踢到底部，
         # 看起來像降序被打斷（2026-07-14 使用者回報）
-        for year in opts.values():
-            for lst in year.values():
-                lst.sort(key=lambda o: (-_oaa_rate(o) if _oaa_rate(o) is not None
-                                        else float("inf"),
-                                        o["name"]))
+        for year_options in opts.values():
+            for position_options in year_options.values():
+                position_options.sort(key=lambda option: (-_oaa_rate(option) if _oaa_rate(option) is not None
+                                                           else float("inf"),
+                                                           option["name"]))
         _if_fielder_opts.clear()
         _if_fielder_opts.update(opts)
         logger.info(f"野手選單: {sorted(_if_fielder_opts)} 年份已載入")
@@ -258,10 +305,9 @@ def _load_if_fielder_menu() -> None:
         logger.warning(f"野手選單載入失敗: {e}")
 
 
-def _load_fielders(year: int) -> dict[str, list[dict]]:
+def _load_fielders(year: int) -> dict[str, list[FielderCacheEntry]]:
     """指定年度每位置外野手清單（需要該年 models/{year}/OF/OF_summary_players.csv）。"""
     import re
-    import pandas as pd
 
     models_dir  = BASE / "models" / str(year) / "OF"
     players_csv = models_dir / "OF_summary_players.csv"
@@ -287,7 +333,7 @@ def _load_fielders(year: int) -> dict[str, list[dict]]:
         GROUP BY m.name_fielder, m.model_oaa, m.n_opp
         ORDER BY m.model_oaa / m.n_opp DESC
     """
-    out: dict[str, list[dict]] = {}
+    out: dict[str, list[FielderCacheEntry]] = {}
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             for pos in POSITIONS:
@@ -341,12 +387,12 @@ def _load_team_info(player_ids: list[int], season: int) -> dict[int, int]:
     return result
 
 
-def _load_batters(year: int) -> list[dict]:
+def _load_batters(year: int) -> list[QualifyingBatter]:
     return load_qualifying_batters(year, DSN, _MIN_BALLS)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _re24_table, _delta_re, _hit_bundle
 
     # 名稱快取
@@ -409,21 +455,21 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @app.get("/api/batters", response_model=list[BatterInfo])
-def get_batters(year: int = _DEFAULT_YEAR):
+def get_batters(year: int = _DEFAULT_YEAR) -> list[BatterEntry]:
     return _batters_cache.get(year, _batters_cache.get(_DEFAULT_YEAR, []))
 
 
 @app.get("/api/teams", response_model=list[str])
-def get_teams():
+def get_teams() -> list[str]:
     return SUPPORTED_TEAMS
 
 
 @app.get("/api/years")
-def get_years():
+def get_years() -> list[int]:
     return sorted(_AVAILABLE_YEARS)
 
 
-def _compute_avg_oaa_per_ball(rows, yr_model_names: dict) -> float:
+def _compute_avg_oaa_per_ball(rows: list[tuple], yr_model_names: dict[str, set[str]]) -> float:
     """跨 LF+CF+RF 統一中心化用的聯盟平均：只用有模型參數的球員計算。
 
     rows: (name, position, model_oaa, n_opp, ...) 的可迭代物件，只用前四欄。
@@ -436,10 +482,18 @@ def _compute_avg_oaa_per_ball(rows, yr_model_names: dict) -> float:
     return total_oaa / total_opp if total_opp else 0.0
 
 
+class PlayerTrendEntry(TypedDict):
+    year: int
+    position: str
+    oaa: float
+    n_opp: int
+    rate: float | None
+
+
 @app.get("/api/player_trend")
-def player_trend(name: str):
+def player_trend(name: str) -> list[PlayerTrendEntry]:
     """Return year-by-year centered OAA/100 matching the Rankings table."""
-    result = []
+    result: list[PlayerTrendEntry] = []
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             for yr in _AVAILABLE_YEARS:
@@ -452,19 +506,19 @@ def player_trend(name: str):
 
                 avg_per_ball = _compute_avg_oaa_per_ball(all_rows, yr_model_names)
 
-                for nm, pos, oaa, n in all_rows:
-                    if nm == name and nm in yr_model_names.get(pos, set()):
-                        c = float(oaa) - avg_per_ball * int(n)
+                for fielder_name, pos, oaa, n in all_rows:
+                    if fielder_name == name and fielder_name in yr_model_names.get(pos, set()):
+                        centered_oaa = float(oaa) - avg_per_ball * int(n)
                         result.append({
                             "year": yr, "position": pos,
-                            "oaa": round(c, 2), "n_opp": int(n),
-                            "rate": round(c / int(n) * 100, 2) if n else None,
+                            "oaa": round(centered_oaa, 2), "n_opp": int(n),
+                            "rate": round(centered_oaa / int(n) * 100, 2) if n else None,
                         })
-    return sorted(result, key=lambda x: x["year"])
+    return sorted(result, key=lambda entry: entry["year"])
 
 
 @app.get("/api/fielders", response_model=dict[str, list[FielderInfo]])
-def get_fielders(year: int = 2025, min_opp: int = 100):
+def get_fielders(year: int = 2025, min_opp: int = 100) -> dict[str, list[FielderEntry]]:
     if year not in _fielders_cache:
         raise HTTPException(404, f"No ranking data for year {year}. Available: {sorted(_AVAILABLE_YEARS)}")
 
@@ -488,7 +542,7 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
 
     avg_oaa_per_ball = _compute_avg_oaa_per_ball(all_rows, yr_model_names)
 
-    result: dict[str, list[dict]] = {}
+    result: dict[str, list[FielderEntry]] = {}
     for pos in POSITIONS:
         rows_pos = [
             (name, float(oaa) - avg_oaa_per_ball * int(n), int(n), pid, ooaa, onopp)
@@ -505,8 +559,18 @@ def get_fielders(year: int = 2025, min_opp: int = 100):
     return result
 
 
+class StarBucket(TypedDict):
+    opp: int
+    outs: int
+
+
+class StarStatsEntry(TypedDict):
+    stars: list[StarBucket]
+    all: StarBucket
+
+
 @app.get("/api/star_stats")
-def get_star_stats(year: int = _DEFAULT_YEAR):
+def get_star_stats(year: int = _DEFAULT_YEAR) -> dict[str, StarStatsEntry]:
     # 讀我方模型算出的星級分布（model_star_stats），跨位置已合併
     _SQL = """
         SELECT name_fielder,
@@ -524,10 +588,10 @@ def get_star_stats(year: int = _DEFAULT_YEAR):
             cur.execute(_SQL, {"year": year})
             rows = cur.fetchall()
 
-    result = {}
+    result: dict[str, StarStatsEntry] = {}
     for row in rows:
         name = row[0]
-        stars = []
+        stars: list[StarBucket] = []
         total_opp = total_out = 0
         for i in range(6):
             opp = int(row[1 + i * 2] or 0)
@@ -545,22 +609,29 @@ def get_star_stats(year: int = _DEFAULT_YEAR):
 # ── 內野端點（結果全部離線預算，查表即回，無運算）───────────────────
 
 @app.get("/api/if_years")
-def if_years():
+def if_years() -> list[int]:
     return _if_years
 
 
 @app.get("/api/if_batters", response_model=list[IFBatterInfo])
-def if_batters(year: int | None = None):
+def if_batters(year: int | None = None) -> list[IFBatterEntry]:
     if year is None and _if_years:
         year = _if_years[-1]
     return _if_batters_cache.get(year, [])
 
 
-_integrated_batters_cache: dict[int, list[dict]] = {}   # year → 選單（含全部球數）
+class IntegratedBatterEntry(TypedDict):
+    batter_id: int
+    name: str
+    n_gb: int
+    n_total: int
+
+
+_integrated_batters_cache: dict[int, list[IntegratedBatterEntry]] = {}   # year → 選單（含全部球數）
 
 
 @app.get("/api/integrated_batters", response_model=list[IntegratedBatterInfo])
-def integrated_batters(year: int | None = None):
+def integrated_batters(year: int | None = None) -> list[IntegratedBatterEntry]:
     """整合頁打者選單：內野合格打者（滾地 ≥ 50 的離線預算名單；曾納入
     OF-only 打者後又移除——樣本不足的退化體驗不佳，2026-07-14 使用者定案）。
     括號顯示的是圖上會出現的全部球數（滾地＋外野飛球/平飛＋popup）。"""
@@ -586,24 +657,24 @@ def integrated_batters(year: int | None = None):
                         pu_n = dict(cur.fetchall())
         except Exception as e:
             logger.warning(f"integrated_batters 球數統計失敗，退回滾地球數: {e}")
-        rows = [
+        rows: list[IntegratedBatterEntry] = [
             {"batter_id": b["batter_id"], "name": b["name"], "n_gb": b["n_gb"],
              "n_total": b["n_gb"] + of_n.get(b["batter_id"], 0)
                         + pu_n.get(b["batter_id"], 0)}
             for b in _if_batters_cache[year]]
         _integrated_batters_cache[year] = sorted(
-            rows, key=lambda r: r["n_total"], reverse=True)
+            rows, key=lambda entry: entry["n_total"], reverse=True)
     return _integrated_batters_cache[year]
 
 
-def _load_if_batter(batter_id: int, year: int):
+IfBatterData = tuple[str, int, float, np.ndarray, np.ndarray, list[tuple], pd.DataFrame]
+
+
+def _load_if_batter(batter_id: int, year: int) -> IfBatterData:
     """precomputed 出局率最佳解＋打者滾地球（內野線上端點共用）。
 
     回傳 (stand, n_gb, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_df)；
     balls_df 已補 launch_angle 缺值、附 hp_to_1b / stand_R 特徵欄。"""
-    import numpy as np
-    import pandas as pd
-
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -636,9 +707,8 @@ def _load_if_batter(batter_id: int, year: int):
     return stand, n_gb, float(hp_to_1b), warm_angles, warm_depths, ball_rows, balls
 
 
-def _if_player_effects(fids: dict[str, int | None]) -> dict:
+def _if_player_effects(fids: dict[str, int | None]) -> PlayerEffects:
     """指定野手 → 球員層效應（未指定=聯盟平均，效應 0）。"""
-    import numpy as np
     alpha = np.array([_if_effects.get(fids[p], (0.0, 0.0))[0] if fids[p] else 0.0
                       for p in IF_POSITIONS])
     g = np.array([_if_effects.get(fids[p], (0.0, 0.0))[1] if fids[p] else 0.0
@@ -648,8 +718,7 @@ def _if_player_effects(fids: dict[str, int | None]) -> dict:
 
 
 def _if_position_set(pairs: dict[str, tuple[float, float]], exp_outs: float) -> IFPositionSet:
-    import math
-    positions = {}
+    positions: dict[str, IFPosition] = {}
     for pos, (angle, depth) in pairs.items():
         rad = math.radians(angle)
         positions[pos] = IFPosition(x=round(depth * math.sin(rad), 1),
@@ -659,7 +728,7 @@ def _if_position_set(pairs: dict[str, tuple[float, float]], exp_outs: float) -> 
 
 
 @app.get("/api/if_result", response_model=IFResultResponse)
-def if_result(batter_id: int, year: int):
+def if_result(batter_id: int, year: int) -> IFResultResponse:
     if year not in _if_years:
         raise HTTPException(404, f"No infield data for year {year}. Available: {_if_years}")
     if year not in _if_league:
@@ -703,7 +772,7 @@ def if_result(batter_id: int, year: int):
 
 
 @app.get("/api/if_fielder_options", response_model=dict[str, list[IFFielderOption]])
-def if_fielder_options(year: int = 2025):
+def if_fielder_options(year: int = 2025) -> dict[str, list[IFFielderOptionEntry]]:
     """個人化站位的野手選單（該年有站位資料的野手，依位置分組）。"""
     if _if_bayes_model is None:
         raise HTTPException(503, "個人化模型未載入")
@@ -717,13 +786,10 @@ def if_fielder_options(year: int = 2025):
 @app.get("/api/if_result_custom", response_model=IFCustomResultResponse)
 def if_result_custom(batter_id: int, year: int,
                      fielder_1b: int | None = None, fielder_2b: int | None = None,
-                     fielder_3b: int | None = None, fielder_ss: int | None = None):
+                     fielder_3b: int | None = None, fielder_ss: int | None = None) -> IFCustomResultResponse:
     """指定野手陣容的個人化站位（錨定式：從零效應最佳解 warm start 局部優化，
     位移只反映球員效應的拉力，不是平坦地形的等值漂移——見 ARCHITECTURE.md
     「內野貝葉斯球員層」）。未指定的位置視為聯盟平均野手（效應 0）。"""
-    import numpy as np
-    import pandas as pd
-
     if _if_bayes_model is None:
         raise HTTPException(503, "個人化模型未載入")
     if year not in _if_years:
@@ -769,8 +835,18 @@ def if_result_custom(batter_id: int, year: int,
     )
 
 
+class IFFielderEntry(TypedDict):
+    name: str
+    player_id: int
+    team_id: int | None
+    oaa: float
+    n_balls: int
+    official_oaa: int | None
+    official_n_opp: int | None
+
+
 @app.get("/api/if_fielders", response_model=dict[str, list[IFFielderInfo]])
-def if_fielders(year: int = 2025, min_balls: int = 100):
+def if_fielders(year: int = 2025, min_balls: int = 100) -> dict[str, list[IFFielderEntry]]:
     if year not in _if_ranking_years:
         raise HTTPException(404, f"No infield ranking data for year {year}. "
                                  f"Available: {_if_ranking_years}")
@@ -789,7 +865,7 @@ def if_fielders(year: int = 2025, min_balls: int = 100):
             rows = cur.fetchall()
 
     yr_team_map = _if_team_map.get(year, {})
-    result: dict[str, list[dict]] = {}
+    result: dict[str, list[IFFielderEntry]] = {}
     for pos in IF_POSITIONS:
         rows_pos = [r for r in rows if r[2] == pos]
         rows_pos.sort(key=lambda r: float(r[3]) / r[4] if r[4] else 0, reverse=True)
@@ -804,7 +880,18 @@ def if_fielders(year: int = 2025, min_balls: int = 100):
 
 # ── 內野線上優化（外野 /api/optimize 的內野鏡像）──────────────────
 
-def _solve_if_dp(balls, state: tuple, warm_angles, warm_depths, pe: dict | None) -> dict:
+class IfDpSolution(TypedDict):
+    angles3: np.ndarray
+    depths3: np.ndarray
+    lg3_angles: np.ndarray
+    lg3_depths: np.ndarray
+    pinned_1b: tuple[float, float]
+    scorer: DPScorer
+    scorer_base: DPScorer
+
+
+def _solve_if_dp(balls: pd.DataFrame, state: BaseOutState, warm_angles: np.ndarray,
+                 warm_depths: np.ndarray, pe: PlayerEffects | None) -> IfDpSolution:
     """階段B DP 解（僅一壘有人、<2 出局）：/api/if_optimize 與整合端點共用。
 
     balls 就地補 runner_hp_to_1b 常數欄；warm_angles/depths＝precomputed
@@ -812,11 +899,9 @@ def _solve_if_dp(balls, state: tuple, warm_angles, warm_depths, pe: dict | None)
     （LHS 8＋無壘況解＋聯盟站位），指定野手時錨定式精修（anchored_starts
     避 kink）。scorer 掛 pe 評最佳化組、scorer_base 效應 0 評聯盟基準。
     """
-    import numpy as np
-
     balls["runner_hp_to_1b"] = _if_on1b_runner_hp
-    w = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
-    d1, d2 = dp_delta_re(_re24_table, _delta_re, state[3])
+    miss_cost = gb_miss_costs(balls, _if_xb_model, _delta_re, state)
+    single_out_delta_re, double_play_delta_re = dp_delta_re(_re24_table, _delta_re, state[3])
     pinned_1b = _if_on1b_league["1B"]
     lg3_angles = np.array([_if_on1b_league[p][0] for p in DP_POSITIONS])
     lg3_depths = np.array([_if_on1b_league[p][1] for p in DP_POSITIONS])
@@ -825,20 +910,23 @@ def _solve_if_dp(balls, state: tuple, warm_angles, warm_depths, pe: dict | None)
               positions_to_params_dp(lg3_angles, lg3_depths)]
     with _optimize_semaphore:
         res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
-                                  pinned_1b, w, d1, d2, n_restarts=8, seed=42,
+                                  pinned_1b, miss_cost, single_out_delta_re,
+                                  double_play_delta_re, n_restarts=8, seed=42,
                                   extra_starts=starts)
         if pe is not None:
             # 錨點常卡在 kink 上（見 anchored_starts docstring），加小抖動起點
             anchor = positions_to_params_dp(res["angles"], res["depths"])
             res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
-                                      pinned_1b, w, d1, d2, n_restarts=0,
+                                      pinned_1b, miss_cost, single_out_delta_re,
+                                      double_play_delta_re, n_restarts=0,
                                       extra_starts=anchored_starts(anchor),
                                       player_effects=pe)
 
-    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, w,
-                      d1, d2, pe)
+    scorer = DPScorer(_if_dp_out_model, _if_dp_model, balls, pinned_1b, miss_cost,
+                      single_out_delta_re, double_play_delta_re, pe)
     scorer_base = scorer if pe is None else DPScorer(
-        _if_dp_out_model, _if_dp_model, balls, pinned_1b, w, d1, d2)
+        _if_dp_out_model, _if_dp_model, balls, pinned_1b, miss_cost,
+        single_out_delta_re, double_play_delta_re)
     return {"angles3": res["angles"], "depths3": res["depths"],
             "lg3_angles": lg3_angles, "lg3_depths": lg3_depths,
             "pinned_1b": pinned_1b, "scorer": scorer, "scorer_base": scorer_base}
@@ -858,34 +946,31 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
     零效應解的起點配置同跨年驗證（scripts/validate_if_dp.py）：LHS 8＋
     無壘況最佳解＋聯盟站位，勿在未重做收斂測試前調低。
     """
-    import math
-
-    import numpy as np
-
     t_start = time.perf_counter()
     year = req.year
-    state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
+    state: BaseOutState = (req.on_1b, req.on_2b, req.on_3b, req.outs)
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls = \
         _load_if_batter(req.batter_id, year)
 
-    fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
+    fids: dict[str, int | None] = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(fids) if any(fids.values()) else None
 
     sol = _solve_if_dp(balls, state, warm_angles, warm_depths, pe)
     pinned_1b = sol["pinned_1b"]
     lg3_angles, lg3_depths = sol["lg3_angles"], sol["lg3_depths"]
 
-    def eval_set(angles3, depths3, sc) -> tuple[np.ndarray, float, float]:
+    def eval_set(angles3: np.ndarray, depths3: np.ndarray,
+                scorer: DPScorer) -> tuple[np.ndarray, float, float]:
         """(逐球 p1, 平均 p1, E[ΔRE]×n_gb)。"""
-        p1 = sc.per_ball_p1(angles3, depths3)
-        runs = sc.expected_re(angles3, depths3) * len(balls)
+        p1 = scorer.per_ball_p1(angles3, depths3)
+        runs = scorer.expected_re(angles3, depths3) * len(balls)
         return p1, float(p1.mean()), runs
 
     p1_opt, eo_opt, runs_opt = eval_set(sol["angles3"], sol["depths3"], sol["scorer"])
     p1_lg, eo_lg, runs_lg = eval_set(lg3_angles, lg3_depths, sol["scorer_base"])
 
-    def positions_dict(angles4, depths4) -> dict[str, IFPosition]:
-        out = {}
+    def positions_dict(angles4: np.ndarray, depths4: np.ndarray) -> dict[str, IFPosition]:
+        out: dict[str, IFPosition] = {}
         for pos, a, d in zip(IF_POSITIONS, angles4, depths4):
             rad = math.radians(float(a))
             out[pos] = IFPosition(x=round(float(d) * math.sin(rad), 1),
@@ -931,7 +1016,7 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
 
 
 @app.post("/api/if_optimize", response_model=IFOptimizeResponse)
-def if_optimize(req: IFOptimizeRequest):
+def if_optimize(req: IFOptimizeRequest) -> IFOptimizeResponse:
     """打者＋壘況（＋指定野手）→ 內野四人站位與省分。
 
     站位從離線出局率最佳解 warm start、以該壘況的 run-value 權重精修
@@ -941,10 +1026,6 @@ def if_optimize(req: IFOptimizeRequest):
     出局機率模型的主範圍是無人在壘，壘況只影響計價權重；例外＝僅一壘有人
     （<2 出局）切換到階段B DP 優化（_if_optimize_dp）。
     """
-    import math
-
-    import numpy as np
-
     if _if_bayes_model is None or _if_xb_model is None:
         raise HTTPException(503, "內野模型未載入")
     if req.year not in _if_years:
@@ -957,29 +1038,30 @@ def if_optimize(req: IFOptimizeRequest):
 
     t_start = time.perf_counter()
     year = req.year
-    state = (req.on_1b, req.on_2b, req.on_3b, req.outs)
+    state: BaseOutState = (req.on_1b, req.on_2b, req.on_3b, req.outs)
     stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls = \
         _load_if_batter(req.batter_id, year)
 
-    fids = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
+    fids: dict[str, int | None] = {p: (req.fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(fids)
 
-    bw, mean_w = runvalue_ball_weights(balls, _if_xb_model, _re24_table, _delta_re, state)
+    ball_weights, mean_miss_cost = runvalue_ball_weights(balls, _if_xb_model, _re24_table, _delta_re, state)
     warm = positions_to_params(warm_angles, warm_depths)
     with _optimize_semaphore:
         res = optimize_infield(balls, _if_bayes_model, n_restarts=0,
-                               extra_starts=[warm], ball_weights=bw,
+                               extra_starts=[warm], ball_weights=ball_weights,
                                player_effects=pe)
 
     lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
     lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
 
-    def eval_set(angles, depths, pe_use) -> tuple[float, float]:
+    def eval_set(angles: np.ndarray, depths: np.ndarray,
+                pe_use: PlayerEffects | None) -> tuple[float, float]:
         """(期望出局率, 期望失分×n_gb)。基準組傳 pe_use=None（平均站位＋
         平均參數），最佳化組才掛指定野手效應。"""
         eo = if_expected_outs(_if_bayes_model, balls, angles, depths, pe_use)
-        runs = (mean_w - if_expected_outs(_if_bayes_model, balls, angles, depths,
-                                          pe_use, ball_weights=bw)) * len(balls)
+        runs = (mean_miss_cost - if_expected_outs(_if_bayes_model, balls, angles, depths,
+                                                   pe_use, ball_weights=ball_weights)) * len(balls)
         return eo, runs
 
     eo_opt, runs_opt = eval_set(res["angles"], res["depths"], pe)
@@ -987,8 +1069,8 @@ def if_optimize(req: IFOptimizeRequest):
     p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths)
     p_opt = predict_p_out(_if_bayes_model, balls, res["angles"], res["depths"], pe)
 
-    def positions_dict(angles, depths) -> dict[str, IFPosition]:
-        out = {}
+    def positions_dict(angles: np.ndarray, depths: np.ndarray) -> dict[str, IFPosition]:
+        out: dict[str, IFPosition] = {}
         for pos, a, d in zip(IF_POSITIONS, angles, depths):
             rad = math.radians(float(a))
             out[pos] = IFPosition(x=round(float(d) * math.sin(rad), 1),
@@ -1047,7 +1129,7 @@ def _load_batter_popups(batter_id: int, year: int) -> list[PopupBall]:
 
 
 @app.post("/api/optimize_integrated", response_model=IntegratedResponse)
-def optimize_integrated(req: IntegratedRequest):
+def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
     """打者＋壘況 → 七人站位與總省分。
 
     計價統一為完整 ΔRE 期望失分（內外野同尺度）：外野 = Σ[(1−p̂)×w_j ＋
@@ -1066,11 +1148,6 @@ def optimize_integrated(req: IntegratedRequest):
     指定野手時：外野掛球員層 mu（of_fielders，球員名）、內野掛貝葉斯效應
     （if_fielders，player_id），未指定的位置＝聯盟平均。
     """
-    import math
-
-    import numpy as np
-    import pandas as pd
-
     if _if_bayes_model is None or _if_xb_model is None:
         raise HTTPException(503, "整合模型未載入")
     if req.home_team and req.home_team.upper() not in SUPPORTED_TEAMS:
@@ -1116,17 +1193,17 @@ def optimize_integrated(req: IntegratedRequest):
     models_dir = BASE / "models" / str(year)
 
     # 指定外野手（球員層 mu，同 _run_optimize）；未指定的位置用群體 mu
-    fielder_mus = None
+    fielder_mus: dict[str, GroupMu] | None = None
     if req.of_fielders:
-        fm = {}
+        fielder_mu_overrides: dict[str, GroupMu] = {}
         for pos in POSITIONS:
-            nm = req.of_fielders.get(pos)
-            if nm:
+            player_name = req.of_fielders.get(pos)
+            if player_name:
                 try:
-                    fm[pos] = load_player_params("OF", nm, models_dir)
+                    fielder_mu_overrides[pos] = load_player_params("OF", player_name, models_dir)
                 except (KeyError, FileNotFoundError):
-                    raise HTTPException(422, f"{pos} 找不到球員 '{nm}' 的模型參數")
-        fielder_mus = fm or None
+                    raise HTTPException(422, f"{pos} 找不到球員 '{player_name}' 的模型參數")
+        fielder_mus = fielder_mu_overrides or None
     mus_eff = dict(_mus.get(year, {}))
     if fielder_mus:
         mus_eff.update(fielder_mus)
@@ -1163,7 +1240,7 @@ def optimize_integrated(req: IntegratedRequest):
     # vs 出局率兩目標幾乎同解已驗證（runvalue_objective_rows.csv）
     dre_out_of = delta_re_out(_re24_table, state)
 
-    def of_runs(pos_dict, mus_use):
+    def of_runs(pos_dict: OutfieldXY, mus_use: dict[str, GroupMu]) -> tuple[np.ndarray, float]:
         probs = np.asarray(compute_ball_catch_probs(
             pos_dict, balls_of, _scalers.get(year, {}), mus_use),
             dtype=float).copy()
@@ -1189,7 +1266,7 @@ def optimize_integrated(req: IntegratedRequest):
         ball_rows, balls_if = [], pd.DataFrame()
 
     # 指定內野手（貝葉斯球員層效應，同 /api/if_optimize）
-    if_fids = {p: (req.if_fielders or {}).get(p) for p in IF_POSITIONS}
+    if_fids: dict[str, int | None] = {p: (req.if_fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(if_fids) if any(if_fids.values()) else None
 
     dp_state = (has_if
@@ -1218,12 +1295,12 @@ def optimize_integrated(req: IntegratedRequest):
         p_if_opt = sol["scorer"].per_ball_p1(sol["angles3"], sol["depths3"])
         p_if_league = sol["scorer_base"].per_ball_p1(sol["lg3_angles"], sol["lg3_depths"])
     else:
-        bw, mean_w = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table,
-                                           _delta_re, state)
+        ball_weights, mean_miss_cost = runvalue_ball_weights(balls_if, _if_xb_model, _re24_table,
+                                                              _delta_re, state)
         warm = positions_to_params(warm_angles, warm_depths)
         with _optimize_semaphore:
             res = optimize_infield(balls_if, _if_bayes_model, n_restarts=0,
-                                   extra_starts=[warm], ball_weights=bw,
+                                   extra_starts=[warm], ball_weights=ball_weights,
                                    player_effects=pe)
         if_opt_angles, if_opt_depths = res["angles"], res["depths"]
 
@@ -1231,9 +1308,9 @@ def optimize_integrated(req: IntegratedRequest):
         lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
         # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)。
         # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
-        e_if_opt = mean_w - res["exp_outs"]
-        e_if_league = mean_w - if_expected_outs(
-            _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=bw)
+        e_if_opt = mean_miss_cost - res["exp_outs"]
+        e_if_league = mean_miss_cost - if_expected_outs(
+            _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=ball_weights)
         runs_if_opt = e_if_opt * len(balls_if)
         runs_if_league = e_if_league * len(balls_if)
 
@@ -1247,11 +1324,13 @@ def optimize_integrated(req: IntegratedRequest):
         return PositionXY(x=round(depth * math.sin(rad), 1),
                           y=round(depth * math.cos(rad), 1))
 
-    def pack(pos_of, if_angles, if_depths, runs_of, runs_if,
-             probs_of, p_if) -> IntegratedSet:
-        positions = {p: PositionXY(x=round(float(pos_of[p][0]), 1),
-                                   y=round(float(pos_of[p][1]), 1))
-                     for p in POSITIONS}
+    def pack(pos_of: OutfieldXY, if_angles: np.ndarray, if_depths: np.ndarray,
+             runs_of: float, runs_if: float,
+             probs_of: np.ndarray, p_if: np.ndarray) -> IntegratedSet:
+        positions: dict[str, PositionXY] = {
+            p: PositionXY(x=round(float(pos_of[p][0]), 1), y=round(float(pos_of[p][1]), 1))
+            for p in POSITIONS
+        }
         positions.update({p: if_xy(float(a), float(d))
                           for p, a, d in zip(IF_POSITIONS, if_angles, if_depths)})
         return IntegratedSet(positions=positions,
@@ -1305,7 +1384,7 @@ def optimize_integrated(req: IntegratedRequest):
 
 
 @app.get("/api/park_boundary/{team}", response_model=list[ParkCoord] | None)
-def park_boundary(team: str):
+def park_boundary(team: str) -> list[dict]:
     coords = get_park_boundary_coords(team.upper())
     if coords is None:
         raise HTTPException(status_code=404, detail=f"Park boundary not found for {team}")
@@ -1313,12 +1392,22 @@ def park_boundary(team: str):
 
 
 @app.post("/api/optimize", response_model=OptimizeResponse)
-def optimize(req: OptimizeRequest):
+def optimize(req: OptimizeRequest) -> OptimizeResponse:
     return _run_optimize(req)
 
 
+class OptimizePlotResponse(TypedDict):
+    image_b64: str
+    title: str
+    situation: str
+    positions: dict[str, dict]
+    stats: dict
+    balls: list[dict]
+    park_boundary: list[dict] | None
+
+
 @app.post("/api/optimize_plot")
-def optimize_plot(req: OptimizeRequest):
+def optimize_plot(req: OptimizeRequest) -> OptimizePlotResponse:
     import base64
     from .plot import render_plot
     resp = _run_optimize(req)
@@ -1347,8 +1436,6 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     home_team = req.home_team.upper() if req.home_team else None
 
     # ── 準備球資料（快取：同打者同年份跳過 DB 查詢與 KDE）──────────
-    import numpy as np
-
     yr_balls_cache  = _batter_balls_cache.setdefault(year, {})
     yr_hprob_cache  = _batter_hitprobs_cache.setdefault(year, {})
 
@@ -1393,23 +1480,23 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     re_state = float(_re24_table.get((req.on_1b, req.on_2b, req.on_3b, req.outs), 0.0))
 
     # ── 指定外野手（player-level 能力）；未指定的位置用聯盟平均 group mu ──
-    fielder_mus = None
+    fielder_mus: dict[str, GroupMu] | None = None
     if req.fielders:
-        fm = {}
+        fielder_mu_overrides: dict[str, GroupMu] = {}
         for pos in POSITIONS:
-            nm = req.fielders.get(pos)
-            if nm:
+            player_name = req.fielders.get(pos)
+            if player_name:
                 try:
-                    fm[pos] = load_player_params("OF", nm, models_dir)
+                    fielder_mu_overrides[pos] = load_player_params("OF", player_name, models_dir)
                 except (KeyError, FileNotFoundError):
-                    raise HTTPException(422, f"{pos} 找不到球員 '{nm}' 的模型參數")
-        fielder_mus = fm or None
+                    raise HTTPException(422, f"{pos} 找不到球員 '{player_name}' 的模型參數")
+        fielder_mus = fielder_mu_overrides or None
     mus_eff = dict(_mus.get(year, {}))
     if fielder_mus:
         mus_eff.update(fielder_mus)
 
     # ── 站位評估：打牆球強制接殺機率 0、計入 RE24（統一口徑）──────
-    def eval_positions(pos_dict):
+    def eval_positions(pos_dict: OutfieldXY) -> tuple[np.ndarray, float, float]:
         probs = np.asarray(
             compute_ball_catch_probs(pos_dict, balls_all, _scalers.get(year, {}), mus_eff), dtype=float
         ).copy()
@@ -1424,7 +1511,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     except Exception:
         league_avg_pos = {"LF": (-130.0, 250.0), "CF": (0.0, 310.0), "RF": (130.0, 250.0)}
 
-    def make_pos_set(pos_dict, obj, catch):
+    def make_pos_set(pos_dict: OutfieldXY, obj: float, catch: float) -> PositionSet:
         return PositionSet(
             LF=PositionXY(x=pos_dict["LF"][0], y=pos_dict["LF"][1]),
             CF=PositionXY(x=pos_dict["CF"][0], y=pos_dict["CF"][1]),
@@ -1448,7 +1535,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         logger.info(f"[timing] optimize_positions(custom): {time.perf_counter() - t_opt:.2f}s")
         pos_custom = {p: opt_custom[p] for p in POSITIONS}
         probs_custom, re_custom, catch_custom = eval_positions(pos_custom)
-        positions_out = {"custom": make_pos_set(pos_custom, re_custom, catch_custom)}
+        positions_out: dict[str, PositionSet] = {"custom": make_pos_set(pos_custom, re_custom, catch_custom)}
         scatter_probs = probs_custom
     else:
         # ── 一般模式：league_avg + no_park (+ with_park) ─────────
@@ -1505,7 +1592,8 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         code: np.hypot(bx_arr - primary_pos[code][0], by_arr - primary_pos[code][1])
         for code in POSITIONS
     }
-    nearest = [min(POSITIONS, key=lambda c, i=i: dists[c][i]) for i in range(len(balls_all))]
+    nearest = [min(POSITIONS, key=lambda position_code, i=i: dists[position_code][i])
+              for i in range(len(balls_all))]
 
     balls_out = [
         BallPoint(
@@ -1562,12 +1650,12 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
 # ── 前端靜態檔案（放最後，所有 /api/* 路由都已註冊完畢，不會衝突）─────────
 # 部署時單一服務同時提供 API 與前端建置產物（frontend/dist），兩者同源，
 # 前端 frontend/src/api.js 的相對路徑 '/api' 不用額外設定 base URL 或 CORS。
-_FRONTEND_DIST = BASE / "frontend" / "dist"
+_FRONTEND_DIST: Path = BASE / "frontend" / "dist"
 if _FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{full_path:path}")
-    def serve_frontend(full_path: str):
+    def serve_frontend(full_path: str) -> FileResponse:
         file_path = _FRONTEND_DIST / full_path
         if file_path.is_file():
             return FileResponse(file_path)

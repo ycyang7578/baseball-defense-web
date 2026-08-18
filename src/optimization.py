@@ -22,6 +22,7 @@ Usage (high-level):
 """
 import warnings
 from pathlib import Path
+from typing import TypedDict
 
 import joblib
 import numpy as np
@@ -30,6 +31,7 @@ import psycopg2
 from scipy.optimize import minimize
 from scipy.special import expit as _expit
 from scipy.stats import qmc
+from sklearn.preprocessing import StandardScaler
 
 # 模型 scaler 以 DataFrame 訓練但以 numpy array 呼叫，suppress 已知無害警告
 warnings.filterwarnings(
@@ -40,17 +42,55 @@ warnings.filterwarnings(
 )
 
 from .config import DSN
-from .hit_prob import load_hit_prob, predict_hit_probs_batch
-from .re24 import load_re24
+from .hit_prob import HitProbBundle, load_hit_prob, predict_hit_probs_batch
+from .re24 import BaseOutState, HitDeltaKey, load_re24
 
-POSITIONS = ("LF", "CF", "RF")
-FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
+POSITIONS: tuple[str, ...] = ("LF", "CF", "RF")
+FEATURE_COLS: list[str] = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
+
+# {"LF": (x, y), "CF": (x, y), "RF": (x, y)}，本檔案的站位座標標準格式
+OutfieldXY = dict[str, tuple[float, float]]
+
+
+class GroupMu(TypedDict):
+    """外野接殺模型的群體層（或球員層覆寫）後驗平均係數。"""
+    mu_alpha: float
+    mu_beta_speed: float
+    mu_beta_cos: float
+    mu_beta_sin: float
+    mu_beta_dist: float
+
+
+class ObjectiveContext(TypedDict):
+    """objective_re24 的目標函數上下文：不隨候選站位變動的預先算好資料。"""
+    ball_x: np.ndarray
+    ball_y: np.ndarray
+    flight_time: np.ndarray
+    w_j: np.ndarray
+    sc_means: dict[str, np.ndarray]
+    sc_scales: dict[str, np.ndarray]
+    mus: dict[str, GroupMu]
+
+
+class OptimizeResult(TypedDict):
+    LF: tuple[float, float]
+    CF: tuple[float, float]
+    RF: tuple[float, float]
+    objective: float
+    n_balls: int
+    n_wall_balls: int
+
+
+class QualifyingBatter(TypedDict):
+    batter_id: int
+    n_balls: int
+
 
 # ── 極座標扇形搜尋範圍 ─────────────────────────────────────────────
 # 變數排列：[r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF]
 # θ 從 y 軸量起（中外野方向=0°），正值朝右外野，負值朝左外野，單位：度
 # 扇形角度確保守備員留在 fair territory（foul line ≈ ±45°）
-_POLAR_BOUNDS = [
+_POLAR_BOUNDS: list[tuple[float, float]] = [
     (150, 400), (-45.0,   0.0),   # LF: r(ft), θ(deg)
     (150, 400), (-22.5, +22.5),   # CF: r(ft), θ(deg)
     (150, 400),  (0.0,  +45.0),   # RF: r(ft), θ(deg)
@@ -64,14 +104,14 @@ def _polar_to_xy(params: np.ndarray) -> np.ndarray:
     """
     out = np.empty(6)
     for i in range(3):
-        r = params[2 * i]
-        t = np.radians(params[2 * i + 1])
-        out[2 * i]     = r * np.sin(t)   # x
-        out[2 * i + 1] = r * np.cos(t)   # y
+        radius_ft = params[2 * i]
+        theta_rad = np.radians(params[2 * i + 1])
+        out[2 * i]     = radius_ft * np.sin(theta_rad)   # x
+        out[2 * i + 1] = radius_ft * np.cos(theta_rad)   # y
     return out
 
 
-def _xy_to_polar_params(xy: dict) -> np.ndarray:
+def _xy_to_polar_params(xy: OutfieldXY) -> np.ndarray:
     """{'LF':(x,y),'CF':(x,y),'RF':(x,y)} → [r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF]（_polar_to_xy 的反函式，供 warm start 用）"""
     out = np.empty(6)
     for i, pos in enumerate(POSITIONS):
@@ -93,50 +133,50 @@ _BATTER_QUERY = """
 
 def _resolve_model_dir(pos: str, models_dir: Path) -> tuple[Path, str]:
     """Return (dir, prefix) for the model files. Falls back to unified OF if pos-specific missing."""
-    d = Path(models_dir) / pos
-    if (d / f"{pos}_scaler.joblib").exists():
-        return d, pos
+    pos_dir = Path(models_dir) / pos
+    if (pos_dir / f"{pos}_scaler.joblib").exists():
+        return pos_dir, pos
     # unified OF model fallback (2021-2024 only have OF/)
     return Path(models_dir) / "OF", "OF"
 
 
-def load_model_params(pos: str, models_dir: Path) -> tuple:
+def load_model_params(pos: str, models_dir: Path) -> tuple[StandardScaler, GroupMu]:
     """
     Returns (scaler, mu_dict) for position pos.
     mu_dict keys: mu_alpha, mu_beta_speed, mu_beta_cos, mu_beta_sin, mu_beta_dist
     """
-    d, prefix = _resolve_model_dir(pos, models_dir)
-    scaler = joblib.load(d / f"{prefix}_scaler.joblib")
-    group = pd.read_csv(d / f"{prefix}_summary_group.csv", encoding="utf-8-sig", index_col=0)
+    pos_dir, prefix = _resolve_model_dir(pos, models_dir)
+    scaler = joblib.load(pos_dir / f"{prefix}_scaler.joblib")
+    group = pd.read_csv(pos_dir / f"{prefix}_summary_group.csv", encoding="utf-8-sig", index_col=0)
     mu = group["mean"]
-    mu_dict = {
-        "mu_alpha":      float(mu["mu_alpha"]),
-        "mu_beta_speed": float(mu["mu_beta_speed"]),
-        "mu_beta_cos":   float(mu["mu_beta_cos"]),
-        "mu_beta_sin":   float(mu["mu_beta_sin"]),
-        "mu_beta_dist":  float(mu["mu_beta_dist"]),
-    }
+    mu_dict = GroupMu(
+        mu_alpha=float(mu["mu_alpha"]),
+        mu_beta_speed=float(mu["mu_beta_speed"]),
+        mu_beta_cos=float(mu["mu_beta_cos"]),
+        mu_beta_sin=float(mu["mu_beta_sin"]),
+        mu_beta_dist=float(mu["mu_beta_dist"]),
+    )
     return scaler, mu_dict
 
 
-def load_player_params(pos: str, player_name: str, models_dir: Path) -> dict:
+def load_player_params(pos: str, player_name: str, models_dir: Path) -> GroupMu:
     """
     讀取指定球員的 player-level 參數，回傳與 group mu 相同 key 格式的 dict
     （沿用該位置共用的 scaler）。供「指定特定外野手」的站位最佳化使用。
     """
-    d, prefix = _resolve_model_dir(pos, models_dir)
-    players = pd.read_csv(d / f"{prefix}_summary_players.csv", index_col=0, encoding="utf-8-sig")
+    pos_dir, prefix = _resolve_model_dir(pos, models_dir)
+    players = pd.read_csv(pos_dir / f"{prefix}_summary_players.csv", index_col=0, encoding="utf-8-sig")
 
-    def g(param: str) -> float:
+    def player_param(param: str) -> float:
         return float(players.loc[f"{param}[{player_name}]", "mean"])
 
-    return {
-        "mu_alpha":      g("alpha"),
-        "mu_beta_speed": g("beta_speed"),
-        "mu_beta_cos":   g("beta_cos"),
-        "mu_beta_sin":   g("beta_sin"),
-        "mu_beta_dist":  g("beta_dist"),
-    }
+    return GroupMu(
+        mu_alpha=player_param("alpha"),
+        mu_beta_speed=player_param("beta_speed"),
+        mu_beta_cos=player_param("beta_cos"),
+        mu_beta_sin=player_param("beta_sin"),
+        mu_beta_dist=player_param("beta_dist"),
+    )
 
 
 # ── 打者歷史球資料準備 ─────────────────────────────────────────────
@@ -170,8 +210,8 @@ def prepare_batter_balls(
 
 def compute_w_j(
     balls: pd.DataFrame,
-    hit_bundle: dict,
-    delta_re: dict,
+    hit_bundle: HitProbBundle,
+    delta_re: dict[HitDeltaKey, float],
     on_1b: int,
     on_2b: int,
     on_3b: int,
@@ -188,10 +228,10 @@ def compute_w_j(
     if hit_probs is None:
         hit_probs = predict_hit_probs_batch(hit_bundle, balls)
 
-    s = (on_1b, on_2b, on_3b, outs)
-    dre_1b = delta_re.get(("1B", *s), 0.0)
-    dre_2b = delta_re.get(("2B", *s), 0.0)
-    dre_3b = delta_re.get(("3B", *s), 0.0)
+    state: BaseOutState = (on_1b, on_2b, on_3b, outs)
+    dre_1b = delta_re.get(("1B", *state), 0.0)
+    dre_2b = delta_re.get(("2B", *state), 0.0)
+    dre_3b = delta_re.get(("3B", *state), 0.0)
 
     w_j = (hit_probs[:, 0] * dre_1b
            + hit_probs[:, 1] * dre_2b
@@ -202,39 +242,39 @@ def compute_w_j(
 # ── 核心目標函數 ───────────────────────────────────────────────────
 
 def _catch_prob_single_fielder(
-    fx: float, fy: float,
+    fielder_x: float, fielder_y: float,
     ball_x: np.ndarray, ball_y: np.ndarray, flight_time: np.ndarray,
-    sc_mean: np.ndarray, sc_scale: np.ndarray, mu: dict,
+    sc_mean: np.ndarray, sc_scale: np.ndarray, mu: GroupMu,
 ) -> np.ndarray:
     """
-    Vectorized catch probability for one fielder at (fx, fy) for N balls.
+    Vectorized catch probability for one fielder at (fielder_x, fielder_y) for N balls.
     Replicates physics.compute_relative_angle inline for speed.
     Returns array of shape (N,).
     sc_mean / sc_scale are pre-extracted from StandardScaler to avoid sklearn overhead.
     """
-    dx = ball_x - fx
-    dy = ball_y - fy
+    dx = ball_x - fielder_x
+    dy = ball_y - fielder_y
     dist = np.sqrt(dx ** 2 + dy ** 2)
     speed = dist / flight_time                          # required speed ft/s
 
     run_angle = np.arctan2(dx, dy)                      # angle to ball (from +y axis)
-    pos_angle = np.arctan2(fx, fy)                      # fielder's radial direction
+    pos_angle = np.arctan2(fielder_x, fielder_y)        # fielder's radial direction
     rel = run_angle - (pos_angle + np.pi)               # relative to "away from home"
     rel = (rel + np.pi) % (2 * np.pi) - np.pi
 
-    X_raw = np.column_stack([speed, np.cos(rel), np.sin(rel), dist])
-    X = (X_raw - sc_mean) / sc_scale
+    raw_features = np.column_stack([speed, np.cos(rel), np.sin(rel), dist])
+    standardized_features = (raw_features - sc_mean) / sc_scale
 
     logit = (mu["mu_alpha"]
-             + mu["mu_beta_speed"] * X[:, 0]
-             + mu["mu_beta_cos"]   * X[:, 1]
-             + mu["mu_beta_sin"]   * X[:, 2]
-             + mu["mu_beta_dist"]  * X[:, 3])
+             + mu["mu_beta_speed"] * standardized_features[:, 0]
+             + mu["mu_beta_cos"]   * standardized_features[:, 1]
+             + mu["mu_beta_sin"]   * standardized_features[:, 2]
+             + mu["mu_beta_dist"]  * standardized_features[:, 3])
 
     return 1.0 / (1.0 + np.exp(-logit))
 
 
-def objective_re24(positions_flat: np.ndarray, ctx: dict) -> float:
+def objective_re24(positions_flat: np.ndarray, ctx: ObjectiveContext) -> float:
     """
     RE24 objective: Σ_j (1 - p̂_j(θ)) × w_j
 
@@ -243,20 +283,20 @@ def objective_re24(positions_flat: np.ndarray, ctx: dict) -> float:
     """
     lf_x, lf_y, cf_x, cf_y, rf_x, rf_y = positions_flat
 
-    bx = ctx["ball_x"]
-    by = ctx["ball_y"]
-    ft = ctx["flight_time"]
+    ball_x = ctx["ball_x"]
+    ball_y = ctx["ball_y"]
+    flight_time = ctx["flight_time"]
 
     # p_not_caught = ∏_i (1 - p_i) 逐一乘
-    p_nc = np.ones(len(bx))
-    for pos, (fx, fy) in zip(POSITIONS, [(lf_x, lf_y), (cf_x, cf_y), (rf_x, rf_y)]):
-        p = _catch_prob_single_fielder(
-            fx, fy, bx, by, ft,
+    p_not_caught = np.ones(len(ball_x))
+    for pos, (fielder_x, fielder_y) in zip(POSITIONS, [(lf_x, lf_y), (cf_x, cf_y), (rf_x, rf_y)]):
+        p_catch = _catch_prob_single_fielder(
+            fielder_x, fielder_y, ball_x, ball_y, flight_time,
             ctx["sc_means"][pos], ctx["sc_scales"][pos], ctx["mus"][pos],
         )
-        p_nc *= (1.0 - p)
+        p_not_caught *= (1.0 - p_catch)
 
-    return float(np.sum(p_nc * ctx["w_j"]))
+    return float(np.sum(p_not_caught * ctx["w_j"]))
 
 
 # ── 主進入點 ───────────────────────────────────────────────────────
@@ -275,13 +315,13 @@ def optimize_positions(
     dsn: str = DSN,
     seed: int = 42,
     n_restarts: int = 20,
-    fielder_mus: dict | None = None,
+    fielder_mus: dict[str, GroupMu] | None = None,
     balls: pd.DataFrame | None = None,
     hit_probs: np.ndarray | None = None,
-    warm_start_xy: dict | None = None,
-    delta_re: dict | None = None,
-    hit_bundle: dict | None = None,
-) -> dict:
+    warm_start_xy: OutfieldXY | None = None,
+    delta_re: dict[HitDeltaKey, float] | None = None,
+    hit_bundle: HitProbBundle | None = None,
+) -> OptimizeResult:
     """
     Compute optimal outfield positions for a given batter and game state.
     Uses L-BFGS-B with multiple random restarts.
@@ -369,7 +409,7 @@ def optimize_positions(
     sc_means  = {pos: scalers[pos].mean_  for pos in POSITIONS}
     sc_scales = {pos: scalers[pos].scale_ for pos in POSITIONS}
 
-    ctx = {
+    ctx: ObjectiveContext = {
         "ball_x":     balls_f["ball_x"].values,
         "ball_y":     balls_f["ball_y"].values,
         "flight_time": balls_f["flight_time"].values,
@@ -384,12 +424,12 @@ def optimize_positions(
     _highs = np.array([b[1] for b in _POLAR_BOUNDS])
     _range = _highs - _lows
 
-    def _obj_normalized(params_norm):
+    def _obj_normalized(params_norm: np.ndarray) -> float:
         params = _lows + params_norm * _range
         return objective_re24(_polar_to_xy(params), ctx)
 
     unit_bounds = [(0.0, 1.0)] * 6
-    best: dict | None = None
+    best: dict[str, np.ndarray | float] | None = None
 
     # warm start 頂替一個隨機起點的名額（不是額外加一次），維持總 evaluate 次數等於
     # n_restarts 不變 —— 不增加算力成本，也不會因為多做一次評估而變慢。
@@ -439,21 +479,21 @@ def optimize_positions(
 
 
 def compute_per_fielder_probs(
-    positions: dict,
+    positions: OutfieldXY,
     balls: pd.DataFrame,
-    scalers: dict,
-    mus: dict,
-) -> dict:
+    scalers: dict[str, StandardScaler],
+    mus: dict[str, GroupMu],
+) -> dict[str, np.ndarray]:
     """
     各守備員對每顆球的個別接殺機率。
     Returns {"LF": ndarray(N), "CF": ndarray(N), "RF": ndarray(N)}
     """
-    bx = balls["ball_x"].values
-    by = balls["ball_y"].values
-    ft = balls["flight_time"].values
+    ball_x = balls["ball_x"].values
+    ball_y = balls["ball_y"].values
+    flight_time = balls["flight_time"].values
     return {
         pos: _catch_prob_single_fielder(
-            positions[pos][0], positions[pos][1], bx, by, ft,
+            positions[pos][0], positions[pos][1], ball_x, ball_y, flight_time,
             scalers[pos].mean_, scalers[pos].scale_, mus[pos],
         )
         for pos in POSITIONS
@@ -461,10 +501,10 @@ def compute_per_fielder_probs(
 
 
 def compute_ball_catch_probs(
-    positions: dict,
+    positions: OutfieldXY,
     balls: pd.DataFrame,
-    scalers: dict,
-    mus: dict,
+    scalers: dict[str, StandardScaler],
+    mus: dict[str, GroupMu],
 ) -> np.ndarray:
     """
     給定三個守備員站位，計算每顆球的聯合接殺機率 p̂_j。
@@ -472,22 +512,21 @@ def compute_ball_catch_probs(
     balls: DataFrame with ball_x, ball_y, flight_time
     Returns array of shape (N,): p̂_j for each ball.
     """
-    bx = balls["ball_x"].values
-    by = balls["ball_y"].values
-    ft = balls["flight_time"].values
-    p_nc = np.ones(len(bx))
+    ball_x = balls["ball_x"].values
+    ball_y = balls["ball_y"].values
+    flight_time = balls["flight_time"].values
+    p_not_caught = np.ones(len(ball_x))
     for pos in POSITIONS:
-        fx, fy = positions[pos]
-        p = _catch_prob_single_fielder(
-            fx, fy, bx, by, ft,
+        fielder_x, fielder_y = positions[pos]
+        p_catch = _catch_prob_single_fielder(
+            fielder_x, fielder_y, ball_x, ball_y, flight_time,
             scalers[pos].mean_, scalers[pos].scale_, mus[pos],
         )
-        p_nc *= (1.0 - p)
-    return 1.0 - p_nc
+        p_not_caught *= (1.0 - p_catch)
+    return 1.0 - p_not_caught
 
 
-
-def get_league_avg_positions(year: int, dsn: str = DSN) -> dict:
+def get_league_avg_positions(year: int, dsn: str = DSN) -> OutfieldXY:
     """
     從 fielder_positioning 取指定年度各位置聯盟平均站位。
     回傳 {"LF": (x,y), "CF": (x,y), "RF": (x,y)}
@@ -521,7 +560,7 @@ def get_batter_stand(batter_id: int, year: int, dsn: str = DSN) -> str:
     return row[0] if row else "R"
 
 
-def load_qualifying_batters(year: int, dsn: str = DSN, min_balls: int = 30) -> list[dict]:
+def load_qualifying_batters(year: int, dsn: str = DSN, min_balls: int = 30) -> list[QualifyingBatter]:
     """指定年度、球數 >= min_balls 的打者清單，供 api/main.py 的 /api/batters 用。
     查精簡預計算表（見 scripts/precompute_batter_balls.py）。"""
     query = """

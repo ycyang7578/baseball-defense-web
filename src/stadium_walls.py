@@ -10,18 +10,26 @@
 """
 from functools import lru_cache
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import pyreadr
 from shapely.geometry import Point, Polygon
 
-from .physics import _X0, _Y0
+from .physics import _STATCAST_ORIGIN_X, _STATCAST_ORIGIN_Y
 
-_SCALE = 2.484
 
-_RDA_PATH = Path(__file__).parent.parent / "data" / "reference" / "MLBStadiaPathData.rda"
+class ParkBoundaryPoint(TypedDict):
+    """球場外野圍牆多邊形的單一頂點座標（feet），供前端 SVG 繪製。"""
+    x: float
+    y: float
 
-_TEAM_MAP = {
+
+_SCALE: float = 2.484
+
+_RDA_PATH: Path = Path(__file__).parent.parent / "data" / "reference" / "MLBStadiaPathData.rda"
+
+_TEAM_MAP: dict[str, str] = {
     'LAA': 'angels',    'HOU': 'astros',     'OAK': 'athletics',
     'ATH': 'athletics', 'TOR': 'blue_jays',  'ATL': 'braves',
     'MIL': 'brewers',   'STL': 'cardinals',  'CHC': 'cubs',
@@ -37,7 +45,7 @@ _TEAM_MAP = {
 
 
 @lru_cache(maxsize=1)
-def _load_wall_polygons() -> dict:
+def _load_wall_polygons() -> dict[str, Polygon]:
     """載入 .rda，為每個球場建 Shapely Polygon。回傳 {team_name: Polygon}。"""
     if not _RDA_PATH.exists():
         raise FileNotFoundError(f"MLBStadiaPathData.rda 找不到：{_RDA_PATH}")
@@ -46,10 +54,10 @@ def _load_wall_polygons() -> dict:
     df  = list(raw.values())[0]
 
     wall_df = df[df['segment'] == 'outfield_outer'].copy()
-    wall_df['x_ft'] = (wall_df['x'].values - _X0) * _SCALE
-    wall_df['y_ft'] = (_Y0 - wall_df['y'].values) * _SCALE
+    wall_df['x_ft'] = (wall_df['x'].values - _STATCAST_ORIGIN_X) * _SCALE
+    wall_df['y_ft'] = (_STATCAST_ORIGIN_Y - wall_df['y'].values) * _SCALE
 
-    polygons = {}
+    polygons: dict[str, Polygon] = {}
     for team, grp in wall_df.groupby('team'):
         coords = list(zip(grp['x_ft'], grp['y_ft']))
         if len(coords) >= 3:
@@ -83,7 +91,7 @@ def is_wall_ball(x_coord: np.ndarray, y_coord: np.ndarray,
     return flags
 
 
-def get_park_boundary_coords(home_team: str) -> list[dict] | None:
+def get_park_boundary_coords(home_team: str) -> list[ParkBoundaryPoint] | None:
     """
     回傳球場外野圍牆多邊形的頂點座標（feet），供前端 SVG 繪製。
     找不到球場時回傳 None。
@@ -93,7 +101,7 @@ def get_park_boundary_coords(home_team: str) -> list[dict] | None:
     if poly is None:
         return None
     coords = poly.exterior.coords
-    return [{"x": round(float(x), 1), "y": round(float(y), 1)} for x, y in coords]
+    return [ParkBoundaryPoint(x=round(float(x), 1), y=round(float(y), 1)) for x, y in coords]
 
 
-SUPPORTED_TEAMS = sorted(_TEAM_MAP.keys())
+SUPPORTED_TEAMS: list[str] = sorted(_TEAM_MAP.keys())

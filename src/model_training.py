@@ -18,11 +18,13 @@ from sklearn.preprocessing import StandardScaler
 
 from .defender_features import get_defender_opportunities
 
-FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
-ALL_COLS = FEATURE_COLS
+FEATURE_COLS: list[str] = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
+ALL_COLS: list[str] = FEATURE_COLS
 
-MCMC_KWARGS = dict(draws=2000, tune=2000, chains=4, cores=4,
-                   target_accept=0.95, nuts_sampler="pymc", random_seed=42)
+MCMC_KWARGS: dict[str, int | float | str] = dict(
+    draws=2000, tune=2000, chains=4, cores=4,
+    target_accept=0.95, nuts_sampler="pymc", random_seed=42,
+)
 
 
 def load_training_data(position: str, years: list[int]) -> pd.DataFrame:

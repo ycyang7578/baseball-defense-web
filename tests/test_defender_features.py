@@ -22,8 +22,8 @@ def test_get_defender_opportunities_computes_physics_columns(mock_connect, mock_
 
     # 手造一列已知數值，方便手算期望的 physics 衍生欄位
     mock_read_sql.return_value = pd.DataFrame({
-        "hc_x": [125.42],           # 等於 _X0 -> 打向正中方向
-        "hc_y": [98.27],            # _Y0(198.27) - 100
+        "hc_x": [125.42],           # 等於 _STATCAST_ORIGIN_X -> 打向正中方向
+        "hc_y": [98.27],            # _STATCAST_ORIGIN_Y(198.27) - 100
         "hit_distance_sc": [300.0],
         "launch_speed": [100.0],
         "launch_angle": [30.0],

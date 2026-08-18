@@ -6,16 +6,18 @@ make_validation_plot.py 與 make_validation_plot_v2.py 畫不同版面的驗證�
 """
 import re
 import unicodedata
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import psycopg2
+from sklearn.preprocessing import StandardScaler
 
 from src.defender_features import get_defender_opportunities, mark_official
 
-POSITIONS = ["LF", "CF", "RF"]
-FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
+POSITIONS: list[str] = ["LF", "CF", "RF"]
+FEATURE_COLS: list[str] = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 
 
 def normalize_name(name: str) -> str:
@@ -23,11 +25,11 @@ def normalize_name(name: str) -> str:
     return re.sub(r"[^a-z]+", "_", name.lower()).strip("_")
 
 
-def sigmoid(x):
+def sigmoid(x: np.ndarray) -> np.ndarray:
     return 1 / (1 + np.exp(-x))
 
 
-def load_of_model(models_dir):
+def load_of_model(models_dir: Path) -> tuple[StandardScaler, pd.Series]:
     """回傳統一 OF 模型的 (scaler, mu)，mu 為群體層後驗平均（Series）。"""
     of_dir = models_dir / "OF"
     scaler = joblib.load(of_dir / "OF_scaler.joblib")
@@ -35,7 +37,7 @@ def load_of_model(models_dir):
     return scaler, mu
 
 
-def compute_model_oaa(pos: str, year: int, scaler, mu) -> pd.DataFrame:
+def compute_model_oaa(pos: str, year: int, scaler: StandardScaler, mu: pd.Series) -> pd.DataFrame:
     """單一位置逐球 model OAA（is_official 子集，群體層 mu，絕不用 player-level）。"""
     df = get_defender_opportunities(pos, year)
     df = df.rename(columns={"required_speed": "speed"})
@@ -54,7 +56,7 @@ def compute_model_oaa(pos: str, year: int, scaler, mu) -> pd.DataFrame:
     return df[["name_fielder", "caught", "catch_prob", "oaa_play"]]
 
 
-def load_model_oaa(models_dir, year: int) -> pd.DataFrame:
+def load_model_oaa(models_dir: Path, year: int) -> pd.DataFrame:
     """跨 LF+CF+RF 加總逐球 oaa_play → 每位球員一筆，含標準化姓名 key。"""
     scaler, mu = load_of_model(models_dir)
     all_plays = pd.concat(

@@ -4,6 +4,7 @@ Server-side matplotlib renderer — 重現 Model_3 的 park_single v2 圖。
 輸出 PNG bytes，外觀與論文圖一致。
 """
 import io
+from typing import TypedDict
 
 import matplotlib
 matplotlib.use("Agg")
@@ -11,18 +12,30 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 import seaborn as sns
+from matplotlib.axes import Axes
+
+from .schemas import OptimizeResponse
+
+
+class MarkerStyle(TypedDict):
+    color: str
+    marker: str
+    size: int
+    label: str
+    offset: int
+
 
 # ── 顏色與樣式（對齊 Model_3）────────────────────────────────────
-_STYLES = {
+_STYLES: dict[str, MarkerStyle] = {
     "league_avg": dict(color="#1565C0", marker="D", size=170, label="League Avg",       offset=-17),
     "no_park":    dict(color="#C0392B", marker="o", size=200, label="RE24 Opt (no park)", offset=-34),
     "with_park":  dict(color="#7B2FBE", marker="*", size=480, label="RE24 Opt (park={park})", offset=16),
     "custom":     dict(color="#7B2FBE", marker="*", size=480, label="Selected Fielders", offset=16),
 }
-_WALL_COLOR = "#FF6B00"
+_WALL_COLOR: str = "#FF6B00"
 
 
-def _draw_field(ax):
+def _draw_field(ax: Axes) -> None:
     bases = np.array([(0, 0), (63.64, 63.64), (0, 127.28), (-63.64, 63.64), (0, 0)])
     ax.plot(bases[:, 0], bases[:, 1], color="black", lw=2, zorder=2)
     ax.scatter(bases[:-1, 0], bases[:-1, 1], c="white", edgecolors="black", s=80, zorder=3)
@@ -34,7 +47,8 @@ def _draw_field(ax):
     ))
 
 
-def _add_markers(ax, pts, style, park):
+def _add_markers(ax: Axes, pts: dict[str, dict[str, float]],
+                 style: MarkerStyle, park: str) -> None:
     color  = style["color"]
     label  = style["label"].format(park=park)
     offset = style["offset"]
@@ -43,33 +57,33 @@ def _add_markers(ax, pts, style, park):
                     [pts["RF"]["x"], pts["RF"]["y"]]])
     ax.scatter(arr[:, 0], arr[:, 1], c=color, s=style["size"], marker=style["marker"],
                zorder=8, edgecolors="white", linewidth=1.5, label=label)
-    for code, (cx, cy) in zip(["LF", "CF", "RF"], arr):
-        ax.text(cx, cy + offset, code, ha="center", va="center",
+    for position_code, (x, y) in zip(["LF", "CF", "RF"], arr):
+        ax.text(x, y + offset, position_code, ha="center", va="center",
                 fontsize=10, fontweight="bold", color="white", zorder=9,
                 bbox=dict(boxstyle="round,pad=0.25", fc=color, ec="white", lw=0.8, alpha=0.95))
 
 
-def render_plot(resp) -> bytes:
+def render_plot(resp: OptimizeResponse) -> bytes:
     """resp: OptimizeResponse pydantic 物件 → PNG bytes"""
-    pos   = resp.positions
+    positions = resp.positions
     stats = resp.stats
     park  = stats.home_team or ""
 
     balls = resp.balls
-    bx = np.array([b.x for b in balls])
-    by = np.array([b.y for b in balls])
-    wall = np.array([b.is_wall_ball for b in balls], dtype=bool)
-    cp = np.array([b.catch_prob for b in balls])
+    ball_x = np.array([b.x for b in balls])
+    ball_y = np.array([b.y for b in balls])
+    is_wall_ball = np.array([b.is_wall_ball for b in balls], dtype=bool)
+    catch_prob = np.array([b.catch_prob for b in balls])
 
     fig, ax = plt.subplots(figsize=(10, 9))
     _draw_field(ax)
 
     # ── 藍色 KDE 密度背景 ──────────────────────────────────────
-    if len(bx) > 5:
+    if len(ball_x) > 5:
         try:
-            sns.kdeplot(x=bx, y=by, fill=True, cmap="Blues", ax=ax,
+            sns.kdeplot(x=ball_x, y=ball_y, fill=True, cmap="Blues", ax=ax,
                         alpha=0.28, levels=10, zorder=0, warn_singular=False)
-            sns.kdeplot(x=bx, y=by, fill=False, color="#4a72c4", ax=ax,
+            sns.kdeplot(x=ball_x, y=ball_y, fill=False, color="#4a72c4", ax=ax,
                         alpha=0.15, levels=10, linewidths=0.4, zorder=1,
                         warn_singular=False)
         except Exception:
@@ -77,34 +91,35 @@ def render_plot(resp) -> bytes:
 
     # ── park boundary ─────────────────────────────────────────
     if resp.park_boundary:
-        px = [c.x for c in resp.park_boundary]
-        py = [c.y for c in resp.park_boundary]
-        ax.plot(px, py, color="#00CC55", lw=2.2, alpha=0.9, zorder=3, label="Park Boundary")
+        park_x = [c.x for c in resp.park_boundary]
+        park_y = [c.y for c in resp.park_boundary]
+        ax.plot(park_x, park_y, color="#00CC55", lw=2.2, alpha=0.9, zorder=3, label="Park Boundary")
 
     # ── 球散點 ────────────────────────────────────────────────
-    sc = ax.scatter(bx[~wall], by[~wall], c=cp[~wall], cmap="RdYlGn", vmin=0, vmax=1,
-                    s=30, alpha=0.85, edgecolors="gray", linewidths=0.3, zorder=4)
-    cbar = plt.colorbar(sc, ax=ax, fraction=0.040, pad=0.02, shrink=0.78)
+    scatter_plot = ax.scatter(ball_x[~is_wall_ball], ball_y[~is_wall_ball], c=catch_prob[~is_wall_ball],
+                              cmap="RdYlGn", vmin=0, vmax=1,
+                              s=30, alpha=0.85, edgecolors="gray", linewidths=0.3, zorder=4)
+    cbar = plt.colorbar(scatter_plot, ax=ax, fraction=0.040, pad=0.02, shrink=0.78)
     cbar.set_label("Catch Probability", fontsize=11)
     cbar.ax.tick_params(labelsize=9)
 
-    if wall.any():
-        ax.scatter(bx[wall], by[wall], c=_WALL_COLOR, s=55, marker="*",
+    if is_wall_ball.any():
+        ax.scatter(ball_x[is_wall_ball], ball_y[is_wall_ball], c=_WALL_COLOR, s=55, marker="*",
                    edgecolors="black", linewidths=0.4, zorder=5,
-                   label=f"Wall Ball ({int(wall.sum())})")
+                   label=f"Wall Ball ({int(is_wall_ball.sum())})")
 
     # ── 站位標記（custom > with_park > no_park；聯盟平均只留數字比較，圖上不畫）──
-    if "custom" in pos:
+    if "custom" in positions:
         draw_keys = ["custom"]
-    elif "with_park" in pos:
+    elif "with_park" in positions:
         draw_keys = ["with_park"]
     else:
         draw_keys = ["no_park"]
     for key in draw_keys:
-        if key in pos:
-            ps = pos[key]
-            _add_markers(ax, {"LF": ps.LF.model_dump(), "CF": ps.CF.model_dump(),
-                              "RF": ps.RF.model_dump()}, _STYLES[key], park)
+        if key in positions:
+            position_set = positions[key]
+            _add_markers(ax, {"LF": position_set.LF.model_dump(), "CF": position_set.CF.model_dump(),
+                              "RF": position_set.RF.model_dump()}, _STYLES[key], park)
 
     # ── 座標軸 ────────────────────────────────────────────────
     ax.set_xlim(-280, 280)
@@ -125,12 +140,12 @@ def render_plot(resp) -> bytes:
     handles, labels = ax.get_legend_handles_labels()
     # 依需求排序：Park Boundary, Wall Ball, League Avg, no_park, with_park
     order_key = ["Park Boundary", "Wall Ball", "League Avg", "RE24 Opt (no park)", "RE24 Opt (park"]
-    def _rank(lbl):
+    def _rank(label: str) -> int:
         for i, k in enumerate(order_key):
-            if lbl.startswith(k):
+            if label.startswith(k):
                 return i
         return len(order_key)
-    pairs = sorted(zip(handles, labels), key=lambda hl: _rank(hl[1]))
+    pairs = sorted(zip(handles, labels), key=lambda handle_label: _rank(handle_label[1]))
     ax.legend([h for h, _ in pairs], [l for _, l in pairs],
               loc="lower left", fontsize=9.5, framealpha=0.9)
 

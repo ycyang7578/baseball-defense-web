@@ -5,15 +5,18 @@ web 排名預算（scripts/precompute_if_model_oaa.py）用同一份實作。
 方法論說明見 evaluate_if_2025.py docstring。
 2026-07-12 起難度模型預設為可解釋的 spline GLM（見 if_model.py docstring）。
 """
+from typing import Callable
+
 import numpy as np
 import pandas as pd
+from sklearn.pipeline import Pipeline
 
 from src.if_dataset import INFIELD_COLS, build_gb_dataset
 from src.if_model import DIFFICULTY_FEATURES, make_difficulty_glm
 
 
 def score_test_year(train_years: list[int], test_year: int,
-                    model_factory=make_difficulty_glm) -> pd.DataFrame:
+                    model_factory: Callable[[], Pipeline] = make_difficulty_glm) -> pd.DataFrame:
     """全量滾地球逐球評分：train_years 訓練難度模型、test_year 評分。
 
     model_factory 預設為評價用難度 GLM；替代模型（如 GBM benchmark）可傳入

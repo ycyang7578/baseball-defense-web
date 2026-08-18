@@ -8,7 +8,7 @@
 """
 import os
 
-DSN = os.environ.get(
+DSN: str = os.environ.get(
     "BASEBALL_DSN",
     "host=localhost dbname=baseball user=postgres password=postgres",
 )

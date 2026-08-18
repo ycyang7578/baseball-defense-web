@@ -10,9 +10,10 @@ dedupe_positioning 是 fielder_positioning／fielder_positioning_on1b 的清理�
 import io
 
 import pandas as pd
+from psycopg2.extensions import connection as PgConnection
 
 
-def copy_dataframe(conn, table: str, df: pd.DataFrame) -> None:
+def copy_dataframe(conn: PgConnection, table: str, df: pd.DataFrame) -> None:
     """用 COPY（比逐列 INSERT 快很多）把 df 整批寫進 table，並 commit。"""
     buf = io.StringIO()
     df.to_csv(buf, index=False, header=False, na_rep="")

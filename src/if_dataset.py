@@ -20,32 +20,38 @@ import psycopg2
 from src.config import DSN
 
 # 滾地球結果標籤：out=防守方把球轉換成至少一個出局（Tango：只看 play 的第一個 out）
-OUT_EVENTS = ("field_out", "force_out", "grounded_into_double_play", "double_play",
-              "fielders_choice_out")
-NONOUT_EVENTS = ("single", "double", "triple", "field_error")
+OUT_EVENTS: tuple[str, ...] = ("field_out", "force_out", "grounded_into_double_play",
+                                "double_play", "fielders_choice_out")
+NONOUT_EVENTS: tuple[str, ...] = ("single", "double", "triple", "field_error")
 
 # 階段B（一壘有人、<2 出局）：結果升級為「拿到幾個出局」。
 # fielders_choice 經 des 逐筆抽驗（2026-07-13）＝打者上壘、跑者全推進，沒有出局；
 # fielders_choice_out 才有記出局。
-ON1B_EVENT_OUTS = {
+ON1B_EVENT_OUTS: dict[str, int] = {
     "grounded_into_double_play": 2, "double_play": 2,
     "force_out": 1, "field_out": 1, "fielders_choice_out": 1,
     "single": 0, "double": 0, "triple": 0, "field_error": 0, "fielders_choice": 0,
 }
 
 # Savant hc_x/hc_y 座標系的本壘位置
-HOME_X, HOME_Y = 125.42, 198.27
-MPH_TO_FTS = 1.46667          # 擊球初速 mph → ft/s
-FIRST_BASE_R, FIRST_BASE_DEG = 90.0, 45.0  # 一壘壘包（距本壘 90 呎、+45°）
+HOME_X: float = 125.42
+HOME_Y: float = 198.27
+MPH_TO_FTS: float = 1.46667          # 擊球初速 mph → ft/s
+FIRST_BASE_R: float = 90.0           # 一壘壘包距本壘的距離（呎）
+FIRST_BASE_DEG: float = 45.0         # 一壘壘包相對本壘的角度
 
-INFIELD_COLS = {"fielder_3": "1B", "fielder_4": "2B", "fielder_5": "3B", "fielder_6": "SS"}
-INFIELD_POSITIONS = tuple(INFIELD_COLS.values())
+INFIELD_COLS: dict[str, str] = {"fielder_3": "1B", "fielder_4": "2B",
+                                 "fielder_5": "3B", "fielder_6": "SS"}
+INFIELD_POSITIONS: tuple[str, ...] = tuple(INFIELD_COLS.values())
 
 
-def _polar_to_xy(r, deg):
+def _polar_to_xy(
+    radius_ft: np.ndarray | float,
+    angle_deg: np.ndarray | float,
+) -> tuple[np.ndarray | float, np.ndarray | float]:
     """(深度, 角度) → 平面座標；x 往一壘線側為正、y 往中外野為正。"""
-    rad = np.radians(deg)
-    return r * np.sin(rad), r * np.cos(rad)
+    angle_rad = np.radians(angle_deg)
+    return radius_ft * np.sin(angle_rad), radius_ft * np.cos(angle_rad)
 
 
 def fetch_raw_gb(years: list[int]) -> pd.DataFrame:
@@ -194,7 +200,8 @@ def attach_features(gb: pd.DataFrame, positioning: pd.DataFrame,
     return df
 
 
-SECOND_BASE_X, SECOND_BASE_Y = 0.0, 90.0 * np.sqrt(2.0)  # 二壘壘包
+SECOND_BASE_X: float = 0.0
+SECOND_BASE_Y: float = 90.0 * np.sqrt(2.0)  # 二壘壘包
 
 
 def attach_dp_features(df: pd.DataFrame, run_speed: pd.DataFrame) -> pd.DataFrame:

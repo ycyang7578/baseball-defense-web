@@ -7,13 +7,13 @@ import numpy as np
 import pandas as pd
 
 # Statcast 像素座標原點（與 Model_3 的 config.DATA_PROCESSING['physics'] 相同）
-_X0 = 125.42
-_Y0 = 198.27
-_G = 32.174          # 重力加速度 ft/s^2
-_H1 = 0.0            # 接球高度 (ft)，補償真空模型誤差
-_MPH_TO_FT_S = 1.46667
+_STATCAST_ORIGIN_X: float = 125.42
+_STATCAST_ORIGIN_Y: float = 198.27
+_GRAVITY_FT_PER_S2: float = 32.174   # 重力加速度 ft/s^2
+_CATCH_HEIGHT_FT: float = 0.0        # 接球高度 (ft)，補償真空模型誤差
+_MPH_TO_FT_S: float = 1.46667
 
-_CATCH_EVENTS = {
+_CATCH_EVENTS: set[str] = {
     "field_out", "sac_fly", "double_play", "triple_play",
     "field_error", "sac_fly_double_play",
 }
@@ -22,7 +22,7 @@ _CATCH_EVENTS = {
 def transform_coordinates(hc_x: pd.Series, hc_y: pd.Series,
                            hit_distance_sc: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Statcast 像素座標 -> 以本壘為原點的笛卡爾座標（ft）。"""
-    angle_rad = np.arctan2(hc_x - _X0, _Y0 - hc_y)
+    angle_rad = np.arctan2(hc_x - _STATCAST_ORIGIN_X, _STATCAST_ORIGIN_Y - hc_y)
     x_coord = hit_distance_sc * np.sin(angle_rad)
     y_coord = hit_distance_sc * np.cos(angle_rad)
     return x_coord, y_coord
@@ -33,8 +33,8 @@ def calculate_flight_time(launch_speed: pd.Series, launch_angle: pd.Series,
     """拋體公式計算飛行時間（秒）。"""
     v0 = launch_speed * _MPH_TO_FT_S
     vy0 = v0 * np.sin(np.radians(launch_angle))
-    discriminant = np.maximum(vy0 ** 2 - 2 * _G * (_H1 - plate_z), 0)
-    return (vy0 + np.sqrt(discriminant)) / _G
+    discriminant = np.maximum(vy0 ** 2 - 2 * _GRAVITY_FT_PER_S2 * (_CATCH_HEIGHT_FT - plate_z), 0)
+    return (vy0 + np.sqrt(discriminant)) / _GRAVITY_FT_PER_S2
 
 
 def mark_caught(events: pd.Series) -> pd.Series:

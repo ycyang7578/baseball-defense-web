@@ -23,6 +23,7 @@
 0.7536。
 """
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
@@ -32,11 +33,11 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 # 優化用 GLM 的輸入欄位（野手相對幾何 + 球質 + 跑者）
 # stand_R 於 2026-07-12 移除：hp_to_1b 是實測本壘到一壘秒數、已含左打站位優勢，
 # 消融顯示 stand_R 冗餘（2025 AUC −0.0006、校準略好，scripts/experiments/exp_if_drop_features.py）
-OPTIMIZER_FEATURES = ["ad_min", "ball_time", "launch_angle", "launch_speed",
-                      "throw_dist", "hp_to_1b"]
+OPTIMIZER_FEATURES: list[str] = ["ad_min", "ball_time", "launch_angle", "launch_speed",
+                                  "throw_dist", "hp_to_1b"]
 # 評價用 GBM 的輸入欄位（無任何野手資訊）
-DIFFICULTY_FEATURES = ["spray_deg", "launch_angle", "launch_speed",
-                       "hp_to_1b", "stand_R"]
+DIFFICULTY_FEATURES: list[str] = ["spray_deg", "launch_angle", "launch_speed",
+                                   "hp_to_1b", "stand_R"]
 
 
 class FielderGeometryFeatures(BaseEstimator, TransformerMixin):
@@ -54,25 +55,27 @@ class FielderGeometryFeatures(BaseEstimator, TransformerMixin):
     - hp_to_1b×throw_dist、hp_to_1b×spline(ball_time)：跑者速度只在 close play 起作用
     """
 
-    def fit(self, X, y=None):
-        self.splines_ = {c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
-                         for c in ("ad_min", "ball_time", "launch_angle")}
-        self.scaler_ = StandardScaler().fit(
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "FielderGeometryFeatures":
+        self.splines_: dict[str, SplineTransformer] = {
+            c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
+            for c in ("ad_min", "ball_time", "launch_angle")
+        }
+        self.scaler_: StandardScaler = StandardScaler().fit(
             X[["launch_speed", "throw_dist", "hp_to_1b"]])
         return self
 
-    def transform(self, X):
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
         a = self.splines_["ad_min"].transform(X[["ad_min"]])
         b = self.splines_["ball_time"].transform(X[["ball_time"]])
         la = self.splines_["launch_angle"].transform(X[["launch_angle"]])
         z = self.scaler_.transform(X[["launch_speed", "throw_dist", "hp_to_1b"]])
         ev, throw, hp = z[:, [0]], z[:, [1]], z[:, [2]]
-        n = len(X)
+        n_rows = len(X)
         return np.hstack([
             a, b, la, z,
-            (a[:, :, None] * b[:, None, :]).reshape(n, -1),  # tensor ad×bt
-            a * ev,                                          # ad×EV
-            hp * throw, hp * b,                              # 跑者交互
+            (a[:, :, None] * b[:, None, :]).reshape(n_rows, -1),  # tensor ad×bt
+            a * ev,                                               # ad×EV
+            hp * throw, hp * b,                                   # 跑者交互
         ])
 
 
@@ -89,24 +92,26 @@ class DifficultyGLMFeatures(BaseEstimator, TransformerMixin):
     交互：spray×EV（強襲穿洞）、spray×hp（慢滾內野安打的方向性）。
     """
 
-    def __init__(self, spray_ev=True, spray_hp=True):
+    def __init__(self, spray_ev: bool = True, spray_hp: bool = True) -> None:
         self.spray_ev = spray_ev
         self.spray_hp = spray_hp
 
     @staticmethod
-    def _spray_rel(X):
+    def _spray_rel(X: pd.DataFrame) -> np.ndarray:
         sign = np.where(X["stand_R"].to_numpy(float) == 1, 1.0, -1.0)
         return (X["spray_deg"].to_numpy(float) * sign)[:, None]
 
-    def fit(self, X, y=None):
-        self.spl_spray_ = SplineTransformer(n_knots=8, degree=3).fit(
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "DifficultyGLMFeatures":
+        self.spl_spray_: SplineTransformer = SplineTransformer(n_knots=8, degree=3).fit(
             self._spray_rel(X))
-        self.spl_ = {c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
-                     for c in ("launch_angle", "launch_speed", "hp_to_1b")}
-        self.scaler_ = StandardScaler().fit(X[["launch_speed", "hp_to_1b"]])
+        self.spl_: dict[str, SplineTransformer] = {
+            c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
+            for c in ("launch_angle", "launch_speed", "hp_to_1b")
+        }
+        self.scaler_: StandardScaler = StandardScaler().fit(X[["launch_speed", "hp_to_1b"]])
         return self
 
-    def transform(self, X):
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
         s = self.spl_spray_.transform(self._spray_rel(X))
         la = self.spl_["launch_angle"].transform(X[["launch_angle"]])
         ev = self.spl_["launch_speed"].transform(X[["launch_speed"]])
@@ -120,7 +125,7 @@ class DifficultyGLMFeatures(BaseEstimator, TransformerMixin):
         return np.hstack(parts)
 
 
-def make_difficulty_glm(**kw) -> Pipeline:
+def make_difficulty_glm(**kw: bool) -> Pipeline:
     return Pipeline([("features", DifficultyGLMFeatures(**kw)),
                      ("lr", LogisticRegression(max_iter=8000, C=1.0))])
 
@@ -134,9 +139,9 @@ def make_difficulty_gbm() -> HistGradientBoostingClassifier:
 # E[outs] = P(≥1 出局) × (1 + P(雙殺 | ≥1 出局))，兩段皆 counterfactual
 # （只用野手相對幾何＋球質＋跑速，排除 raw spray，同 make_optimizer_glm 的紀律）。
 
-ON1B_OUT_FEATURES = OPTIMIZER_FEATURES + ["throw_dist_2b"]
-ON1B_DP_FEATURES = ["ad_min", "ball_time", "launch_speed", "hp_to_1b",
-                    "runner_hp_to_1b", "pivot_dist", "throw_dist_2b"]
+ON1B_OUT_FEATURES: list[str] = OPTIMIZER_FEATURES + ["throw_dist_2b"]
+ON1B_DP_FEATURES: list[str] = ["ad_min", "ball_time", "launch_speed", "hp_to_1b",
+                                "runner_hp_to_1b", "pivot_dist", "throw_dist_2b"]
 
 
 class On1bOutFeatures(FielderGeometryFeatures):
@@ -146,12 +151,12 @@ class On1bOutFeatures(FielderGeometryFeatures):
     與 throw_dist 同理**維持線性**（攔截幾何的確定函數，彈性形狀=raw spray 後門）。
     """
 
-    def fit(self, X, y=None):
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "On1bOutFeatures":
         super().fit(X, y)
-        self.scaler_2b_ = StandardScaler().fit(X[["throw_dist_2b"]])
+        self.scaler_2b_: StandardScaler = StandardScaler().fit(X[["throw_dist_2b"]])
         return self
 
-    def transform(self, X):
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
         return np.hstack([super().transform(X),
                           self.scaler_2b_.transform(X[["throw_dist_2b"]])])
 
@@ -167,19 +172,21 @@ class On1bDPFeatures(BaseEstimator, TransformerMixin):
     起作用，沿用階段1 的結論；是否採用由 2023→2024 驗證決定）。
     """
 
-    def __init__(self, interactions=True):
+    def __init__(self, interactions: bool = True) -> None:
         self.interactions = interactions
 
-    _LINEAR = ["launch_speed", "hp_to_1b", "runner_hp_to_1b",
-               "pivot_dist", "throw_dist_2b"]
+    _LINEAR: list[str] = ["launch_speed", "hp_to_1b", "runner_hp_to_1b",
+                           "pivot_dist", "throw_dist_2b"]
 
-    def fit(self, X, y=None):
-        self.splines_ = {c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
-                         for c in ("ad_min", "ball_time")}
-        self.scaler_ = StandardScaler().fit(X[self._LINEAR])
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "On1bDPFeatures":
+        self.splines_: dict[str, SplineTransformer] = {
+            c: SplineTransformer(n_knots=6, degree=3).fit(X[[c]])
+            for c in ("ad_min", "ball_time")
+        }
+        self.scaler_: StandardScaler = StandardScaler().fit(X[self._LINEAR])
         return self
 
-    def transform(self, X):
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
         a = self.splines_["ad_min"].transform(X[["ad_min"]])
         b = self.splines_["ball_time"].transform(X[["ball_time"]])
         z = self.scaler_.transform(X[self._LINEAR])
@@ -195,6 +202,6 @@ def make_on1b_out_glm() -> Pipeline:
                      ("lr", LogisticRegression(max_iter=8000, C=1.0))])
 
 
-def make_on1b_dp_glm(**kw) -> Pipeline:
+def make_on1b_dp_glm(**kw: bool) -> Pipeline:
     return Pipeline([("features", On1bDPFeatures(**kw)),
                      ("lr", LogisticRegression(max_iter=8000, C=1.0))])

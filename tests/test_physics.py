@@ -18,9 +18,9 @@ def test_mark_caught_recognizes_out_events():
 
 
 def test_transform_coordinates_straight_to_center():
-    # hc_x == _X0 且 hc_y < _Y0：球打向正中外野，x_coord 應為 0
+    # hc_x == _STATCAST_ORIGIN_X 且 hc_y < _STATCAST_ORIGIN_Y：球打向正中外野，x_coord 應為 0
     hc_x = pd.Series([125.42])
-    hc_y = pd.Series([98.27])  # _Y0(198.27) - 100
+    hc_y = pd.Series([98.27])  # _STATCAST_ORIGIN_Y(198.27) - 100
     hit_distance_sc = pd.Series([300.0])
 
     x_coord, y_coord = transform_coordinates(hc_x, hc_y, hit_distance_sc)

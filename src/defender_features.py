@@ -10,11 +10,11 @@ from . import physics
 from .config import DSN
 
 # LF/CF/RF 對應 Statcast 的 fielder_N 欄位與 hit_location 編號（標準棒球位置編號，剛好一致）
-_FIELDER_COLUMN = {"LF": "fielder_7", "CF": "fielder_8", "RF": "fielder_9"}
-_HIT_LOCATION = {"LF": 7, "CF": 8, "RF": 9}
+_FIELDER_COLUMN: dict[str, str] = {"LF": "fielder_7", "CF": "fielder_8", "RF": "fielder_9"}
+_HIT_LOCATION: dict[str, int] = {"LF": 7, "CF": 8, "RF": 9}
 
-_EXCLUDED_ALIGNMENTS = ("Strategic", "4th outfielder")
-_VALID_BB_TYPES = ("fly_ball", "line_drive")
+_EXCLUDED_ALIGNMENTS: tuple[str, ...] = ("Strategic", "4th outfielder")
+_VALID_BB_TYPES: tuple[str, ...] = ("fly_ball", "line_drive")
 
 _QUERY = """
     SELECT

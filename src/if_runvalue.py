@@ -24,8 +24,9 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 
 from src.config import DSN
 from src.if_dataset import HOME_X, HOME_Y
+from src.re24 import BaseOutState, HitDeltaKey
 
-XB_FEATURES = ["spray_deg", "launch_speed", "hp_to_1b"]
+XB_FEATURES: list[str] = ["spray_deg", "launch_speed", "hp_to_1b"]
 
 
 class XBRateFeatures(BaseEstimator, TransformerMixin):
@@ -35,13 +36,13 @@ class XBRateFeatures(BaseEstimator, TransformerMixin):
     launch_speed / hp_to_1b 線性。
     """
 
-    def fit(self, X, y=None):
-        self.spl_spray_ = SplineTransformer(n_knots=8, degree=3).fit(
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "XBRateFeatures":
+        self.spl_spray_: SplineTransformer = SplineTransformer(n_knots=8, degree=3).fit(
             X[["spray_deg"]])
-        self.scaler_ = StandardScaler().fit(X[["launch_speed", "hp_to_1b"]])
+        self.scaler_: StandardScaler = StandardScaler().fit(X[["launch_speed", "hp_to_1b"]])
         return self
 
-    def transform(self, X):
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
         s = self.spl_spray_.transform(X[["spray_deg"]])
         z = self.scaler_.transform(X[["launch_speed", "hp_to_1b"]])
         return np.hstack([s, z])
@@ -85,7 +86,7 @@ def train_gb_xb_model(years: list[int]) -> Pipeline:
     return model
 
 
-def delta_re_out(re24: dict, state: tuple[int, int, int, int]) -> float:
+def delta_re_out(re24: dict[BaseOutState, float], state: BaseOutState) -> float:
     """滾地球出局的 ΔRE：跑者不推進、出局+1（無人在壘時精確）。"""
     b1, b2, b3, outs = state
     if outs >= 2:
@@ -93,8 +94,8 @@ def delta_re_out(re24: dict, state: tuple[int, int, int, int]) -> float:
     return re24.get((b1, b2, b3, outs + 1), 0.0) - re24.get(state, 0.0)
 
 
-def gb_miss_costs(balls: pd.DataFrame, xb_model: Pipeline, delta_re: dict,
-                  state: tuple[int, int, int, int]) -> np.ndarray:
+def gb_miss_costs(balls: pd.DataFrame, xb_model: Pipeline,
+                  delta_re: dict[HitDeltaKey, float], state: BaseOutState) -> np.ndarray:
     """每球的漏接代價 w_j（對齊外野 compute_w_j 的鍵值慣例）。"""
     p_xb = xb_model.predict_proba(balls[XB_FEATURES])[:, 1]
     dre_1b = delta_re.get(("1B", *state), 0.0)
@@ -103,8 +104,9 @@ def gb_miss_costs(balls: pd.DataFrame, xb_model: Pipeline, delta_re: dict,
 
 
 def runvalue_ball_weights(balls: pd.DataFrame, xb_model: Pipeline,
-                          re24: dict, delta_re: dict,
-                          state: tuple[int, int, int, int]
+                          re24: dict[BaseOutState, float],
+                          delta_re: dict[HitDeltaKey, float],
+                          state: BaseOutState
                           ) -> tuple[np.ndarray, float]:
     """回傳 (optimize_infield 用的 ball_weights, mean_miss_cost)。
 

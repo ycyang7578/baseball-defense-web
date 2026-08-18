@@ -23,36 +23,59 @@ logit += alpha_j + g_j × ad_z。個人化時同側標籤不再可互換（槽�
 候選站位屬外插，解讀時要保守。
 """
 import copy
+from typing import Callable, Protocol, TypedDict
 
 import numpy as np
 import pandas as pd
 import psycopg2
 from scipy.optimize import minimize
 from scipy.stats import qmc
+from sklearn.pipeline import Pipeline
 
 from src.config import DSN
 from src.if_dataset import MPH_TO_FTS, OUT_EVENTS, NONOUT_EVENTS, HOME_X, HOME_Y
 
-MOUND_DIST = 60.5
-DIRT_RADIUS = 95.0
+
+class ProbabilisticClassifier(Protocol):
+    """`optimize_infield` 系列函式對模型的最小需求（GLM pipeline 或其他分類器皆可）。"""
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray: ...
+
+
+class PlayerEffects(TypedDict):
+    """貝葉斯球員層後驗平均，依 POSITIONS 順序（見本檔案頂部 docstring）。"""
+    alpha: np.ndarray
+    g: np.ndarray
+    ad_mean: float
+    ad_std: float
+
+
+class InfieldOptimizeResult(TypedDict):
+    angles: np.ndarray
+    depths: np.ndarray
+    exp_outs: float
+    positions: dict[str, tuple[float, float]]
+
+
+MOUND_DIST: float = 60.5
+DIRT_RADIUS: float = 95.0
 # 深度下限取訓練資料的支撐範圍邊緣（賽季平均站位約 100–155 呎）：更淺屬 GLM 外插，
 # 實測會讓優化器把「閒置野手」（打者冷區的那側）停在外插最樂觀的假象位置
-MIN_DEPTH = 75.0
-POSITIONS = ("1B", "2B", "3B", "SS")
+MIN_DEPTH: float = 75.0
+POSITIONS: tuple[str, ...] = ("1B", "2B", "3B", "SS")
 # box bounds：前 4 維是角度（度）、後 4 維是深度比例 f
-ANGLE_BOUNDS = [(1.0, 44.0), (1.0, 44.0), (-44.0, -1.0), (-44.0, -1.0)]
-FRAC_BOUNDS = [(0.0, 1.0)] * 4
-_FIRST_BASE_XY = (90.0 * np.sin(np.radians(45.0)), 90.0 * np.cos(np.radians(45.0)))
+ANGLE_BOUNDS: list[tuple[float, float]] = [(1.0, 44.0), (1.0, 44.0), (-44.0, -1.0), (-44.0, -1.0)]
+FRAC_BOUNDS: list[tuple[float, float]] = [(0.0, 1.0)] * 4
+_FIRST_BASE_XY: tuple[float, float] = (90.0 * np.sin(np.radians(45.0)), 90.0 * np.cos(np.radians(45.0)))
 
 
-def dirt_max_depth(angle_deg):
+def dirt_max_depth(angle_deg: np.ndarray | float) -> np.ndarray | float:
     """指定角度下內野土外緣的深度（呎）。"""
-    rad = np.radians(angle_deg)
-    return MOUND_DIST * np.cos(rad) + np.sqrt(
-        DIRT_RADIUS ** 2 - (MOUND_DIST * np.sin(rad)) ** 2)
+    angle_rad = np.radians(angle_deg)
+    return MOUND_DIST * np.cos(angle_rad) + np.sqrt(
+        DIRT_RADIUS ** 2 - (MOUND_DIST * np.sin(angle_rad)) ** 2)
 
 
-def params_to_positions(x):
+def params_to_positions(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """8 維參數向量 → (angles[4], depths[4])，依 POSITIONS 順序。"""
     angles = np.asarray(x[:4], dtype=float)
     fracs = np.asarray(x[4:], dtype=float)
@@ -60,7 +83,7 @@ def params_to_positions(x):
     return angles, depths
 
 
-def positions_to_params(angles, depths) -> np.ndarray:
+def positions_to_params(angles: np.ndarray, depths: np.ndarray) -> np.ndarray:
     """(angles, depths) → 8 維參數向量（params_to_positions 的反函數）。"""
     angles = np.asarray(angles, dtype=float)
     depths = np.asarray(depths, dtype=float)
@@ -68,7 +91,7 @@ def positions_to_params(angles, depths) -> np.ndarray:
     return np.concatenate([angles, np.clip(fracs, 0.0, 1.0)])
 
 
-def geometry_features(balls: pd.DataFrame, angles, depths) -> pd.DataFrame:
+def geometry_features(balls: pd.DataFrame, angles: np.ndarray, depths: np.ndarray) -> pd.DataFrame:
     """給定站位，重算每顆球的野手相對特徵（與 if_dataset.attach_features 同公式）。"""
     spray = balls["spray_deg"].to_numpy(float)
     dtheta = np.abs(np.asarray(angles)[None, :] - spray[:, None])
@@ -90,8 +113,9 @@ def geometry_features(balls: pd.DataFrame, angles, depths) -> pd.DataFrame:
     })
 
 
-def predict_p_out(model, balls: pd.DataFrame, angles, depths,
-                  player_effects: dict | None = None) -> np.ndarray:
+def predict_p_out(model: ProbabilisticClassifier, balls: pd.DataFrame,
+                  angles: np.ndarray, depths: np.ndarray,
+                  player_effects: PlayerEffects | None = None) -> np.ndarray:
     """逐球 P(out)。player_effects 時把 alpha/g 加在最近野手身上（logit 空間）。"""
     feats = geometry_features(balls, angles, depths)
     p = model.predict_proba(feats)[:, 1]
@@ -107,8 +131,9 @@ def predict_p_out(model, balls: pd.DataFrame, angles, depths,
     return p
 
 
-def expected_outs(model, balls: pd.DataFrame, angles, depths,
-                  player_effects: dict | None = None,
+def expected_outs(model: ProbabilisticClassifier, balls: pd.DataFrame,
+                  angles: np.ndarray, depths: np.ndarray,
+                  player_effects: PlayerEffects | None = None,
                   ball_weights: np.ndarray | None = None) -> float:
     """ball_weights=None → 期望出局率（現行）；給權重 → mean(p×w)。
 
@@ -180,95 +205,104 @@ class _FastGLMObjective:
     驗證到 1e-10）。欄位切段順序必須跟 FielderGeometryFeatures.transform 一致。
     """
 
-    def __init__(self, model, balls: pd.DataFrame,
-                 player_effects: dict | None = None,
-                 ball_weights: np.ndarray | None = None):
-        self._bw = (np.asarray(ball_weights, dtype=float)
-                    if ball_weights is not None else None)
+    def __init__(self, model: Pipeline, balls: pd.DataFrame,
+                 player_effects: PlayerEffects | None = None,
+                 ball_weights: np.ndarray | None = None) -> None:
+        self._ball_weights: np.ndarray | None = (
+            np.asarray(ball_weights, dtype=float) if ball_weights is not None else None
+        )
         if player_effects is not None:
-            self._pe_alpha = np.asarray(player_effects["alpha"], dtype=float)
-            self._pe_g = np.asarray(player_effects["g"], dtype=float)
-            self._pe_admean = float(player_effects["ad_mean"])
-            self._pe_adstd = float(player_effects["ad_std"])
+            self._player_alpha: np.ndarray | None = np.asarray(player_effects["alpha"], dtype=float)
+            self._player_g: np.ndarray = np.asarray(player_effects["g"], dtype=float)
+            self._player_ad_mean: float = float(player_effects["ad_mean"])
+            self._player_ad_std: float = float(player_effects["ad_std"])
         else:
-            self._pe_alpha = None
-        feats = model.named_steps["features"]
-        lr = model.named_steps["lr"]
+            self._player_alpha = None
+        feature_transformer = model.named_steps["features"]
+        logistic_regression = model.named_steps["lr"]
         # spline 是用 DataFrame fit 的；複製一份去掉 feature 名檢查，讓
         # transform 能直接吃 ndarray（不然每次評估都觸發名稱驗證與警告）
-        self._spl_ad = copy.deepcopy(feats.splines_["ad_min"])
-        self._spl_bt = copy.deepcopy(feats.splines_["ball_time"])
-        for spl in (self._spl_ad, self._spl_bt):
-            if hasattr(spl, "feature_names_in_"):
-                del spl.feature_names_in_
+        self._ad_min_spline = copy.deepcopy(feature_transformer.splines_["ad_min"])
+        self._ball_time_spline = copy.deepcopy(feature_transformer.splines_["ball_time"])
+        for spline in (self._ad_min_spline, self._ball_time_spline):
+            if hasattr(spline, "feature_names_in_"):
+                del spline.feature_names_in_
 
         spray = balls["spray_deg"].to_numpy(float)
-        rad = np.radians(spray)
-        self._spray = spray
-        self._sin_spray, self._cos_spray = np.sin(rad), np.cos(rad)
-        self._speed_fts = balls["launch_speed"].to_numpy(float) * MPH_TO_FTS
-        self._rows = np.arange(len(balls))
+        spray_rad = np.radians(spray)
+        self._spray: np.ndarray = spray
+        self._sin_spray, self._cos_spray = np.sin(spray_rad), np.cos(spray_rad)
+        self._launch_speed_ft_s: np.ndarray = balls["launch_speed"].to_numpy(float) * MPH_TO_FTS
+        self._row_indices: np.ndarray = np.arange(len(balls))
 
-        mean, scale = feats.scaler_.mean_, feats.scaler_.scale_
-        ev_z = (balls["launch_speed"].to_numpy(float) - mean[0]) / scale[0]
-        hp_z = (balls["hp_to_1b"].to_numpy(float) - mean[2]) / scale[2]
-        self._throw_mean, self._throw_scale = mean[1], scale[1]
-        self._ev_z, self._hp_z = ev_z, hp_z
+        scaler_mean = feature_transformer.scaler_.mean_
+        scaler_scale = feature_transformer.scaler_.scale_
+        launch_speed_z = (balls["launch_speed"].to_numpy(float) - scaler_mean[0]) / scaler_scale[0]
+        hp_to_1b_z = (balls["hp_to_1b"].to_numpy(float) - scaler_mean[2]) / scaler_scale[2]
+        self._throw_dist_mean, self._throw_dist_scale = scaler_mean[1], scaler_scale[1]
+        self._launch_speed_z, self._hp_to_1b_z = launch_speed_z, hp_to_1b_z
 
-        la = feats.splines_["launch_angle"].transform(balls[["launch_angle"]])
-        k_a = self._spl_ad.n_features_out_
-        k_b = self._spl_bt.n_features_out_
-        k_la = la.shape[1]
+        launch_angle_basis = feature_transformer.splines_["launch_angle"].transform(balls[["launch_angle"]])
+        n_ad_basis = self._ad_min_spline.n_features_out_
+        n_ball_time_basis = self._ball_time_spline.n_features_out_
+        n_launch_angle_basis = launch_angle_basis.shape[1]
 
-        coef = lr.coef_[0]
-        pos = 0
+        lr_coef = logistic_regression.coef_[0]
+        coef_offset = 0
 
-        def take(k):
-            nonlocal pos
-            seg = coef[pos:pos + k]
-            pos += k
-            return seg
+        def take(width: int) -> np.ndarray:
+            nonlocal coef_offset
+            segment = lr_coef[coef_offset:coef_offset + width]
+            coef_offset += width
+            return segment
 
-        self._c_a, self._c_b, c_la = take(k_a), take(k_b), take(k_la)
-        c_ev, self._c_throw, c_hp = take(3)
-        self._C_ab = take(k_a * k_b).reshape(k_a, k_b)
-        self._c_aev = take(k_a)
-        self._c_ht = take(1)[0]
-        self._c_hpb = take(k_b)
-        assert pos == len(coef), "係數切段與 FielderGeometryFeatures 欄位順序不符"
+        self._coef_ad_min_spline, self._coef_ball_time_spline, coef_launch_angle = (
+            take(n_ad_basis), take(n_ball_time_basis), take(n_launch_angle_basis)
+        )
+        coef_launch_speed, self._coef_throw_dist, coef_hp_to_1b = take(3)
+        self._coef_ad_ball_tensor = take(n_ad_basis * n_ball_time_basis).reshape(n_ad_basis, n_ball_time_basis)
+        self._coef_ad_ev_interaction = take(n_ad_basis)
+        self._coef_hp_throw_interaction = take(1)[0]
+        self._coef_hp_ball_interaction = take(n_ball_time_basis)
+        assert coef_offset == len(lr_coef), "係數切段與 FielderGeometryFeatures 欄位順序不符"
 
-        self._const = (la @ c_la + ev_z * c_ev + hp_z * c_hp
-                       + lr.intercept_[0])
+        self._intercept_term = (launch_angle_basis @ coef_launch_angle
+                                + launch_speed_z * coef_launch_speed
+                                + hp_to_1b_z * coef_hp_to_1b
+                                + logistic_regression.intercept_[0])
 
-    def expected_outs(self, angles, depths) -> float:
+    def expected_outs(self, angles: np.ndarray, depths: np.ndarray) -> float:
         dtheta = np.abs(np.asarray(angles)[None, :] - self._spray[:, None])
         nearest = dtheta.argmin(axis=1)
-        ad_min = dtheta[self._rows, nearest]
+        ad_min = dtheta[self._row_indices, nearest]
         near_depth = np.asarray(depths)[nearest]
-        ball_time = near_depth / self._speed_fts
+        ball_time = near_depth / self._launch_speed_ft_s
         ix = near_depth * self._sin_spray
         iy = near_depth * self._cos_spray
         throw_z = (np.hypot(ix - _FIRST_BASE_XY[0], iy - _FIRST_BASE_XY[1])
-                   - self._throw_mean) / self._throw_scale
-        a = self._spl_ad.transform(ad_min[:, None])
-        b = self._spl_bt.transform(ball_time[:, None])
-        logit = (self._const + a @ self._c_a + b @ self._c_b
-                 + throw_z * self._c_throw
-                 + ((a @ self._C_ab) * b).sum(axis=1)
-                 + (a @ self._c_aev) * self._ev_z
-                 + self._c_ht * self._hp_z * throw_z
-                 + (b @ self._c_hpb) * self._hp_z)
-        if self._pe_alpha is not None:
-            ad_z = (ad_min - self._pe_admean) / self._pe_adstd
-            logit = logit + self._pe_alpha[nearest] + self._pe_g[nearest] * ad_z
+                   - self._throw_dist_mean) / self._throw_dist_scale
+        ad_basis = self._ad_min_spline.transform(ad_min[:, None])
+        ball_time_basis = self._ball_time_spline.transform(ball_time[:, None])
+        logit = (self._intercept_term
+                 + ad_basis @ self._coef_ad_min_spline
+                 + ball_time_basis @ self._coef_ball_time_spline
+                 + throw_z * self._coef_throw_dist
+                 + ((ad_basis @ self._coef_ad_ball_tensor) * ball_time_basis).sum(axis=1)
+                 + (ad_basis @ self._coef_ad_ev_interaction) * self._launch_speed_z
+                 + self._coef_hp_throw_interaction * self._hp_to_1b_z * throw_z
+                 + (ball_time_basis @ self._coef_hp_ball_interaction) * self._hp_to_1b_z)
+        if self._player_alpha is not None:
+            ad_z = (ad_min - self._player_ad_mean) / self._player_ad_std
+            logit = logit + self._player_alpha[nearest] + self._player_g[nearest] * ad_z
         p = 1.0 / (1.0 + np.exp(-logit))
-        if self._bw is not None:
-            return float(np.mean(p * self._bw))
+        if self._ball_weights is not None:
+            return float(np.mean(p * self._ball_weights))
         return float(np.mean(p))
 
 
-def _make_scorer(model, balls: pd.DataFrame, player_effects: dict | None = None,
-                 ball_weights: np.ndarray | None = None):
+def _make_scorer(model: ProbabilisticClassifier, balls: pd.DataFrame,
+                 player_effects: PlayerEffects | None = None,
+                 ball_weights: np.ndarray | None = None) -> Callable[[np.ndarray, np.ndarray], float]:
     """回傳 (angles, depths) → 期望出局率（或加權分數，見 expected_outs docstring）。
     GLM pipeline 走快速路徑，其他模型退回通用路徑。"""
     if hasattr(model, "named_steps") and {"features", "lr"} <= set(model.named_steps):
@@ -278,10 +312,10 @@ def _make_scorer(model, balls: pd.DataFrame, player_effects: dict | None = None,
                                                 player_effects, ball_weights)
 
 
-def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
+def optimize_infield(balls: pd.DataFrame, model: ProbabilisticClassifier, n_restarts: int = 20,
                      seed: int = 42, extra_starts: list[np.ndarray] | None = None,
-                     player_effects: dict | None = None,
-                     ball_weights: np.ndarray | None = None) -> dict:
+                     player_effects: PlayerEffects | None = None,
+                     ball_weights: np.ndarray | None = None) -> InfieldOptimizeResult:
     """LHS 多起點 + L-BFGS-B。回傳最佳站位與期望出局率。
 
     ball_weights 給定時目標改為 mean(p×w)（run-value 目標，權重與失分的換算
@@ -291,7 +325,7 @@ def optimize_infield(balls: pd.DataFrame, model, n_restarts: int = 20,
     hi = np.array([b[1] for b in bounds])
     score = _make_scorer(model, balls, player_effects, ball_weights)
 
-    def neg_exp_outs(x):
+    def neg_exp_outs(x: np.ndarray) -> float:
         angles, depths = params_to_positions(x)
         return -score(angles, depths)
 
