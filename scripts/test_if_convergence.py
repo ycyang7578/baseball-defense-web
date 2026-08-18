@@ -9,7 +9,7 @@
 
 逐 (打者, 候選值) checkpoint 落盤，可從當機中續跑。
 
-執行：python scripts/test_if_convergence.py [n_batters，預設 30]
+執行：python -m scripts.test_if_convergence [n_batters，預設 30]
 """
 import sys
 from pathlib import Path
@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 from src.if_optimize import (POSITIONS, fetch_batter_gbs,
                              league_average_positions, optimize_infield,

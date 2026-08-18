@@ -6,7 +6,7 @@ E[ΔRE] / E[outs]（皆以階段B 兩段模型評估、1B 釘死在 hold-runner 
   B. 無人在壘的出局率最佳解（現行 production 優化器，代表「不管壘況」）
   C. 階段B 雙殺優化解（optimize_infield_dp）
 
-執行：python scripts/optimize_if_dp_demo.py [batter_id ...]
+執行：python -m scripts.optimize_if_dp_demo [batter_id ...]
 """
 import sys
 from pathlib import Path
@@ -14,7 +14,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.if_dp_optimize import (DP_POSITIONS, DPScorer, dp_delta_re,
                                 league_average_positions_on1b,
                                 league_median_runner_speed, optimize_infield_dp,

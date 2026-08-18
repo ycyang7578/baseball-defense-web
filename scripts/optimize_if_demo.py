@@ -2,7 +2,7 @@
 
 打者分布用 2023–2024 歷史滾地球（訓練年，不碰 2025——留給之後的跨年驗證）。
 
-執行：python scripts/optimize_if_demo.py [打者數，預設 6]
+執行：python -m scripts.optimize_if_demo [打者數，預設 6]
 """
 import sys
 from pathlib import Path
@@ -11,7 +11,6 @@ import joblib
 import pandas as pd
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import DSN
 from src.if_optimize import (POSITIONS, expected_outs, fetch_batter_gbs,
                              league_average_positions, optimize_infield,

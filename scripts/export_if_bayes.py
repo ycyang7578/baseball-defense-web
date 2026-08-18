@@ -9,10 +9,9 @@
 
 匯出後驗證：pipeline predict_proba 與 trace 後驗平均 logit 等價（1e-10）。
 
-執行：python scripts/export_if_bayes.py
+執行：python -m scripts.export_if_bayes
 """
 import json
-import sys
 from pathlib import Path
 
 import arviz as az
@@ -22,7 +21,6 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.if_dataset import build_gb_dataset
 from src.if_model import OPTIMIZER_FEATURES
 
