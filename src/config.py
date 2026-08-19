@@ -1,10 +1,12 @@
-"""共用設定：PostgreSQL 連線字串等專案唯一真相來源。
+"""Shared config: the project's single source of truth for the PostgreSQL connection string.
 
-之前 DSN 字串在 11+ 個檔案（src/、scripts/、api/main.py）各自硬編碼一份，
-改一個環境（換密碼、換 host）要記得改全部地方。統一從這裡 import。
+The DSN string used to be hardcoded separately in 11+ files (src/, scripts/, api/main.py),
+so changing one environment (new password, new host) meant remembering to change it
+everywhere. Now everything imports it from here instead.
 
-部署雲端時設定 BASEBALL_DSN 環境變數（例如 Neon 給的連線字串）即可覆寫，
-不用碰程式碼；本機沒設定時預設連本機 postgres。
+When deploying to the cloud, set the BASEBALL_DSN environment variable (e.g. the
+connection string Neon gives you) to override this without touching the code;
+if it's not set locally, it defaults to connecting to the local postgres instance.
 """
 import os
 

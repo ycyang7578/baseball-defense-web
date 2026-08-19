@@ -1,10 +1,11 @@
 """
-球場圍牆多邊形載入與打牆球判定。
+Loading of park outfield-wall polygons and wall-ball detection.
 
-從 MLBStadiaPathData（GeomMLBStadiums R 套件）載入各球場外野圍牆邊界，
-判斷球的落點是否在該球場 polygon 外（= 打牆球，外野手無法接殺）。
+Loads each park's outfield wall boundary from MLBStadiaPathData (the GeomMLBStadiums R package), and
+determines whether a ball's landing spot is outside that park's polygon (= a wall ball, one the outfielders
+cannot catch).
 
-座標系：以本壘為原點，y 軸朝中外野，單位 feet。
+Coordinate system: home plate as the origin, y-axis toward center field, units in feet.
   x_ft = (pixel_x - 125.42) * 2.484
   y_ft = (198.27  - pixel_y) * 2.484
 """
@@ -20,7 +21,7 @@ from .physics import _STATCAST_ORIGIN_X, _STATCAST_ORIGIN_Y
 
 
 class ParkBoundaryPoint(TypedDict):
-    """球場外野圍牆多邊形的單一頂點座標（feet），供前端 SVG 繪製。"""
+    """A single vertex coordinate (feet) of a park's outfield wall polygon, for frontend SVG rendering."""
     x: float
     y: float
 
@@ -46,7 +47,7 @@ _TEAM_MAP: dict[str, str] = {
 
 @lru_cache(maxsize=1)
 def _load_wall_polygons() -> dict[str, Polygon]:
-    """載入 .rda，為每個球場建 Shapely Polygon。回傳 {team_name: Polygon}。"""
+    """Loads the .rda file and builds a Shapely Polygon for each park. Returns {team_name: Polygon}."""
     if not _RDA_PATH.exists():
         raise FileNotFoundError(f"MLBStadiaPathData.rda 找不到：{_RDA_PATH}")
 
@@ -74,11 +75,11 @@ def _get_polygon(home_team: str) -> Polygon | None:
 def is_wall_ball(x_coord: np.ndarray, y_coord: np.ndarray,
                  home_team: str) -> np.ndarray:
     """
-    判斷每顆球是否在 home_team 球場圍牆外（打牆球）。
+    Determines whether each ball lands outside home_team's park wall (a wall ball).
 
     Returns bool array, shape (N,).
-    True = 落點在圍牆多邊形外，外野手無法接殺。
-    找不到球場資料時全部回傳 False（不排除任何球）。
+    True = landing spot is outside the wall polygon, outfielders cannot catch it.
+    Returns all False when park data isn't found (no balls excluded).
     """
     poly = _get_polygon(home_team)
     if poly is None:
@@ -93,9 +94,9 @@ def is_wall_ball(x_coord: np.ndarray, y_coord: np.ndarray,
 
 def get_park_boundary_coords(home_team: str) -> list[ParkBoundaryPoint] | None:
     """
-    回傳球場外野圍牆多邊形的頂點座標（feet），供前端 SVG 繪製。
-    找不到球場時回傳 None。
-    格式：[{"x": float, "y": float}, ...]
+    Returns the vertex coordinates (feet) of a park's outfield wall polygon, for frontend SVG rendering.
+    Returns None if the park isn't found.
+    Format: [{"x": float, "y": float}, ...]
     """
     poly = _get_polygon(home_team)
     if poly is None:

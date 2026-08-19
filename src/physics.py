@@ -6,11 +6,11 @@ Reimplemented from Baseball_Defense_Model_3's src/core/physics.py logic
 import numpy as np
 import pandas as pd
 
-# Statcast 像素座標原點（與 Model_3 的 config.DATA_PROCESSING['physics'] 相同）
+# Statcast pixel-coordinate origin (same as Model_3's config.DATA_PROCESSING['physics'])
 _STATCAST_ORIGIN_X: float = 125.42
 _STATCAST_ORIGIN_Y: float = 198.27
-_GRAVITY_FT_PER_S2: float = 32.174   # 重力加速度 ft/s^2
-_CATCH_HEIGHT_FT: float = 0.0        # 接球高度 (ft)，補償真空模型誤差
+_GRAVITY_FT_PER_S2: float = 32.174   # gravitational acceleration ft/s^2
+_CATCH_HEIGHT_FT: float = 0.0        # catch height (ft), compensates for vacuum-model error
 _MPH_TO_FT_S: float = 1.46667
 
 _CATCH_EVENTS: set[str] = {
@@ -21,7 +21,7 @@ _CATCH_EVENTS: set[str] = {
 
 def transform_coordinates(hc_x: pd.Series, hc_y: pd.Series,
                            hit_distance_sc: pd.Series) -> tuple[pd.Series, pd.Series]:
-    """Statcast 像素座標 -> 以本壘為原點的笛卡爾座標（ft）。"""
+    """Statcast pixel coordinates -> Cartesian coordinates with home plate as the origin (ft)."""
     angle_rad = np.arctan2(hc_x - _STATCAST_ORIGIN_X, _STATCAST_ORIGIN_Y - hc_y)
     x_coord = hit_distance_sc * np.sin(angle_rad)
     y_coord = hit_distance_sc * np.cos(angle_rad)
@@ -30,7 +30,7 @@ def transform_coordinates(hc_x: pd.Series, hc_y: pd.Series,
 
 def calculate_flight_time(launch_speed: pd.Series, launch_angle: pd.Series,
                            plate_z: pd.Series) -> pd.Series:
-    """拋體公式計算飛行時間（秒）。"""
+    """Projectile-motion formula for flight time (seconds)."""
     v0 = launch_speed * _MPH_TO_FT_S
     vy0 = v0 * np.sin(np.radians(launch_angle))
     discriminant = np.maximum(vy0 ** 2 - 2 * _GRAVITY_FT_PER_S2 * (_CATCH_HEIGHT_FT - plate_z), 0)
@@ -38,13 +38,13 @@ def calculate_flight_time(launch_speed: pd.Series, launch_angle: pd.Series,
 
 
 def mark_caught(events: pd.Series) -> pd.Series:
-    """events 是否屬於接殺類事件 -> 0/1。"""
+    """Whether events belongs to a catch-type event -> 0/1."""
     return events.isin(_CATCH_EVENTS).astype(int)
 
 
 def polar_to_fielder_xy(avg_norm_start_distance: pd.Series,
                          avg_norm_start_angle: pd.Series) -> tuple[pd.Series, pd.Series]:
-    """球員平均站位（距離+角度）-> 直角座標 (fielder_x, fielder_y)。"""
+    """Fielder average positioning (distance + angle) -> Cartesian coordinates (fielder_x, fielder_y)."""
     angle_rad = np.radians(avg_norm_start_angle)
     fielder_x = avg_norm_start_distance * np.sin(angle_rad)
     fielder_y = avg_norm_start_distance * np.cos(angle_rad)
@@ -53,7 +53,7 @@ def polar_to_fielder_xy(avg_norm_start_distance: pd.Series,
 
 def compute_relative_angle(fielder_x: np.ndarray, fielder_y: np.ndarray,
                             ball_x: np.ndarray, ball_y: np.ndarray) -> np.ndarray:
-    """守備員相對「背向本壘」的跑動方向角（弧度，-pi~pi）。0=正前方(charge)，±pi=正後方(retreat)。"""
+    """Fielder's running direction angle relative to "facing away from home plate" (radians, -pi to pi). 0 = straight ahead (charge), ±pi = straight back (retreat)."""
     run_angle = np.arctan2(ball_x - fielder_x, ball_y - fielder_y)
     pos_angle = np.arctan2(fielder_x, fielder_y)
     rel_angle = run_angle - (pos_angle + np.pi)

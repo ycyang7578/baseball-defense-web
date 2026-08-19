@@ -1,8 +1,9 @@
 """Ablation: speed + cos_angle + sin_angle + fielder_dist (no flight_time).
 
-注意：speed = fielder_dist / flight_time，所以同時放 speed 和 fielder_dist
-等於模型隱含地也能推出 flight_time（time = dist/speed）。
-這跟 pass18 放 dist+time+speed 是同一種結構性共線性，收斂後務必查 r_hat/ess_bulk。
+Note: speed = fielder_dist / flight_time, so including both speed and fielder_dist means the model can
+implicitly recover flight_time as well (time = dist/speed).
+This is the same structural collinearity as pass18's dist+time+speed combination -- be sure to check
+r_hat/ess_bulk after convergence.
 """
 import os
 
@@ -53,7 +54,7 @@ def build_model(df: pd.DataFrame, scaler: StandardScaler) -> pm.Model:
         mu_beta_speed = pm.Normal("mu_beta_speed", mu=-1.0, sigma=2.0)
         mu_beta_cos = pm.Normal("mu_beta_cos", mu=0.0, sigma=1.0)
         mu_beta_sin = pm.Normal("mu_beta_sin", mu=0.0, sigma=1.0)
-        # dist 方向不預設（速度已含 dist 資訊，dist 的邊際效應方向不確定）
+        # No sign prior on dist (speed already encodes dist information, so the sign of dist's marginal effect is uncertain)
         mu_beta_dist = pm.Normal("mu_beta_dist", mu=0.0, sigma=2.0)
 
         sigma_alpha = pm.HalfNormal("sigma_alpha", sigma=1.0)

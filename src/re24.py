@@ -1,15 +1,16 @@
 """
 RE24 run expectancy table and ΔRE values, computed empirically from statcast.
 
-ΔRE 採用「實測跑壘推進」：以每筆安打的『下一個打席壘上狀態』推算安打後的
-實際壘況，ΔRE_emp = runs_scored + RE(實測新狀態) − RE(舊狀態)。樣本 n < min_n
-的情境退回確定性理論推進值。此法與論文 (Model_3) 的 empirical_delta_re 一致。
+ΔRE uses "empirical runner advancement": for each hit, the actual base-out state after the hit is inferred
+from the base state of the *next* plate appearance, giving ΔRE_emp = runs_scored + RE(observed new state) -
+RE(old state). Situations with sample size n < min_n fall back to the deterministic theoretical advancement
+value. This method matches empirical_delta_re from the thesis (Model_3).
 
 Usage:
   from src.re24 import build_re24_table, build_delta_re, save_re24, load_re24
 
   re24  = build_re24_table([2021, 2022, 2023, 2024])
-  delta = build_delta_re(re24, [2021, 2022, 2023, 2024])   # 實測法需要球季年份
+  delta = build_delta_re(re24, [2021, 2022, 2023, 2024])   # the empirical method needs the season years
   save_re24(re24, delta, Path("data/precomputed"))
 
   re24, delta = load_re24(Path("data/precomputed"))
@@ -24,12 +25,12 @@ import psycopg2
 
 from .config import DSN
 
-# 壘況鍵：(on_1b, on_2b, on_3b, outs_when_up)，各壘為 0/1、outs 為 0~2
+# Base-out state key: (on_1b, on_2b, on_3b, outs_when_up), each base is 0/1, outs is 0-2
 BaseOutState = tuple[int, int, int, int]
-# ΔRE 鍵：(hit_type, on_1b, on_2b, on_3b, outs_when_up)
+# ΔRE key: (hit_type, on_1b, on_2b, on_3b, outs_when_up)
 HitDeltaKey = tuple[str, int, int, int, int]
 
-# 只取有 events 的打席（每個打席的最後一球），且為例行賽
+# Only include plate appearances with a non-null events value (the last pitch of each PA), regular season only
 _QUERY = """
     SELECT
         game_pk, inning, inning_topbot, at_bat_number, events,
@@ -49,7 +50,7 @@ _QUERY = """
 
 
 def _load_pa_data(years: list[int], dsn: str = DSN) -> pd.DataFrame:
-    """載入 PA 層級資料（每打席最後一球），含壘上狀態與得分。"""
+    """Loads plate-appearance-level data (last pitch of each PA), including base state and score."""
     with psycopg2.connect(dsn) as conn:
         df = pd.read_sql(_QUERY, conn, params={"years": years})
     return df
@@ -65,7 +66,7 @@ def build_re24_table(years: list[int], dsn: str = DSN) -> dict[BaseOutState, flo
     """
     df = _load_pa_data(years, dsn)
 
-    # 在每個半局內，runs_rest = 從這個打席到半局結束的總得分（含本打席）
+    # Within each half-inning, runs_rest = total runs scored from this PA to the end of the half-inning (inclusive)
     grp = ["game_pk", "inning", "inning_topbot"]
     df = df.sort_values(grp + ["at_bat_number"])
     df["runs_rest"] = (
@@ -82,8 +83,8 @@ def build_re24_table(years: list[int], dsn: str = DSN) -> dict[BaseOutState, flo
     }
 
 
-# 確定性跑壘推進模型（實測樣本不足時的理論備援）
-# 每個 advance 函式回傳 (new_on_1b, new_on_2b, new_on_3b, runs_scored)
+# Deterministic runner-advancement model (theoretical fallback when the empirical sample is insufficient)
+# Each advance function returns (new_on_1b, new_on_2b, new_on_3b, runs_scored)
 _ADVANCE: dict[str, Callable[[int, int, int], tuple[int, int, int, int]]] = {
     "1B": lambda b1, b2, b3: (1,  b1, b2,          b3         ),
     "2B": lambda b1, b2, b3: (0,  1,  b1,           b2 + b3   ),
@@ -94,7 +95,7 @@ _ADVANCE: dict[str, Callable[[int, int, int], tuple[int, int, int, int]]] = {
 def build_delta_re_deterministic(re24: dict[BaseOutState, float]) -> dict[HitDeltaKey, float]:
     """
     Compute ΔRE(k, on_1b, on_2b, on_3b, outs) using deterministic runner advancement.
-    跑者固定推進（理論值），作為實測樣本不足時的備援。
+    Runners advance by a fixed rule (theoretical value), used as a fallback when the empirical sample is insufficient.
     """
     delta: dict[HitDeltaKey, float] = {}
     for b1 in (0, 1):
@@ -121,9 +122,10 @@ def build_delta_re(
     """
     Compute ΔRE(k, on_1b, on_2b, on_3b, outs) using *empirical* runner advancement.
 
-    以每筆安打的「下一個打席壘上狀態」推算安打後的實際壘況：
-        ΔRE_emp = runs_scored + RE(實測新狀態) − RE(舊狀態)
-    分組樣本 n >= min_n 時用實測平均，否則退回確定性理論值。
+    The actual base state after each hit is inferred from the base state of the "next plate appearance":
+        ΔRE_emp = runs_scored + RE(observed new state) - RE(old state)
+    When a group's sample size n >= min_n, use the empirical average; otherwise fall back to the deterministic
+    theoretical value.
 
     Returns:
         dict: (hit_type, on_1b, on_2b, on_3b, outs) -> delta_run_expectancy
@@ -134,7 +136,7 @@ def build_delta_re(
     grp = ["game_pk", "inning", "inning_topbot"]
     df = df.sort_values(grp + ["at_bat_number"]).reset_index(drop=True)
 
-    # 下一打席壘況 = 本打席安打後壘況（僅限同半局有效）
+    # Next-PA base state = base state after this PA's hit (only valid within the same half-inning)
     for c in ("on_1b", "on_2b", "on_3b"):
         df["next_" + c] = df[c].shift(-1)
     df["next_game"] = df["game_pk"].shift(-1)
@@ -162,7 +164,7 @@ def build_delta_re(
     hits["demp"] = hits.apply(_compute_empirical_delta_re, axis=1)
     hits = hits[hits["demp"].notna()]
 
-    # 以理論值為底，足量樣本的格子覆寫為實測值
+    # Start from the theoretical values, and overwrite cells with sufficient sample size with empirical values
     delta: dict[HitDeltaKey, float] = dict(theory)
     for (b1, b2, b3, outs), g in hits.groupby(["on_1b", "on_2b", "on_3b", "outs_when_up"]):
         for ht in ("1B", "2B", "3B"):

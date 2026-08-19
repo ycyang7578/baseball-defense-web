@@ -36,12 +36,12 @@ from sklearn.preprocessing import StandardScaler
 from .config import DSN
 from .physics import _STATCAST_ORIGIN_X, _STATCAST_ORIGIN_Y
 
-# 打者慣用手+安打類型 -> 對應模型/密度/事前機率的複合鍵
+# batter handedness + hit type -> composite key into the model/density/prior dicts
 StandHitTypeKey = tuple[str, str]
 
 
 class HitProbBundle(TypedDict):
-    """fit_hit_type_kde() 產出、predict_hit_probs*() 消費的完整打擊分布模型包。"""
+    """The complete batted-ball distribution model bundle produced by fit_hit_type_kde() and consumed by predict_hit_probs*()."""
     models: dict[StandHitTypeKey, KernelDensity]
     scalers: dict[str, StandardScaler]
     priors: dict[StandHitTypeKey, float]

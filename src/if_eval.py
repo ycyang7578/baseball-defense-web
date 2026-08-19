@@ -1,9 +1,11 @@
-"""內野手球員評價的共用邏輯：難度模型評分 + 歸責 + 分位置中心化。
+"""Shared logic for infielder player evaluation: difficulty model scoring + credit assignment + per-position centering.
 
-從 scripts/evaluate_if_2025.py 抽出（計算逐行保持一致），讓評估報表與
-web 排名預算（scripts/precompute_if_model_oaa.py）用同一份實作。
-方法論說明見 evaluate_if_2025.py docstring。
-2026-07-12 起難度模型預設為可解釋的 spline GLM（見 if_model.py docstring）。
+Extracted from scripts/evaluate_if_2025.py (to keep the row-by-row calculation
+consistent), so the evaluation report and the web ranking pipeline
+(scripts/precompute_if_model_oaa.py) use the same implementation.
+See the evaluate_if_2025.py docstring for the methodology.
+As of 2026-07-12 the default difficulty model is the interpretable spline GLM
+(see the if_model.py docstring).
 """
 from typing import Callable
 
@@ -17,13 +19,14 @@ from src.if_model import DIFFICULTY_FEATURES, make_difficulty_glm
 
 def score_test_year(train_years: list[int], test_year: int,
                     model_factory: Callable[[], Pipeline] = make_difficulty_glm) -> pd.DataFrame:
-    """全量滾地球逐球評分：train_years 訓練難度模型、test_year 評分。
+    """Per-ball scoring over the full ground ball set: fit the difficulty model on train_years, score test_year.
 
-    model_factory 預設為評價用難度 GLM；替代模型（如 GBM benchmark）可傳入
-    自己的 factory，需吃 DIFFICULTY_FEATURES 欄位。
-    回傳 test 逐球 DataFrame，附加欄位：
-    p_hat（聯盟平均難度）、resp_fielder/resp_pos（歸責）、
-    oaa_play（is_out − p̂）、oaa_play_c（分位置中心化後）。
+    model_factory defaults to the evaluation difficulty GLM; alternative models (e.g. a
+    GBM benchmark) can pass in their own factory, which must accept the
+    DIFFICULTY_FEATURES columns.
+    Returns the test set as a per-ball DataFrame with added columns:
+    p_hat (league-average difficulty), resp_fielder/resp_pos (credit assignment),
+    oaa_play (is_out - p_hat), oaa_play_c (after per-position centering).
     """
     train = build_gb_dataset(train_years)
     test = build_gb_dataset([test_year])
@@ -34,8 +37,9 @@ def score_test_year(train_years: list[int], test_year: int,
     test = test.copy()
     test["p_hat"] = diff_model.predict_proba(test[DIFFICULTY_FEATURES])[:, 1]
 
-    # 歸責：出局球給實際處理者（hit_location 3~6，對齊官方 credit）；
-    # 安打球與投手/捕手處理的球退回最近角距的內野手
+    # Credit assignment: outs are credited to the fielder who actually made the play
+    # (hit_location 3-6, matching official credit); hits and balls handled by the
+    # pitcher/catcher fall back to the nearest infielder by angular distance
     pos_to_col = {v: k for k, v in INFIELD_COLS.items()}
     nearest_ids = np.select(
         [test["nearest_pos"] == p for p in pos_to_col],
@@ -52,15 +56,17 @@ def score_test_year(train_years: list[int], test_year: int,
           f"（其中與最近角距不同者 "
           f"{(use_loc & (loc_ids != nearest_ids)).sum() / max(use_loc.sum(), 1):.1%}）")
     test["oaa_play"] = test["is_out"] - test["p_hat"]
-    # 分位置中心化：官方 OAA 是「跟同位置平均比」，p̂ 是全聯盟 lane 平均，位置間有
-    # 系統性偏移（例如 1B）會拖低合併相關。每球減去該位置的平均後，各位置總和歸零。
+    # Per-position centering: official OAA is measured "relative to the same-position
+    # average," but p_hat is the all-league lane average, and systematic offsets between
+    # positions (e.g. 1B) would drag down the pooled correlation. Subtracting each
+    # position's mean per ball makes each position's total sum to zero.
     test["oaa_play_c"] = (test["oaa_play"]
                           - test.groupby("resp_pos")["oaa_play"].transform("mean"))
     return test
 
 
 def aggregate_players(test: pd.DataFrame) -> pd.DataFrame:
-    """逐球 → 每位球員：model_oaa（中心化）/model_oaa_raw/n_balls/resp_pos（眾數）。"""
+    """Per-ball -> per-player: model_oaa (centered) / model_oaa_raw / n_balls / resp_pos (mode)."""
     model = (test.groupby("resp_fielder")
              .agg(model_oaa=("oaa_play_c", "sum"), model_oaa_raw=("oaa_play", "sum"),
                   n_balls=("oaa_play", "size"))

@@ -1,16 +1,21 @@
-"""內野 run-value 目標（階段A）的零件：滾地安打類型模型 + 失分計價。
+"""Building blocks for the infield run-value objective (Phase A): ground-ball hit-type model + run-cost pricing.
 
-對齊外野 objective_re24 的慣例（src/optimization.py compute_w_j）：
-- w_j（漏接代價）= Σ_k P(k|球 j) × ΔRE(k, 壘況)
-- 外野的 P(k|j) 來自落點 KDE；滾地球的落點內生（hc 是被處理位置），改用
-  出手參數建 P(長打|安打)：邊線球 = 二壘打風險、EV 高穿得深、跑者快有腿安打
-  的延伸壘打。三壘打在滾地球極罕見，併入長打、以 ΔRE(2B) 計價（低估極小）。
-- 出局價值 ΔRE(out)：滾地球出局以「跑者不推進、出局數+1」近似（無人在壘時精確）。
+Aligned with the outfield objective_re24 convention (src/optimization.py compute_w_j):
+- w_j (miss cost) = Σ_k P(k | ball j) × ΔRE(k, base/out state)
+- For outfield, P(k|j) comes from a landing-spot KDE; for ground balls the landing spot is endogenous (hc is
+  the position after fielding), so instead we model P(extra-base hit | hit) from launch parameters: balls down
+  the line carry double risk, high exit velocity that gets through carries deeper, and fast runners turn
+  singles into extra bases. Triples are extremely rare on ground balls, so they're folded into extra-base hits
+  and priced at ΔRE(2B) (a negligible underestimate).
+- Out value ΔRE(out): a ground-ball out is approximated as "no runner advances, outs +1" (exact with the
+  bases empty).
 
-此模型與難度 GLM 同性質：評價/計價用，不搬野手、無反事實需求，spray 合法。
-目標函數的換算（見 if_optimize.expected_outs docstring）：
+This model is the same kind as the difficulty GLM: used for valuation/pricing, doesn't move fielders, has no
+counterfactual requirement, so spray angle is valid to use directly.
+How this feeds the objective function (see the if_optimize.expected_outs docstring):
     E[ΔRE] = mean(w_j) − mean(p_j × (w_j − ΔRE_out))
-optimize_infield(ball_weights = w_j − ΔRE_out) 最大化第二項 ⇔ 最小化期望失分。
+optimize_infield(ball_weights = w_j − ΔRE_out) maximizes the second term, which is equivalent to minimizing
+expected run cost.
 """
 from pathlib import Path
 
@@ -30,10 +35,10 @@ XB_FEATURES: list[str] = ["spray_deg", "launch_speed", "hp_to_1b"]
 
 
 class XBRateFeatures(BaseEstimator, TransformerMixin):
-    """P(長打|滾地安打) 的設計矩陣。
+    """Design matrix for P(extra-base hit | ground-ball hit).
 
-    spray 用**絕對角度** spline（兩條邊線都是二壘打區，場地幾何不隨打者鏡像）；
-    launch_speed / hp_to_1b 線性。
+    spray uses an **absolute-angle** spline (both foul lines are double-risk zones, and field geometry doesn't
+    mirror with the batter's handedness); launch_speed / hp_to_1b are linear.
     """
 
     def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "XBRateFeatures":
@@ -54,7 +59,7 @@ def make_gb_xb_model() -> Pipeline:
 
 
 def fetch_gb_hits(years: list[int]) -> pd.DataFrame:
-    """聯盟滾地安打（單/二/三安），含打者該季 hp_to_1b（缺值以年中位數填補）。"""
+    """League-wide ground-ball hits (singles/doubles/triples), including the batter's hp_to_1b for that season (missing values filled with the season median)."""
     sql = """
         SELECT s.game_year, s.hc_x, s.hc_y, s.launch_speed, s.events,
                sp.hp_to_1b
@@ -87,16 +92,16 @@ def train_gb_xb_model(years: list[int]) -> Pipeline:
 
 
 def delta_re_out(re24: dict[BaseOutState, float], state: BaseOutState) -> float:
-    """滾地球出局的 ΔRE：跑者不推進、出局+1（無人在壘時精確）。"""
+    """deltaRE for a ground-ball out: no runner advances, outs +1 (exact with the bases empty)."""
     b1, b2, b3, outs = state
     if outs >= 2:
-        return -re24.get(state, 0.0)          # 第三個出局：半局結束
+        return -re24.get(state, 0.0)          # third out: half-inning ends
     return re24.get((b1, b2, b3, outs + 1), 0.0) - re24.get(state, 0.0)
 
 
 def gb_miss_costs(balls: pd.DataFrame, xb_model: Pipeline,
                   delta_re: dict[HitDeltaKey, float], state: BaseOutState) -> np.ndarray:
-    """每球的漏接代價 w_j（對齊外野 compute_w_j 的鍵值慣例）。"""
+    """Per-ball miss cost w_j (aligned with the outfield compute_w_j key convention)."""
     p_xb = xb_model.predict_proba(balls[XB_FEATURES])[:, 1]
     dre_1b = delta_re.get(("1B", *state), 0.0)
     dre_2b = delta_re.get(("2B", *state), 0.0)
@@ -108,9 +113,9 @@ def runvalue_ball_weights(balls: pd.DataFrame, xb_model: Pipeline,
                           delta_re: dict[HitDeltaKey, float],
                           state: BaseOutState
                           ) -> tuple[np.ndarray, float]:
-    """回傳 (optimize_infield 用的 ball_weights, mean_miss_cost)。
+    """Returns (ball_weights for optimize_infield, mean_miss_cost).
 
-    E[ΔRE](angles, depths) = mean_miss_cost − score(ball_weights 版 scorer)。
+    E[ΔRE](angles, depths) = mean_miss_cost − score(the ball_weights-based scorer).
     """
     w = gb_miss_costs(balls, xb_model, delta_re, state)
     dre_o = delta_re_out(re24, state)

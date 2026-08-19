@@ -1,20 +1,25 @@
-"""階段B：一壘有人（<2 出局）的內野站位最佳化。
+"""Stage B: infield positioning optimization with a runner on first (<2 outs).
 
-與 if_optimize 的差異：
-- **1B 釘死在 hold-runner 位置**（聯盟一壘有人平均，−26~−35 呎的大位移是壘上
-  跑者的規則性行為，不是站位優化的自由變數），只優化 2B/3B/SS（6 維）。
-- 出局模型＝兩段式（P(≥1 出局)×P(雙殺|≥1 出局)，src/if_model.py 階段B 模型），
-  幾何特徵含 throw_dist_2b 與 pivot_dist（隨候選站位重算）。
-- 目標＝期望失分 E[ΔRE]（無「出局率目標」版本——雙殺讓出局數不再是 0/1，
-  失分口徑才能正確計價一球換兩個出局）：
-      E[ΔRE] = (1−p1)·w + p1(1−p2)·d1 + p1·p2·d2
-  w  = 漏接代價（XB 模型計價，同 src/if_runvalue.gb_miss_costs）
-  d1 = 單出局 ΔRE = force at 2nd 與 out at 1st 的實證混合（見 FORCE_SHARE）
-  d2 = 雙殺 ΔRE（跑者清空、出局+2；o=1 時半局結束）
+Differences from if_optimize:
+- **1B is pinned to the hold-runner position** (the league-average -26 to -35 ft shift with
+  a runner on first is a rule-driven reaction to the baserunner, not a free variable for
+  positioning optimization); only 2B/3B/SS are optimized (6 dimensions).
+- The out model is two-stage (P(>=1 out) x P(double play | >=1 out), Stage B model in
+  src/if_model.py), with geometric features including throw_dist_2b and pivot_dist
+  (recomputed for each candidate positioning).
+- Objective = expected run value E[deltaRE] (there is no "out-rate target" version --
+  double plays make the out count no longer 0/1, so the run-value framing is needed to
+  correctly price trading one ball for two outs):
+      E[deltaRE] = (1-p1)*w + p1*(1-p2)*d1 + p1*p2*d2
+  w  = miss cost (priced via the XB model, same as src/if_runvalue.gb_miss_costs)
+  d1 = single-out deltaRE = empirical mix of force-at-2nd and out-at-1st (see FORCE_SHARE)
+  d2 = double-play deltaRE (runner erased, outs+2; if o=1 the half-inning ends)
 
-跑者速度：優化情境的跑者未知，用該年聯盟中位數（runner_hp_to_1b 常數欄）。
-打者分布：與現行優化器同一份歷史滾地球（fetch_batter_gbs），打者的滾地輪廓
-不隨壘況變，且逐打者的一壘有人子樣本太小。
+Runner speed: the runner in an optimization scenario is unknown, so we use that year's
+league median (the runner_hp_to_1b constant column).
+Batter distribution: uses the same historical ground balls as the existing optimizer
+(fetch_batter_gbs) -- a batter's ground-ball profile doesn't change with the base state,
+and the per-batter runner-on-first subsample is too small anyway.
 """
 import copy
 from typing import TypedDict
@@ -41,14 +46,14 @@ class DPOptimizeResult(TypedDict):
     positions: dict[str, tuple[float, float]]
 
 
-DP_POSITIONS: tuple[str, ...] = ("2B", "3B", "SS")          # 優化變數；1B 釘死
-# 單出局事件中 force at 2nd 的占比（2023–24 一壘有人主範圍：
-# force_out 4,254 / (force_out + field_out 3,092 + fielders_choice_out 4)）
+DP_POSITIONS: tuple[str, ...] = ("2B", "3B", "SS")          # optimization variables; 1B is pinned
+# Share of single-out events that are a force at 2nd (2023-24 runner-on-first main scope:
+# force_out 4,254 / (force_out + field_out 3,092 + fielders_choice_out 4))
 FORCE_SHARE: float = 0.579
 
 
 def league_average_positions_on1b(years: list[int]) -> tuple[np.ndarray, np.ndarray]:
-    """一壘有人切分的聯盟平均站位（PA 加權），依 ("1B",)+DP_POSITIONS 順序。"""
+    """League-average positioning split by runner-on-first (PA-weighted), ordered as ("1B",)+DP_POSITIONS."""
     sql = """
         SELECT position,
                sum(avg_norm_start_angle * pa) / sum(pa) AS angle,
@@ -74,11 +79,11 @@ def league_median_runner_speed(years: list[int]) -> float:
 
 def dp_delta_re(re24: dict[BaseOutState, float], delta_re: dict[HitDeltaKey, float],
                 outs: int) -> tuple[float, float]:
-    """(single_out_delta_re, double_play_delta_re)：一壘有人 outs 出局時，單出局與雙殺的 ΔRE。
+    """(single_out_delta_re, double_play_delta_re): deltaRE for a single out vs. a double play, with a runner on first and `outs` outs already recorded.
 
-    single_out_delta_re = FORCE_SHARE × [force at 2nd：打者上一壘、跑者出局 → (1,0,0,o+1)]
-       + (1−FORCE_SHARE) × [out at 1st：跑者上二壘 → (0,1,0,o+1)]
-    double_play_delta_re = 雙殺：o=0 → (0,0,0,2)；o=1 → 半局結束（−RE）
+    single_out_delta_re = FORCE_SHARE x [force at 2nd: batter reaches first, runner is out -> (1,0,0,o+1)]
+       + (1-FORCE_SHARE) x [out at 1st: runner advances to second -> (0,1,0,o+1)]
+    double_play_delta_re = double play: o=0 -> (0,0,0,2); o=1 -> half-inning ends (-RE)
     """
     state = (1, 0, 0, outs)
     re_state = re24.get(state, 0.0)
@@ -91,10 +96,10 @@ def dp_delta_re(re24: dict[BaseOutState, float], delta_re: dict[HitDeltaKey, flo
 
 
 def dp_geometry(balls: pd.DataFrame, angles4: np.ndarray, depths4: np.ndarray) -> pd.DataFrame:
-    """給定四人站位（含釘死的 1B），重算階段B 兩段模型需要的全部特徵。
+    """Given the four fielders' positioning (including the pinned 1B), recompute every feature needed by the Stage B two-stage model.
 
-    順序慣例：angles4/depths4 依 ("1B",)+DP_POSITIONS。與
-    if_dataset.attach_features/attach_dp_features 同公式。
+    Ordering convention: angles4/depths4 follow ("1B",)+DP_POSITIONS. Uses the same
+    formulas as if_dataset.attach_features/attach_dp_features.
     """
     angles4 = np.asarray(angles4, dtype=float)
     depths4 = np.asarray(depths4, dtype=float)
@@ -107,7 +112,7 @@ def dp_geometry(balls: pd.DataFrame, angles4: np.ndarray, depths4: np.ndarray) -
     spray_rad = np.radians(spray)
     ix, iy = near_depth * np.sin(spray_rad), near_depth * np.cos(spray_rad)
 
-    # pivot_dist：2B（index 1）與 SS（index 3）到二壘壘包的較小距離
+    # pivot_dist: the smaller of 2B's (index 1) and SS's (index 3) distances to the second base bag
     px = depths4 * np.sin(np.radians(angles4))
     py = depths4 * np.cos(np.radians(angles4))
     pivot = min(np.hypot(px[1] - SECOND_BASE_X, py[1] - SECOND_BASE_Y),
@@ -128,19 +133,22 @@ def dp_geometry(balls: pd.DataFrame, angles4: np.ndarray, depths4: np.ndarray) -
 
 
 class DPScorer:
-    """(angles3, depths3) → (E[ΔRE], E[outs])，1B 釘死。
+    """(angles3, depths3) -> (E[deltaRE], E[outs]), with 1B pinned.
 
-    快速路徑：把兩段 GLM pipeline 展開成純 numpy（同 if_optimize.
-    _FastGLMObjective 的模式），預先算好不隨站位變動的部分，每次評估只重算
-    幾何相關項。與 predict_proba 數值等價（tests/test_if_dp_optimize.py
-    驗證到 1e-10）。係數切段順序必須跟 On1bOutFeatures / On1bDPFeatures
-    的 transform 一致。
+    Fast path: unrolls the two-stage GLM pipeline into pure numpy (same pattern as
+    if_optimize._FastGLMObjective), precomputing the parts that don't depend on
+    positioning so each evaluation only recomputes the geometry-related terms.
+    Numerically equivalent to predict_proba (verified to 1e-10 in
+    tests/test_if_dp_optimize.py). The coefficient-slicing order must match the
+    transform order of On1bOutFeatures / On1bDPFeatures.
 
-    player_effects：格式與語意同 if_optimize（{"alpha","g","ad_mean","ad_std"}，
-    依 ("1B","2B","3B","SS") 順序，逐球加在最近野手身上：logit += α_j + g_j×ad_z）。
-    效應來自無人在壘的貝葉斯球員層（scripts/train_if_bayes.py）——野手轉換力
-    是截距性質、不隨壘況變，移植到階段1 的 P(≥1 出局)；階段2（雙殺轉換）
-    沒有球員層資料，不掛。
+    player_effects: same format and semantics as if_optimize ({"alpha","g","ad_mean","ad_std"},
+    ordered as ("1B","2B","3B","SS"), added per ball to the nearest fielder:
+    logit += alpha_j + g_j*ad_z). The effects come from the bases-empty Bayesian player
+    layer (scripts/train_if_bayes.py) -- a fielder's conversion skill is an intercept-like
+    property that doesn't change with the base state, so it's carried over to Stage 1's
+    P(>=1 out); Stage 2 (double-play conversion) has no player-level data, so it isn't
+    attached there.
     """
 
     def __init__(self, out_model: Pipeline, dp_model: Pipeline, balls: pd.DataFrame,
@@ -172,7 +180,7 @@ class DPScorer:
                 del spline.feature_names_in_
             return spline
 
-        # ── 階段1（On1bOutFeatures = FielderGeometryFeatures + throw_dist_2b）──
+        # -- Stage 1 (On1bOutFeatures = FielderGeometryFeatures + throw_dist_2b) --
         stage1_features = out_model.named_steps["features"]
         stage1_lr = out_model.named_steps["lr"]
         self._stage1_ad_min_spline = strip(stage1_features.splines_["ad_min"])
@@ -206,13 +214,13 @@ class DPScorer:
         self._stage1_coef_hp_throw_interaction = take(1)[0]
         self._stage1_coef_hp_ball_interaction = take(n_stage1_ball_time_basis)
         self._stage1_coef_throw_dist_2b = take(1)[0]
-        assert coef_offset == len(active_coef), "階段1 係數切段與 On1bOutFeatures 欄位順序不符"
+        assert coef_offset == len(active_coef), "Stage 1 coefficient slicing does not match On1bOutFeatures column order"
         self._stage1_intercept_term = (stage1_launch_angle_basis @ stage1_coef_launch_angle
                                        + stage1_launch_speed_z * stage1_coef_launch_speed
                                        + stage1_hp_to_1b_z * stage1_coef_hp_to_1b
                                        + stage1_lr.intercept_[0])
 
-        # ── 階段2（On1bDPFeatures）──────────────────────────────────
+        # -- Stage 2 (On1bDPFeatures) ------------------------------------
         stage2_features = dp_model.named_steps["features"]
         stage2_lr = dp_model.named_steps["lr"]
         self._stage2_ad_min_spline = strip(stage2_features.splines_["ad_min"])
@@ -236,7 +244,7 @@ class DPScorer:
          self._stage2_coef_pivot_dist, self._stage2_coef_throw_dist_2b) = take(5)
         self._stage2_has_interactions = stage2_features.interactions
         self._stage2_coef_hp_ball_interaction = take(n_stage2_ball_time_basis) if stage2_features.interactions else None
-        assert coef_offset == len(active_coef), "階段2 係數切段與 On1bDPFeatures 欄位順序不符"
+        assert coef_offset == len(active_coef), "Stage 2 coefficient slicing does not match On1bDPFeatures column order"
         self._stage2_intercept_term = (stage2_launch_speed_z * stage2_coef_launch_speed
                                        + stage2_hp_to_1b_z * stage2_coef_hp_to_1b
                                        + stage2_runner_hp_to_1b_z * stage2_coef_runner_hp_to_1b
@@ -304,18 +312,18 @@ class DPScorer:
         return float(np.mean(p1 * (1 + p2)))
 
     def expected_p1(self, angles3: np.ndarray, depths3: np.ndarray) -> float:
-        """P(≥1 出局) 平均——「懂釘死 1B 但不懂雙殺」的分解基準用。"""
+        """Average P(>=1 out) -- used as the decomposition baseline that "knows about pinning 1B but not about double plays"."""
         p1, _ = self._probs(angles3, depths3)
         return float(np.mean(p1))
 
     def per_ball_p1(self, angles3: np.ndarray, depths3: np.ndarray) -> np.ndarray:
-        """逐球 P(≥1 出局)——web 端點的逐球上色用（UI 不顯示雙殺機率）。"""
+        """Per-ball P(>=1 out) -- used by the web endpoint to color each ball (the UI does not display double-play probability)."""
         p1, _ = self._probs(angles3, depths3)
         return p1
 
 
 def params_to_positions_dp(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """6 維參數（2B/3B/SS 的角度+深度比例）→ (angles3, depths3)。"""
+    """6-dimensional parameters (angle + depth fraction for 2B/3B/SS) -> (angles3, depths3)."""
     angles = np.asarray(x[:3], dtype=float)
     fracs = np.asarray(x[3:], dtype=float)
     depths = MIN_DEPTH + fracs * (dirt_max_depth(angles) - MIN_DEPTH)
@@ -331,13 +339,15 @@ def positions_to_params_dp(angles3: np.ndarray, depths3: np.ndarray) -> np.ndarr
 
 def anchored_starts(anchor: np.ndarray, n_jitter: int = 8,
                     seed: int = 42) -> list[np.ndarray]:
-    """錨定精修的起點：錨點本身＋周圍小抖動。
+    """Starting points for anchored refinement: the anchor itself plus small surrounding jitter.
 
-    零效應最佳解常同時壓在多個 bound 與最近野手 argmin 交界的 kink 上，
-    L-BFGS-B 的數值梯度在該點會 line search 失敗（ABNORMAL）原地不動，
-    連旁邊的小改善都撿不到；從錨點附近起步就正常。抖動幅度小
-    （角度 ±0.75°、深度比例 ±0.05）維持錨定語意——位移只反映球員效應
-    的拉力，不做全域重找。
+    The zero-effect optimum often sits pinned on a kink where multiple bounds and the
+    nearest-fielder argmin boundary meet; at that point L-BFGS-B's numerical gradient
+    fails the line search (ABNORMAL) and gets stuck, missing even small nearby
+    improvements -- starting near the anchor avoids this. The jitter is kept small
+    (angle +/-0.75 degrees, depth fraction +/-0.05) to preserve the anchoring semantics --
+    the displacement should only reflect the pull of the player effects, not a global
+    re-search.
     """
     bounds = [ANGLE_BOUNDS[1], ANGLE_BOUNDS[2], ANGLE_BOUNDS[3]] + FRAC_BOUNDS[:3]
     lo = np.array([b[0] for b in bounds])
@@ -357,14 +367,18 @@ def optimize_infield_dp(balls: pd.DataFrame, out_model: Pipeline, dp_model: Pipe
                         extra_starts: list[np.ndarray] | None = None,
                         objective: str = "re",
                         player_effects: PlayerEffects | None = None) -> DPOptimizeResult:
-    """LHS 多起點 + L-BFGS-B，最小化 E[ΔRE]（objective="re"，預設）。
+    """LHS multi-start + L-BFGS-B, minimizing E[deltaRE] (objective="re", the default).
 
-    objective="p1"：改最大化 P(≥1 出局)——「懂釘死 1B 的幾何但不懂雙殺計價」，
-    只作為分解實驗的中間基準（隔離補洞效果 vs 雙殺感知，勿用於生產）。
-    bounds：2B 角度 [1°,44°]（右側，不與釘死的 1B 換邊）、3B/SS [-44°,-1°]，
-    深度重參數化同 if_optimize（內野土約束）。
-    player_effects：見 DPScorer docstring；個人化時 3B/SS 槽位綁定特定野手，
-    不做標籤正規化（同 if_optimize 慣例）。
+    objective="p1": instead maximizes P(>=1 out) -- "knows the geometry of pinning 1B but
+    not double-play pricing" -- used only as an intermediate baseline for decomposition
+    experiments (isolating the gap-coverage effect vs. double-play awareness; do not use
+    in production).
+    bounds: 2B angle [1,44] degrees (right side, never swaps sides with the pinned 1B),
+    3B/SS [-44,-1] degrees; depth is reparameterized the same way as if_optimize (the
+    infield dirt constraint).
+    player_effects: see the DPScorer docstring; when personalizing, the 3B/SS slots are
+    bound to specific fielders, so no label normalization is applied (same convention as
+    if_optimize).
     """
     bounds = [ANGLE_BOUNDS[1], ANGLE_BOUNDS[2], ANGLE_BOUNDS[3]] + FRAC_BOUNDS[:3]
     lo = np.array([b[0] for b in bounds])
@@ -389,7 +403,7 @@ def optimize_infield_dp(balls: pd.DataFrame, out_model: Pipeline, dp_model: Pipe
         starts = [lo + s * (hi - lo) for s in sampler.random(n_restarts)]
     starts += [np.clip(s, lo, hi) for s in (extra_starts or [])]
     if not starts:
-        raise ValueError("n_restarts=0 時必須提供 extra_starts")
+        raise ValueError("extra_starts must be provided when n_restarts=0")
 
     best_x, best_val = None, np.inf
     for x0 in starts:
@@ -399,8 +413,9 @@ def optimize_infield_dp(balls: pd.DataFrame, out_model: Pipeline, dp_model: Pipe
             best_x, best_val = res.x, res.fun
 
     angles, depths = params_to_positions_dp(best_x)
-    # 3B/SS 標籤可互換，正規化：角度最負者為 3B（2B 單獨在右側無此問題）。
-    # 個人化時槽位綁定特定野手，不可重排。
+    # The 3B/SS labels are interchangeable, so normalize: whichever has the more negative
+    # angle is labeled 3B (2B is alone on the right side, so it has no such issue).
+    # When personalizing, slots are bound to specific fielders and must not be reordered.
     if player_effects is None and angles[1] > angles[2]:
         angles[[1, 2]] = angles[[2, 1]]
         depths[[1, 2]] = depths[[2, 1]]

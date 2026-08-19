@@ -1,26 +1,29 @@
-"""內野站位最佳化（2023 禁趨位規則下的約束優化）。
+"""Infield positioning optimization (constrained optimization under the 2023 shift ban).
 
-規則約束的處理方式（全部化成 box bounds，讓 L-BFGS-B 直接吃）：
-- 二壘兩側各至少兩名內野手、不可換邊 → 1B/2B 角度限 [1°, 44°]、3B/SS 限 [-44°, -1°]
-- 站在內野土上 → 深度重參數化為「60 呎到土外緣的比例 f∈[0,1]」，
-  土外緣近似為以投手板（距本壘 60.5 呎）為圓心、半徑 95 呎的弧：
+How rule constraints are handled (all folded into box bounds so L-BFGS-B can consume them directly):
+- At least two infielders on each side of second base, no side-swapping -> 1B/2B angle limited to [1°, 44°],
+  3B/SS limited to [-44°, -1°]
+- Must stand on the infield dirt -> depth is reparameterized as "fraction f in [0,1] from 60 ft to the dirt's
+  outer edge", where the dirt's outer edge is approximated as an arc centered on the pitcher's mound
+  (60.5 ft from home plate) with radius 95 ft:
   r_max(θ) = 60.5·cosθ + sqrt(95² − (60.5·sinθ)²)
-  （角落方向的土實際延伸得更遠，此近似在邊線側偏保守）
+  (the dirt actually extends farther toward the corners, so this approximation is conservative on the
+  foul-line side)
 
-目標：max 打者歷史滾地球樣本上的平均 P(out)，P(out) 用優化用 GLM
-（models/if_gb/if_gb_optimizer_glm.joblib；只含野手相對幾何，可反事實）。
-打者分布直接用歷史球（角度不受站位污染，見 src/if_dataset.py docstring），
-不需要重建 KDE。
+Objective: maximize mean P(out) over the batter's historical ground-ball sample, where P(out) comes from the
+optimization GLM (models/if_gb/if_gb_optimizer_glm.joblib; contains only fielder-relative geometry, so it
+supports counterfactuals). The batter distribution is taken directly from historical balls (spray angle isn't
+contaminated by positioning, see the src/if_dataset.py docstring), so there's no need to rebuild the KDE.
 
-球員個人化（貝葉斯球員層，見 scripts/train_if_bayes.py）：`player_effects`
-指定四個位置野手的 (alpha_j, g_j) 後驗平均，逐球加到最近野手身上：
-logit += alpha_j + g_j × ad_z。個人化時同側標籤不再可互換（槽位綁定特定
-野手），因此不做角落正規化。格式：
+Player personalization (Bayesian player layer, see scripts/train_if_bayes.py): `player_effects` gives the
+posterior mean (alpha_j, g_j) for the four positional fielders, added per-ball to the nearest fielder:
+logit += alpha_j + g_j × ad_z. With personalization, same-side labels are no longer interchangeable (each
+slot is tied to a specific fielder), so no corner normalization is applied. Format:
 {"alpha": ndarray(4), "g": ndarray(4), "ad_mean": float, "ad_std": float}
-（依 POSITIONS 順序；聯盟平均野手 = alpha=g=0）。
+(in POSITIONS order; league-average fielder = alpha=g=0).
 
-已知限制：GLM 是在實際（賽季平均）站位附近的資料上訓練的，離常態很遠的
-候選站位屬外插，解讀時要保守。
+Known limitation: the GLM is trained on data near actual (season-average) positioning, so candidate positions
+far from the norm are extrapolation -- interpret them conservatively.
 """
 import copy
 from typing import Callable, Protocol, TypedDict
@@ -37,12 +40,12 @@ from src.if_dataset import MPH_TO_FTS, OUT_EVENTS, NONOUT_EVENTS, HOME_X, HOME_Y
 
 
 class ProbabilisticClassifier(Protocol):
-    """`optimize_infield` 系列函式對模型的最小需求（GLM pipeline 或其他分類器皆可）。"""
+    """Minimal model interface required by the `optimize_infield` family of functions (a GLM pipeline or any other classifier works)."""
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray: ...
 
 
 class PlayerEffects(TypedDict):
-    """貝葉斯球員層後驗平均，依 POSITIONS 順序（見本檔案頂部 docstring）。"""
+    """Bayesian player-layer posterior means, in POSITIONS order (see the docstring at the top of this file)."""
     alpha: np.ndarray
     g: np.ndarray
     ad_mean: float
@@ -58,25 +61,26 @@ class InfieldOptimizeResult(TypedDict):
 
 MOUND_DIST: float = 60.5
 DIRT_RADIUS: float = 95.0
-# 深度下限取訓練資料的支撐範圍邊緣（賽季平均站位約 100–155 呎）：更淺屬 GLM 外插，
-# 實測會讓優化器把「閒置野手」（打者冷區的那側）停在外插最樂觀的假象位置
+# The depth lower bound is set at the edge of the training data's support (season-average positioning is
+# roughly 100-155 ft): shallower than that is GLM extrapolation, and empirically it lets the optimizer park
+# the "idle fielder" (on the side of the batter's cold zone) at an artificially optimistic extrapolated position
 MIN_DEPTH: float = 75.0
 POSITIONS: tuple[str, ...] = ("1B", "2B", "3B", "SS")
-# box bounds：前 4 維是角度（度）、後 4 維是深度比例 f
+# box bounds: the first 4 dims are angles (degrees), the last 4 are depth fraction f
 ANGLE_BOUNDS: list[tuple[float, float]] = [(1.0, 44.0), (1.0, 44.0), (-44.0, -1.0), (-44.0, -1.0)]
 FRAC_BOUNDS: list[tuple[float, float]] = [(0.0, 1.0)] * 4
 _FIRST_BASE_XY: tuple[float, float] = (90.0 * np.sin(np.radians(45.0)), 90.0 * np.cos(np.radians(45.0)))
 
 
 def dirt_max_depth(angle_deg: np.ndarray | float) -> np.ndarray | float:
-    """指定角度下內野土外緣的深度（呎）。"""
+    """Depth (ft) of the infield dirt's outer edge at a given angle."""
     angle_rad = np.radians(angle_deg)
     return MOUND_DIST * np.cos(angle_rad) + np.sqrt(
         DIRT_RADIUS ** 2 - (MOUND_DIST * np.sin(angle_rad)) ** 2)
 
 
 def params_to_positions(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """8 維參數向量 → (angles[4], depths[4])，依 POSITIONS 順序。"""
+    """8-dim parameter vector -> (angles[4], depths[4]), in POSITIONS order."""
     angles = np.asarray(x[:4], dtype=float)
     fracs = np.asarray(x[4:], dtype=float)
     depths = MIN_DEPTH + fracs * (dirt_max_depth(angles) - MIN_DEPTH)
@@ -84,7 +88,7 @@ def params_to_positions(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def positions_to_params(angles: np.ndarray, depths: np.ndarray) -> np.ndarray:
-    """(angles, depths) → 8 維參數向量（params_to_positions 的反函數）。"""
+    """(angles, depths) -> 8-dim parameter vector (inverse of params_to_positions)."""
     angles = np.asarray(angles, dtype=float)
     depths = np.asarray(depths, dtype=float)
     fracs = (depths - MIN_DEPTH) / (dirt_max_depth(angles) - MIN_DEPTH)
@@ -92,7 +96,7 @@ def positions_to_params(angles: np.ndarray, depths: np.ndarray) -> np.ndarray:
 
 
 def geometry_features(balls: pd.DataFrame, angles: np.ndarray, depths: np.ndarray) -> pd.DataFrame:
-    """給定站位，重算每顆球的野手相對特徵（與 if_dataset.attach_features 同公式）。"""
+    """Given positioning, recompute fielder-relative features for each ball (same formulas as if_dataset.attach_features)."""
     spray = balls["spray_deg"].to_numpy(float)
     dtheta = np.abs(np.asarray(angles)[None, :] - spray[:, None])
     nearest = dtheta.argmin(axis=1)
@@ -116,7 +120,7 @@ def geometry_features(balls: pd.DataFrame, angles: np.ndarray, depths: np.ndarra
 def predict_p_out(model: ProbabilisticClassifier, balls: pd.DataFrame,
                   angles: np.ndarray, depths: np.ndarray,
                   player_effects: PlayerEffects | None = None) -> np.ndarray:
-    """逐球 P(out)。player_effects 時把 alpha/g 加在最近野手身上（logit 空間）。"""
+    """Per-ball P(out). When player_effects is given, alpha/g are added to the nearest fielder (in logit space)."""
     feats = geometry_features(balls, angles, depths)
     p = model.predict_proba(feats)[:, 1]
     if player_effects is not None:
@@ -135,11 +139,11 @@ def expected_outs(model: ProbabilisticClassifier, balls: pd.DataFrame,
                   angles: np.ndarray, depths: np.ndarray,
                   player_effects: PlayerEffects | None = None,
                   ball_weights: np.ndarray | None = None) -> float:
-    """ball_weights=None → 期望出局率（現行）；給權重 → mean(p×w)。
+    """ball_weights=None -> expected out rate (current default); with weights -> mean(p×w).
 
-    run-value 目標（階段A）用權重版：w_j = miss_cost_j − ΔRE(out)（皆 >0），
-    E[ΔRE] = mean(miss_cost) − mean(p×w)，最大化 mean(p×w) ⇔ 最小化期望失分。
-    見 src/if_runvalue.py。"""
+    The run-value objective (Phase A) uses the weighted version: w_j = miss_cost_j − ΔRE(out) (both > 0),
+    E[ΔRE] = mean(miss_cost) − mean(p×w), so maximizing mean(p×w) is equivalent to minimizing expected run cost.
+    See src/if_runvalue.py."""
     p = predict_p_out(model, balls, angles, depths, player_effects)
     if ball_weights is None:
         return float(p.mean())
@@ -147,7 +151,7 @@ def expected_outs(model: ProbabilisticClassifier, balls: pd.DataFrame,
 
 
 def league_average_positions(years: list[int]) -> tuple[np.ndarray, np.ndarray]:
-    """聯盟平均站位（PA 加權），依 POSITIONS 順序回傳 (angles, depths)。"""
+    """League-average positioning (PA-weighted), returns (angles, depths) in POSITIONS order."""
     with psycopg2.connect(DSN) as conn:
         df = pd.read_sql(
             "SELECT position, "
@@ -162,7 +166,7 @@ def league_average_positions(years: list[int]) -> tuple[np.ndarray, np.ndarray]:
 
 
 def fetch_batter_gbs(batter_id: int, years: list[int]) -> pd.DataFrame:
-    """打者的歷史滾地球（優化的樣本分布）＋他自己的 hp_to_1b。"""
+    """A batter's historical ground balls (the sample distribution used for optimization) plus their own hp_to_1b."""
     events = OUT_EVENTS + NONOUT_EVENTS
     sql = f"""
         SELECT hc_x, hc_y, launch_speed, launch_angle, stand, events
@@ -195,14 +199,15 @@ def fetch_batter_gbs(batter_id: int, years: list[int]) -> pd.DataFrame:
 
 
 class _FastGLMObjective:
-    """把優化用 GLM pipeline 展開成純 numpy 的期望出局率評估。
+    """Unrolls the optimization GLM pipeline into a pure-numpy expected-out-rate evaluator.
 
-    多起點優化的瓶頸在每次目標函數評估都要重建 DataFrame、重跑整條 sklearn
-    pipeline。這裡預先算好不隨站位變動的部分（launch_angle spline、
-    launch_speed/hp_to_1b 的 z 分數與其係數貢獻、截距），每次評估
-    只重算隨站位變動的 ad_min / ball_time / throw_dist 相關項，logit 直接用
-    numpy 組出來。與 model.predict_proba 數值等價（tests/test_if_optimize.py
-    驗證到 1e-10）。欄位切段順序必須跟 FielderGeometryFeatures.transform 一致。
+    The bottleneck in multi-start optimization is that every objective function evaluation has to rebuild a
+    DataFrame and rerun the entire sklearn pipeline. Here we precompute the parts that don't change with
+    positioning (the launch_angle spline, the z-scores and coefficient contributions for launch_speed/hp_to_1b,
+    and the intercept); each evaluation then only recomputes the positioning-dependent ad_min / ball_time /
+    throw_dist terms, and the logit is assembled directly with numpy. This is numerically equivalent to
+    model.predict_proba (verified to 1e-10 in tests/test_if_optimize.py). The coefficient slicing order must
+    match the column order in FielderGeometryFeatures.transform.
     """
 
     def __init__(self, model: Pipeline, balls: pd.DataFrame,
@@ -220,8 +225,8 @@ class _FastGLMObjective:
             self._player_alpha = None
         feature_transformer = model.named_steps["features"]
         logistic_regression = model.named_steps["lr"]
-        # spline 是用 DataFrame fit 的；複製一份去掉 feature 名檢查，讓
-        # transform 能直接吃 ndarray（不然每次評估都觸發名稱驗證與警告）
+        # The spline was fit on a DataFrame; make a copy with the feature-name check removed so
+        # transform can take an ndarray directly (otherwise every evaluation triggers name validation and a warning)
         self._ad_min_spline = copy.deepcopy(feature_transformer.splines_["ad_min"])
         self._ball_time_spline = copy.deepcopy(feature_transformer.splines_["ball_time"])
         for spline in (self._ad_min_spline, self._ball_time_spline):
@@ -303,8 +308,8 @@ class _FastGLMObjective:
 def _make_scorer(model: ProbabilisticClassifier, balls: pd.DataFrame,
                  player_effects: PlayerEffects | None = None,
                  ball_weights: np.ndarray | None = None) -> Callable[[np.ndarray, np.ndarray], float]:
-    """回傳 (angles, depths) → 期望出局率（或加權分數，見 expected_outs docstring）。
-    GLM pipeline 走快速路徑，其他模型退回通用路徑。"""
+    """Returns (angles, depths) -> expected out rate (or weighted score, see the expected_outs docstring).
+    GLM pipelines take the fast path; other models fall back to the generic path."""
     if hasattr(model, "named_steps") and {"features", "lr"} <= set(model.named_steps):
         return _FastGLMObjective(model, balls, player_effects,
                                  ball_weights).expected_outs
@@ -316,10 +321,10 @@ def optimize_infield(balls: pd.DataFrame, model: ProbabilisticClassifier, n_rest
                      seed: int = 42, extra_starts: list[np.ndarray] | None = None,
                      player_effects: PlayerEffects | None = None,
                      ball_weights: np.ndarray | None = None) -> InfieldOptimizeResult:
-    """LHS 多起點 + L-BFGS-B。回傳最佳站位與期望出局率。
+    """LHS multi-start + L-BFGS-B. Returns the best positioning and expected out rate.
 
-    ball_weights 給定時目標改為 mean(p×w)（run-value 目標，權重與失分的換算
-    見 src/if_runvalue.py），回傳 dict 的 exp_outs 即該加權分數。"""
+    When ball_weights is given, the objective becomes mean(p×w) (the run-value objective; see src/if_runvalue.py
+    for how weights convert to run cost), and the exp_outs field of the returned dict is that weighted score."""
     bounds = ANGLE_BOUNDS + FRAC_BOUNDS
     lo = np.array([b[0] for b in bounds])
     hi = np.array([b[1] for b in bounds])
@@ -346,10 +351,11 @@ def optimize_infield(balls: pd.DataFrame, model: ProbabilisticClassifier, n_rest
 
     angles, depths = params_to_positions(best_x)
     if player_effects is None:
-        # 同側兩人的標籤在模型裡可互換，正規化成慣例：角落位置（1B/3B）靠邊線。
-        # 個人化時槽位綁定特定野手，不可重排。
-        right = np.argsort(-angles[:2])          # 角度大者為 1B
-        left = 2 + np.argsort(angles[2:])        # 角度最負者為 3B
+        # The two labels on the same side are interchangeable in the model; normalize to the convention that
+        # the corner position (1B/3B) is the one closer to the foul line.
+        # With personalization, slots are bound to specific fielders and can't be reordered.
+        right = np.argsort(-angles[:2])          # larger angle = 1B
+        left = 2 + np.argsort(angles[2:])        # most negative angle = 3B
         order = np.concatenate([right, left])
         angles, depths = angles[order], depths[order]
     return {"angles": angles, "depths": depths, "exp_outs": -best_val,

@@ -1,26 +1,35 @@
-"""內野滾地球 out probability 的兩個模型定義（角色不同，勿混用）。
+"""Two model definitions for infield ground ball out probability (different roles -- do not mix them up).
 
-1. make_optimizer_glm() — 站位優化用（counterfactual）。
-   只用「野手相對幾何」特徵（ad_min/ball_time/throw_dist...），刻意**排除** raw
-   spray_deg 項：spray 的位置特定出局率模式反映的是「現在聯盟都站在哪」（內生性），
-   搬動野手之後那些模式不會保留；混入會讓優化器重複計算（例如把 SS 移進 5.5 洞後，
-   spray 項仍預測那裡出局率低）。
-2. make_difficulty_glm() — 球員評價用（階段 2 的 p̂）。
-   位置固定情境下的聯盟平均難度模型（xBA 式），spray 位置模式合法且應該用；
-   評價不搬野手、無反事實需求，內生性禁令（raw spray/彈性形狀）不適用。
-   **2026-07-12 起改用可解釋的 spline GLM 取代 GBM**（使用者決定：不用無法
-   說明的模型，接受準確度代價）。實測代價（scripts/experiments/exp_if_difficulty_glm.py，
-   全量滾地球 2023-24→2025）：逐球 AUC 0.770 vs GBM 0.824，但評價是數百球
-   加總，qualified R 僅 0.525→0.514、scale 同樣健康（SD 8.3 vs 官方 6.9）。
-   特徵工程：spray 左打鏡像（Melville 同款）+ spray/LA/EV/hp splines +
-   spray×EV、spray×hp 交互（spray×EV 對校準是必要的：無交互 cal 0.043→0.026）。
-3. make_difficulty_gbm() — GBM benchmark（保留供對照，不進生產）。
-   2023→2024 驗證：AUC 0.807，只用球質+跑者+spray，加野手特徵無增益（+0.001）——
-   證據：Standard 佈陣下賽季平均站位近似 spray 的確定函數。
+1. make_optimizer_glm() -- for positioning optimization (counterfactual).
+   Uses only "fielder-relative geometry" features (ad_min/ball_time/throw_dist...), and
+   deliberately **excludes** the raw spray_deg term: spray's position-specific out-rate
+   pattern reflects "where the league currently stands" (endogeneity) -- those patterns
+   won't hold after a fielder is moved; including it would make the optimizer double-count
+   (e.g. after moving the SS into the 5.5 hole, the spray term would still predict a low
+   out rate there).
+2. make_difficulty_glm() -- for player evaluation (Stage 2's p_hat).
+   A league-average difficulty model (xBA-style) under fixed positioning; spray's
+   positional pattern is valid and should be used here -- evaluation doesn't move
+   fielders and has no counterfactual requirement, so the endogeneity ban (raw
+   spray / flexible shapes) doesn't apply.
+   **As of 2026-07-12, an interpretable spline GLM replaces the GBM** (a user decision:
+   don't use a model that can't be explained, accept the accuracy cost). Measured cost
+   (scripts/experiments/exp_if_difficulty_glm.py, full ground ball set 2023-24 -> 2025):
+   per-ball AUC 0.770 vs GBM 0.824, but evaluation aggregates hundreds of balls, so
+   qualified R only drops 0.525 -> 0.514, and the scale stays similarly healthy
+   (SD 8.3 vs. official 6.9). Feature engineering: spray mirrored for left-handed
+   batters (same as Melville) + spray/LA/EV/hp splines + spray x EV, spray x hp
+   interactions (spray x EV is necessary for calibration: without the interaction,
+   cal 0.043 -> 0.026).
+3. make_difficulty_gbm() -- GBM benchmark (kept for comparison, not used in production).
+   2023 -> 2024 validation: AUC 0.807, using only ball quality + runner + spray; adding
+   fielder features gives no gain (+0.001) -- evidence that under Standard alignment,
+   season-average positioning is approximately a deterministic function of spray.
 
-結構選擇流程（2026-07-06）：train 2023 → validate 2024 挑交互作用配置，2025 只在
-最終評估碰一次。GLM 交互配置驗證結果：base 0.7460 → +tensor(ad×bt)+ad×EV+跑者交互
-0.7536。
+Structure selection process (2026-07-06): train on 2023 -> validate on 2024 to pick the
+interaction configuration, touching 2025 only once for the final evaluation. GLM
+interaction configuration validation result: base 0.7460 -> +tensor(ad x bt)+ad x EV+
+runner interaction 0.7536.
 """
 import numpy as np
 import pandas as pd
@@ -30,29 +39,36 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import SplineTransformer, StandardScaler
 
-# 優化用 GLM 的輸入欄位（野手相對幾何 + 球質 + 跑者）
-# stand_R 於 2026-07-12 移除：hp_to_1b 是實測本壘到一壘秒數、已含左打站位優勢，
-# 消融顯示 stand_R 冗餘（2025 AUC −0.0006、校準略好，scripts/experiments/exp_if_drop_features.py）
+# Input columns for the optimization GLM (fielder-relative geometry + ball quality + runner)
+# stand_R was removed on 2026-07-12: hp_to_1b is the measured home-to-first time, which
+# already captures the left-handed batter's positioning advantage; an ablation showed
+# stand_R is redundant (2025 AUC -0.0006, calibration slightly better,
+# scripts/experiments/exp_if_drop_features.py)
 OPTIMIZER_FEATURES: list[str] = ["ad_min", "ball_time", "launch_angle", "launch_speed",
                                   "throw_dist", "hp_to_1b"]
-# 評價用 GBM 的輸入欄位（無任何野手資訊）
+# Input columns for the evaluation GBM (no fielder information at all)
 DIFFICULTY_FEATURES: list[str] = ["spray_deg", "launch_angle", "launch_speed",
                                    "hp_to_1b", "stand_R"]
 
 
 class FielderGeometryFeatures(BaseEstimator, TransformerMixin):
-    """優化用 GLM 的設計矩陣。
+    """Design matrix for the optimization GLM.
 
-    spline 基底：ad_min、ball_time、launch_angle（非線性效果）。
-    線性項：launch_speed、throw_dist、hp_to_1b（競速時間差的線性結構）。
-    throw_dist/hp_to_1b **刻意維持線性**：throw_dist 是攔截幾何（spray×深度）的
-    確定函數，給彈性形狀會從後門重新編碼被排除的 raw spray 區域訊號（2026-07-12
-    實驗：throw_dist spline 單獨 +0.012 AUC，但偏效應呈守位身分的波浪、105 呎谷
-    對應 2B/SS 交界的中間地帶——優化器會追假凸起，見 scripts/experiments/exp_if_drop_features.py）。
-    交互作用（2024 驗證選定）：
-    - tensor spline(ad_min)×spline(ball_time)：強襲球正面 vs 慢滾球遠處是不同的 play
-    - spline(ad_min)×launch_speed
-    - hp_to_1b×throw_dist、hp_to_1b×spline(ball_time)：跑者速度只在 close play 起作用
+    Spline basis: ad_min, ball_time, launch_angle (nonlinear effects).
+    Linear terms: launch_speed, throw_dist, hp_to_1b (the linear structure of the timing-race gap).
+    throw_dist/hp_to_1b are **deliberately kept linear**: throw_dist is a deterministic
+    function of interception geometry (spray x depth), and giving it a flexible shape
+    would smuggle back in the raw-spray positional signal that was supposed to be excluded
+    (2026-07-12 experiment: a throw_dist spline alone gives +0.012 AUC, but the partial
+    effect shows a wave shaped like positional identity, with a trough at 105 ft
+    corresponding to the 2B/SS boundary zone -- the optimizer would chase this fake bump;
+    see scripts/experiments/exp_if_drop_features.py).
+    Interactions (chosen via 2024 validation):
+    - tensor spline(ad_min) x spline(ball_time): a hard-hit ball straight at the fielder
+      vs. a slow roller far away are different plays
+    - spline(ad_min) x launch_speed
+    - hp_to_1b x throw_dist, hp_to_1b x spline(ball_time): runner speed only matters on
+      close plays
     """
 
     def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "FielderGeometryFeatures":
@@ -73,9 +89,9 @@ class FielderGeometryFeatures(BaseEstimator, TransformerMixin):
         n_rows = len(X)
         return np.hstack([
             a, b, la, z,
-            (a[:, :, None] * b[:, None, :]).reshape(n_rows, -1),  # tensor ad×bt
-            a * ev,                                               # ad×EV
-            hp * throw, hp * b,                                   # 跑者交互
+            (a[:, :, None] * b[:, None, :]).reshape(n_rows, -1),  # tensor ad x bt
+            a * ev,                                               # ad x EV
+            hp * throw, hp * b,                                   # runner interactions
         ])
 
 
@@ -85,11 +101,14 @@ def make_optimizer_glm() -> Pipeline:
 
 
 class DifficultyGLMFeatures(BaseEstimator, TransformerMixin):
-    """評價用難度 GLM 的設計矩陣（無野手資訊）。
+    """Design matrix for the evaluation difficulty GLM (no fielder information).
 
-    spray 先做左打鏡像（負=拉打側，左右打共享形狀，Melville §2 同款），
-    上 8 節點 spline（要容納四守位的 lane 結構）；LA/EV/hp 各 6 節點。
-    交互：spray×EV（強襲穿洞）、spray×hp（慢滾內野安打的方向性）。
+    spray is first mirrored for left-handed batters (negative = pull side, so left- and
+    right-handed batters share the same shape, same as Melville §2), then fit with an
+    8-knot spline (needs to accommodate the lane structure of all four positions);
+    LA/EV/hp each get 6 knots.
+    Interactions: spray x EV (hard-hit balls finding gaps), spray x hp (directionality
+    of infield hits on slow rollers).
     """
 
     def __init__(self, spray_ev: bool = True, spray_hp: bool = True) -> None:
@@ -135,9 +154,10 @@ def make_difficulty_gbm() -> HistGradientBoostingClassifier:
                                           early_stopping=True, random_state=42)
 
 
-# ── 階段B：一壘有人（<2 出局）的兩段式優化用 GLM ──────────────────
-# E[outs] = P(≥1 出局) × (1 + P(雙殺 | ≥1 出局))，兩段皆 counterfactual
-# （只用野手相對幾何＋球質＋跑速，排除 raw spray，同 make_optimizer_glm 的紀律）。
+# -- Stage B: two-stage optimization GLM for runner-on-first (<2 outs) -----------
+# E[outs] = P(>=1 out) x (1 + P(double play | >=1 out)), both stages counterfactual
+# (using only fielder-relative geometry + ball quality + runner speed, excluding raw
+# spray, following the same discipline as make_optimizer_glm).
 
 ON1B_OUT_FEATURES: list[str] = OPTIMIZER_FEATURES + ["throw_dist_2b"]
 ON1B_DP_FEATURES: list[str] = ["ad_min", "ball_time", "launch_speed", "hp_to_1b",
@@ -145,10 +165,12 @@ ON1B_DP_FEATURES: list[str] = ["ad_min", "ball_time", "launch_speed", "hp_to_1b"
 
 
 class On1bOutFeatures(FielderGeometryFeatures):
-    """階段1 P(≥1 出局)：基準幾何設計矩陣＋throw_dist_2b 線性項。
+    """Stage 1 P(>=1 out): the baseline geometry design matrix plus a linear throw_dist_2b term.
 
-    一壘有人時最近的 force 目標是二壘，throw_dist（到一壘）之外補傳二壘距離；
-    與 throw_dist 同理**維持線性**（攔截幾何的確定函數，彈性形狀=raw spray 後門）。
+    With a runner on first, the nearest force target is second base, so we add the
+    distance to second on top of throw_dist (to first); for the same reason as
+    throw_dist, this is **kept linear** (a deterministic function of interception
+    geometry; a flexible shape would be a backdoor for the excluded raw spray signal).
     """
 
     def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "On1bOutFeatures":
@@ -162,14 +184,17 @@ class On1bOutFeatures(FielderGeometryFeatures):
 
 
 class On1bDPFeatures(BaseEstimator, TransformerMixin):
-    """階段2 P(雙殺 | ≥1 出局) 的設計矩陣。
+    """Design matrix for Stage 2's P(double play | >=1 out).
 
-    spline：ad_min、ball_time（正面接到快球才來得及轉傳）。
-    線性：launch_speed、hp_to_1b（打者到一壘＝雙殺第二個 out 的競速）、
-    runner_hp_to_1b（跑者到二壘＝force 的競速）、pivot_dist（軸心幾何）、
-    throw_dist_2b——幾何項一律線性（函數形式內生性紀律）。
-    interactions=True 加 hp_to_1b×spline(ball_time)（跑者速度只在 close play
-    起作用，沿用階段1 的結論；是否採用由 2023→2024 驗證決定）。
+    Spline: ad_min, ball_time (only a ball fielded cleanly and quickly enough gives time
+    to turn the double play).
+    Linear: launch_speed, hp_to_1b (batter's time to first = the race for the double
+    play's second out), runner_hp_to_1b (runner's time to second = the race for the
+    force), pivot_dist (pivot geometry), throw_dist_2b -- geometric terms are always
+    kept linear (the functional-form endogeneity discipline).
+    interactions=True adds hp_to_1b x spline(ball_time) (runner speed only matters on
+    close plays, following Stage 1's conclusion; whether to include it was decided by
+    2023 -> 2024 validation).
     """
 
     def __init__(self, interactions: bool = True) -> None:

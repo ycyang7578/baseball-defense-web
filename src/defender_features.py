@@ -9,7 +9,7 @@ import psycopg2
 from . import physics
 from .config import DSN
 
-# LF/CF/RF 對應 Statcast 的 fielder_N 欄位與 hit_location 編號（標準棒球位置編號，剛好一致）
+# LF/CF/RF mapped to Statcast's fielder_N columns and hit_location codes (standard baseball position numbering, so they line up directly)
 _FIELDER_COLUMN: dict[str, str] = {"LF": "fielder_7", "CF": "fielder_8", "RF": "fielder_9"}
 _HIT_LOCATION: dict[str, int] = {"LF": 7, "CF": 8, "RF": 9}
 
@@ -48,7 +48,7 @@ _QUERY = """
 
 
 def get_defender_opportunities(position: str, year: int) -> pd.DataFrame:
-    """單一守備位置、單一年度的有效守備機會（required_speed, cos_angle, sin_angle, fielder_dist, caught）。"""
+    """Valid fielding opportunities for a single position and season (required_speed, cos_angle, sin_angle, fielder_dist, caught)."""
     fielder_col = _FIELDER_COLUMN[position]
     query = _QUERY.format(fielder_col=fielder_col)
 
@@ -91,7 +91,7 @@ def get_defender_opportunities(position: str, year: int) -> pd.DataFrame:
 
 
 def mark_official(df: pd.DataFrame) -> pd.DataFrame:
-    """標記每一列是否為Savant官方計算OAA時真正算進去的球（savant_fielding比對，game_pk+at_bat_number+fielder_id）。"""
+    """Flag whether each row is a ball actually counted in Savant's official OAA calculation (matched against savant_fielding via game_pk+at_bat_number+fielder_id)."""
     with psycopg2.connect(DSN) as conn:
         sf = pd.read_sql(
             "SELECT DISTINCT player_id, game_pk, at_bat_number FROM savant_fielding",

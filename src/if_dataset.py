@@ -1,17 +1,20 @@
-"""滾地球資料集建構：內野 out probability 模型的特徵工程。
+"""Ground ball dataset construction: feature engineering for the infield out probability model.
 
-設計依據：
-- Melville (2024) §3.1 — a_d（球與最近內野手的最小角差）、b_t（球到野手時間 =
-  野手深度 ÷ 擊球初速，不考慮減速）
-- Tango, Introducing Infield OAA (MLB Technology Blog, 2020) — 出局是三段競速：
-  攔截 + 傳球 vs 跑者到一壘時間（跑者用賽季平均速度，非該球實際速度）
+Design basis:
+- Melville (2024) §3.1 — a_d (minimum angular difference between the ball and the nearest
+  infielder), b_t (time for the ball to reach the fielder = fielder depth ÷ exit velocity,
+  ignoring deceleration)
+- Tango, Introducing Infield OAA (MLB Technology Blog, 2020) — an out is a three-way race:
+  interception + throw vs. the runner's time to first base (runner uses season-average
+  speed, not the actual speed on that play)
 
-座標慣例（與 Savant fielder_positioning 一致）：角度 -45°=三壘線、0°=中外野方向、
-+45°=一壘線；深度為離本壘距離（呎）。
+Coordinate convention (matches Savant fielder_positioning): angle -45°=third base line,
+0°=straight up the middle, +45°=first base line; depth is distance from home plate (feet).
 
-已知限制：滾地球的 hc_x/hc_y 是「球被處理的位置」不是落點（出局球在內野被攔、
-安打球滾到外野才被撿），因此位置資訊只取 spray angle（直線滾動下角度近似不變），
-不使用深度。
+Known limitation: for ground balls, hc_x/hc_y record "where the ball was fielded," not
+where it landed (an out is recorded where the infielder intercepts it, while a base hit
+is recorded where it's picked up in the outfield). So we only take the spray angle from
+the position data (angle is roughly invariant along a straight roll) and don't use depth.
 """
 import numpy as np
 import pandas as pd
@@ -19,26 +22,26 @@ import psycopg2
 
 from src.config import DSN
 
-# 滾地球結果標籤：out=防守方把球轉換成至少一個出局（Tango：只看 play 的第一個 out）
+# Ground ball outcome labels: out = defense converted the ball into at least one out (Tango: only look at the first out of the play)
 OUT_EVENTS: tuple[str, ...] = ("field_out", "force_out", "grounded_into_double_play",
                                 "double_play", "fielders_choice_out")
 NONOUT_EVENTS: tuple[str, ...] = ("single", "double", "triple", "field_error")
 
-# 階段B（一壘有人、<2 出局）：結果升級為「拿到幾個出局」。
-# fielders_choice 經 des 逐筆抽驗（2026-07-13）＝打者上壘、跑者全推進，沒有出局；
-# fielders_choice_out 才有記出局。
+# Stage B (runner on 1st, <2 outs): the outcome is upgraded to "how many outs were recorded."
+# fielders_choice was spot-checked row by row against des (2026-07-13) = batter reaches base,
+# all runners advance, no out recorded; only fielders_choice_out records an out.
 ON1B_EVENT_OUTS: dict[str, int] = {
     "grounded_into_double_play": 2, "double_play": 2,
     "force_out": 1, "field_out": 1, "fielders_choice_out": 1,
     "single": 0, "double": 0, "triple": 0, "field_error": 0, "fielders_choice": 0,
 }
 
-# Savant hc_x/hc_y 座標系的本壘位置
+# Home plate position in Savant's hc_x/hc_y coordinate system
 HOME_X: float = 125.42
 HOME_Y: float = 198.27
-MPH_TO_FTS: float = 1.46667          # 擊球初速 mph → ft/s
-FIRST_BASE_R: float = 90.0           # 一壘壘包距本壘的距離（呎）
-FIRST_BASE_DEG: float = 45.0         # 一壘壘包相對本壘的角度
+MPH_TO_FTS: float = 1.46667          # exit velocity mph -> ft/s
+FIRST_BASE_R: float = 90.0           # distance from home plate to first base (feet)
+FIRST_BASE_DEG: float = 45.0         # angle of first base relative to home plate
 
 INFIELD_COLS: dict[str, str] = {"fielder_3": "1B", "fielder_4": "2B",
                                  "fielder_5": "3B", "fielder_6": "SS"}
@@ -49,15 +52,16 @@ def _polar_to_xy(
     radius_ft: np.ndarray | float,
     angle_deg: np.ndarray | float,
 ) -> tuple[np.ndarray | float, np.ndarray | float]:
-    """(深度, 角度) → 平面座標；x 往一壘線側為正、y 往中外野為正。"""
+    """(depth, angle) -> planar coordinates; x is positive toward the first base line, y is positive toward center field."""
     angle_rad = np.radians(angle_deg)
     return radius_ft * np.sin(angle_rad), radius_ft * np.cos(angle_rad)
 
 
 def fetch_raw_gb(years: list[int]) -> pd.DataFrame:
-    """撈指定年份的非觸擊、有明確結果標籤的滾地球（含壘況與佈陣欄位）。"""
+    """Fetch non-bunt ground balls with a clear outcome label for the given years (including base-state and alignment columns)."""
     events = OUT_EVENTS + NONOUT_EVENTS
-    # ORDER BY 確保回傳順序確定（無序時 GBM early-stopping 的內部驗證切分不可重現）
+    # ORDER BY makes the returned row order deterministic (without it, the GBM's internal
+    # early-stopping validation split wouldn't be reproducible)
     sql = f"""
         SELECT game_year, batter, stand, hc_x, hc_y, launch_speed, launch_angle,
                events, if_fielding_alignment, hit_location,
@@ -76,7 +80,7 @@ def fetch_raw_gb(years: list[int]) -> pd.DataFrame:
 
 
 def fetch_positioning(years: list[int]) -> pd.DataFrame:
-    """內野四位置的球員賽季平均站位（載入時已按 (player, season, position) 去重）。"""
+    """Season-average positioning for the four infield positions (already deduplicated on load by (player, season, position))."""
     sql = """
         SELECT fielder_id, season, position,
                avg_norm_start_distance AS depth, avg_norm_start_angle AS angle
@@ -89,10 +93,12 @@ def fetch_positioning(years: list[int]) -> pd.DataFrame:
 
 
 def fetch_positioning_on1b(years: list[int]) -> pd.DataFrame:
-    """「一壘有人」切分的賽季平均站位（fielder_positioning_on1b，2023 起）。
+    """Season-average positioning split by "runner on first" (fielder_positioning_on1b, available from 2023 on).
 
-    階段B 的幾何代理要用這份：一壘有人時站位系統性位移（1B hold runner
-    −26~−35 呎、2B/SS 雙殺深度 −3~−4.4 呎），用全情境平均會把幾何特徵算錯。"""
+    Stage B's geometric proxies need this table: positioning shifts systematically when
+    a runner is on first (1B holding the runner moves -26 to -35 ft, 2B/SS play -3 to
+    -4.4 ft shallower for the double play), so using the all-situations average would
+    compute the geometric features incorrectly."""
     sql = """
         SELECT fielder_id, season, position,
                avg_norm_start_distance AS depth, avg_norm_start_angle AS angle
@@ -105,10 +111,11 @@ def fetch_positioning_on1b(years: list[int]) -> pd.DataFrame:
 
 
 def fetch_raw_gb_on1b(years: list[int]) -> pd.DataFrame:
-    """一壘有人（僅一壘）、<2 出局的非觸擊滾地球（階段B 雙殺情境主範圍）。
+    """Non-bunt ground balls with a runner on first only and <2 outs (Stage B's main double-play scope).
 
-    比 fetch_raw_gb 多帶 on_1b（跑者 id，接跑者速度）與 outs_when_up，
-    事件集合含 fielders_choice（0 出局，無人在壘時不存在此事件）。"""
+    Compared to fetch_raw_gb, this also carries on_1b (runner id, for joining runner speed)
+    and outs_when_up, and the event set includes fielders_choice (0 outs; this event doesn't
+    occur with the bases empty)."""
     events = tuple(ON1B_EVENT_OUTS)
     sql = f"""
         SELECT game_year, batter, stand, hc_x, hc_y, launch_speed, launch_angle,
@@ -139,23 +146,23 @@ def fetch_run_speed(years: list[int]) -> pd.DataFrame:
 
 def attach_features(gb: pd.DataFrame, positioning: pd.DataFrame,
                     run_speed: pd.DataFrame) -> pd.DataFrame:
-    """把站位/跑速接上滾地球並算出模型特徵。純函式（不碰 DB），方便測試。
+    """Join positioning/run speed onto ground balls and compute the model features. Pure function (no DB access), for easy testing.
 
-    產出的特徵欄位：
-    - spray_deg      擊球水平角度（-45=三壘線）
-    - ad_min         與最近內野手的最小絕對角差（度）
-    - near_depth     最近內野手深度（呎）
-    - lat_ft         最近內野手到球路徑的橫向距離（呎）= depth × sin(ad_min)
-    - ball_time      b_t：球滾到最近內野手深度的時間（秒，不考慮減速）
-    - throw_dist     最近內野手深度處的攔截點到一壘的距離（呎）
-    - hp_to_1b       打者本壘到一壘秒數（賽季平均；缺值以同年中位數填補）
-    - has_run_speed  hp_to_1b 是否為實際值（False=中位數填補）
+    Feature columns produced:
+    - spray_deg      horizontal spray angle of the batted ball (-45=third base line)
+    - ad_min         minimum absolute angular difference to the nearest infielder (degrees)
+    - near_depth     depth of the nearest infielder (feet)
+    - lat_ft         lateral distance from the nearest infielder to the ball's path (feet) = depth x sin(ad_min)
+    - ball_time      b_t: time for the ball to reach the nearest infielder's depth (seconds, ignoring deceleration)
+    - throw_dist     distance from the interception point (at the nearest infielder's depth) to first base (feet)
+    - hp_to_1b       batter's home-to-first time in seconds (season average; missing values filled with that year's median)
+    - has_run_speed  whether hp_to_1b is an actual measured value (False = median-filled)
     """
     df = gb.copy()
     df["is_out"] = df["events"].isin(OUT_EVENTS).astype(int)
     df["spray_deg"] = np.degrees(
         np.arctan2(df["hc_x"] - HOME_X, HOME_Y - df["hc_y"]))
-    # 界外線外 ±10 度以上多為記錄雜訊（Melville 用 [-55,55] 同一理由）
+    # More than ~10 degrees outside the foul lines is mostly recording noise (Melville uses [-55,55] for the same reason)
     df = df[df["spray_deg"].abs() <= 55].copy()
 
     pos_map = positioning.set_index(["fielder_id", "season", "position"])[["depth", "angle"]]
@@ -180,7 +187,7 @@ def attach_features(gb: pd.DataFrame, positioning: pd.DataFrame,
     df["lat_ft"] = df["near_depth"] * np.sin(np.radians(df["ad_min"]))
     df["ball_time"] = df["near_depth"] / (df["launch_speed"] * MPH_TO_FTS)
 
-    # 攔截點（沿球路徑、取最近野手深度處）到一壘的距離
+    # Distance from the interception point (along the ball's path, at the nearest fielder's depth) to first base
     ix, iy = _polar_to_xy(df["near_depth"].to_numpy(float),
                           df["spray_deg"].to_numpy(float))
     bx, by = _polar_to_xy(FIRST_BASE_R, FIRST_BASE_DEG)
@@ -194,27 +201,32 @@ def attach_features(gb: pd.DataFrame, positioning: pd.DataFrame,
     df["hp_to_1b"] = df["hp_to_1b"].fillna(year_med)
 
     df["stand_R"] = (df["stand"] == "R").astype(int)
-    # launch_angle 少數缺值（追蹤缺漏），以同年中位數填補；launch_speed 在 SQL 已強制非空
+    # launch_angle has a small number of missing values (tracking gaps), filled with that year's median; launch_speed is already forced non-null in the SQL
     la_med = df.groupby("game_year")["launch_angle"].transform("median")
     df["launch_angle"] = df["launch_angle"].fillna(la_med)
     return df
 
 
 SECOND_BASE_X: float = 0.0
-SECOND_BASE_Y: float = 90.0 * np.sqrt(2.0)  # 二壘壘包
+SECOND_BASE_Y: float = 90.0 * np.sqrt(2.0)  # second base bag
 
 
 def attach_dp_features(df: pd.DataFrame, run_speed: pd.DataFrame) -> pd.DataFrame:
-    """階段B（雙殺情境）追加特徵。純函式，接在 attach_features 之後。
+    """Additional Stage B (double-play scenario) features. Pure function, applied after attach_features.
 
-    - n_outs           該球拿到的出局數（0/1/2，ON1B_EVENT_OUTS）
-    - throw_dist_2b    攔截點（沿球路徑、最近野手深度處）到二壘的距離（呎）
-                       ——一壘有人時主要傳球目標是二壘 force，與 throw_dist（到一壘）
-                       同性質的反事實合法幾何，僅線性使用（函數形式內生性教訓）
-    - pivot_dist       2B/SS 野手到二壘壘包的較小距離（呎）＝雙殺軸心幾何，
-                       純站位函數（搬野手預測會跟著變）
-    - runner_hp_to_1b  一壘跑者的賽季 hp_to_1b（跑者速度代理；缺值同年中位數填補）
-    - has_runner_speed 是否為實際值
+    - n_outs           number of outs recorded on this play (0/1/2, ON1B_EVENT_OUTS)
+    - throw_dist_2b    distance from the interception point (along the ball's path, at the
+                       nearest fielder's depth) to second base (feet) -- with a runner on
+                       first, the primary throw target is the force at second; this is the
+                       same kind of counterfactual-valid geometry as throw_dist (to first)
+                       and is used only linearly (lesson learned about functional-form
+                       endogeneity)
+    - pivot_dist       the smaller of the 2B/SS fielders' distances to the second base bag
+                       (feet) = double-play pivot geometry, a pure function of positioning
+                       (moving a fielder changes the prediction accordingly)
+    - runner_hp_to_1b  the runner on first's season hp_to_1b (proxy for runner speed;
+                       missing values filled with that year's median)
+    - has_runner_speed whether it's an actual measured value
     """
     df = df.copy()
     df["n_outs"] = df["events"].map(ON1B_EVENT_OUTS)
@@ -241,9 +253,10 @@ def attach_dp_features(df: pd.DataFrame, run_speed: pd.DataFrame) -> pd.DataFram
 
 def build_gb_on1b_dataset(years: list[int],
                           alignment: str | None = "Standard") -> pd.DataFrame:
-    """一站式（階段B）：一壘有人（僅一壘）、<2 出局滾地球＋雙殺特徵。
+    """One-stop (Stage B): ground balls with a runner on first only, <2 outs, plus double-play features.
 
-    站位代理用 fielder_positioning_on1b（一壘有人切分）；標籤 n_outs ∈ {0,1,2}。
+    Positioning proxy uses fielder_positioning_on1b (the runner-on-first split); the label
+    n_outs is in {0,1,2}.
     """
     run_speed = fetch_run_speed(years)
     df = attach_features(fetch_raw_gb_on1b(years), fetch_positioning_on1b(years),
@@ -256,10 +269,11 @@ def build_gb_on1b_dataset(years: list[int],
 
 def build_gb_dataset(years: list[int], bases_empty: bool | None = None,
                      alignment: str | None = None) -> pd.DataFrame:
-    """一站式：撈資料、接特徵、依範圍過濾。
+    """One-stop: fetch data, attach features, filter by scope.
 
-    bases_empty=True 只留無人在壘（壘上有人會拉動站位，例如一壘手 hold runner）；
-    alignment='Standard' 只留標準佈陣（賽季平均站位對非標準佈陣的誤差更大）。
+    bases_empty=True keeps only bases-empty plays (a runner on base pulls positioning,
+    e.g. the first baseman holding the runner); alignment='Standard' keeps only standard
+    alignment (season-average positioning has more error against non-standard alignments).
     """
     df = attach_features(fetch_raw_gb(years), fetch_positioning(years),
                          fetch_run_speed(years))

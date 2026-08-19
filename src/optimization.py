@@ -33,7 +33,7 @@ from scipy.special import expit as _expit
 from scipy.stats import qmc
 from sklearn.preprocessing import StandardScaler
 
-# 模型 scaler 以 DataFrame 訓練但以 numpy array 呼叫，suppress 已知無害警告
+# The model scaler was fit on a DataFrame but is called with numpy arrays; suppress the known-harmless warning
 warnings.filterwarnings(
     "ignore",
     message="X does not have valid feature names",
@@ -48,12 +48,12 @@ from .re24 import BaseOutState, HitDeltaKey, load_re24
 POSITIONS: tuple[str, ...] = ("LF", "CF", "RF")
 FEATURE_COLS: list[str] = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 
-# {"LF": (x, y), "CF": (x, y), "RF": (x, y)}，本檔案的站位座標標準格式
+# {"LF": (x, y), "CF": (x, y), "RF": (x, y)} -- the standard positioning coordinate format used in this file
 OutfieldXY = dict[str, tuple[float, float]]
 
 
 class GroupMu(TypedDict):
-    """外野接殺模型的群體層（或球員層覆寫）後驗平均係數。"""
+    """Group-level (or player-level override) posterior mean coefficients for the outfield catch-probability model."""
     mu_alpha: float
     mu_beta_speed: float
     mu_beta_cos: float
@@ -62,7 +62,7 @@ class GroupMu(TypedDict):
 
 
 class ObjectiveContext(TypedDict):
-    """objective_re24 的目標函數上下文：不隨候選站位變動的預先算好資料。"""
+    """Objective-function context for objective_re24: precomputed data that doesn't change with candidate positioning."""
     ball_x: np.ndarray
     ball_y: np.ndarray
     flight_time: np.ndarray
@@ -86,10 +86,11 @@ class QualifyingBatter(TypedDict):
     n_balls: int
 
 
-# ── 極座標扇形搜尋範圍 ─────────────────────────────────────────────
-# 變數排列：[r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF]
-# θ 從 y 軸量起（中外野方向=0°），正值朝右外野，負值朝左外野，單位：度
-# 扇形角度確保守備員留在 fair territory（foul line ≈ ±45°）
+# ── Polar-coordinate sector search bounds ─────────────────────────────────────────────
+# Variable layout: [r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF]
+# θ is measured from the y-axis (center-field direction = 0°), positive toward right field,
+# negative toward left field, units: degrees
+# The sector angles ensure fielders stay in fair territory (foul line ≈ ±45°)
 _POLAR_BOUNDS: list[tuple[float, float]] = [
     (150, 400), (-45.0,   0.0),   # LF: r(ft), θ(deg)
     (150, 400), (-22.5, +22.5),   # CF: r(ft), θ(deg)
@@ -98,9 +99,9 @@ _POLAR_BOUNDS: list[tuple[float, float]] = [
 
 
 def _polar_to_xy(params: np.ndarray) -> np.ndarray:
-    """[r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF] → [x_LF, y_LF, x_CF, y_CF, x_RF, y_RF]
+    """[r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF] -> [x_LF, y_LF, x_CF, y_CF, x_RF, y_RF]
 
-    x = r·sin(θ),  y = r·cos(θ)   （與 physics.polar_to_fielder_xy 相同慣例）
+    x = r·sin(θ),  y = r·cos(θ)   (same convention as physics.polar_to_fielder_xy)
     """
     out = np.empty(6)
     for i in range(3):
@@ -112,7 +113,7 @@ def _polar_to_xy(params: np.ndarray) -> np.ndarray:
 
 
 def _xy_to_polar_params(xy: OutfieldXY) -> np.ndarray:
-    """{'LF':(x,y),'CF':(x,y),'RF':(x,y)} → [r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF]（_polar_to_xy 的反函式，供 warm start 用）"""
+    """{'LF':(x,y),'CF':(x,y),'RF':(x,y)} -> [r_LF, θ_LF, r_CF, θ_CF, r_RF, θ_RF] (inverse of _polar_to_xy, used for warm start)"""
     out = np.empty(6)
     for i, pos in enumerate(POSITIONS):
         x, y = xy[pos]
@@ -120,8 +121,10 @@ def _xy_to_polar_params(xy: OutfieldXY) -> np.ndarray:
         out[2 * i + 1] = np.degrees(np.arctan2(x, y))
     return out
 
-# 查精簡預計算表（scripts/precompute_batter_balls.py 產生），不直查 5GB 的 statcast。
-# 舊版直查 statcast 再算物理公式的版本見 git 歷史（2026-07 前的 prepare_batter_balls）。
+# Queries the lean precomputed table (produced by scripts/precompute_batter_balls.py) instead of hitting the
+# 5GB statcast table directly.
+# The old version that queried statcast directly and computed the physics formulas can be found in git
+# history (prepare_batter_balls, prior to 2026-07).
 _BATTER_QUERY = """
     SELECT ball_x, ball_y, flight_time, launch_speed, launch_angle, spray_angle, stand, bb_type
     FROM precomputed_batter_balls
@@ -129,7 +132,7 @@ _BATTER_QUERY = """
 """
 
 
-# ── 模型參數載入 ────────────────────────────────────────────────────
+# ── Model parameter loading ────────────────────────────────────────────────────
 
 def _resolve_model_dir(pos: str, models_dir: Path) -> tuple[Path, str]:
     """Return (dir, prefix) for the model files. Falls back to unified OF if pos-specific missing."""
@@ -161,8 +164,8 @@ def load_model_params(pos: str, models_dir: Path) -> tuple[StandardScaler, Group
 
 def load_player_params(pos: str, player_name: str, models_dir: Path) -> GroupMu:
     """
-    讀取指定球員的 player-level 參數，回傳與 group mu 相同 key 格式的 dict
-    （沿用該位置共用的 scaler）。供「指定特定外野手」的站位最佳化使用。
+    Loads player-level parameters for the given player, returning a dict with the same key format as group mu
+    (reusing the shared scaler for that position). Used for positioning optimization with a specified outfielder.
     """
     pos_dir, prefix = _resolve_model_dir(pos, models_dir)
     players = pd.read_csv(pos_dir / f"{prefix}_summary_players.csv", index_col=0, encoding="utf-8-sig")
@@ -179,7 +182,7 @@ def load_player_params(pos: str, player_name: str, models_dir: Path) -> GroupMu:
     )
 
 
-# ── 打者歷史球資料準備 ─────────────────────────────────────────────
+# ── Batter historical ball data preparation ─────────────────────────────────────────────
 
 def prepare_batter_balls(
     batter_id: int,
@@ -206,7 +209,7 @@ def prepare_batter_balls(
                "bb_type"]].reset_index(drop=True)
 
 
-# ── w_j 計算 ──────────────────────────────────────────────────────
+# ── w_j computation ──────────────────────────────────────────────────────
 
 def compute_w_j(
     balls: pd.DataFrame,
@@ -224,7 +227,7 @@ def compute_w_j(
     hit_probs: pre-computed (N,3) array from predict_hit_probs_batch; pass to skip KDE.
     Returns array of shape (N,).
     """
-    # P(k|j): shape (N, 3) 欄位順序 = 1B, 2B, 3B
+    # P(k|j): shape (N, 3), column order = 1B, 2B, 3B
     if hit_probs is None:
         hit_probs = predict_hit_probs_batch(hit_bundle, balls)
 
@@ -239,7 +242,7 @@ def compute_w_j(
     return w_j
 
 
-# ── 核心目標函數 ───────────────────────────────────────────────────
+# ── Core objective function ───────────────────────────────────────────────────
 
 def _catch_prob_single_fielder(
     fielder_x: float, fielder_y: float,
@@ -287,7 +290,7 @@ def objective_re24(positions_flat: np.ndarray, ctx: ObjectiveContext) -> float:
     ball_y = ctx["ball_y"]
     flight_time = ctx["flight_time"]
 
-    # p_not_caught = ∏_i (1 - p_i) 逐一乘
+    # p_not_caught = ∏_i (1 - p_i), multiplied in one at a time
     p_not_caught = np.ones(len(ball_x))
     for pos, (fielder_x, fielder_y) in zip(POSITIONS, [(lf_x, lf_y), (cf_x, cf_y), (rf_x, rf_y)]):
         p_catch = _catch_prob_single_fielder(
@@ -299,7 +302,7 @@ def objective_re24(positions_flat: np.ndarray, ctx: ObjectiveContext) -> float:
     return float(np.sum(p_not_caught * ctx["w_j"]))
 
 
-# ── 主進入點 ───────────────────────────────────────────────────────
+# ── Main entry point ───────────────────────────────────────────────────────
 
 def optimize_positions(
     batter_id: int,
@@ -330,17 +333,17 @@ def optimize_positions(
                When provided, balls that would clear the wall at that park
                are excluded from the objective (they cannot be caught).
 
-    warm_start_xy: 選填 {"LF":(x,y),"CF":(x,y),"RF":(x,y)}，通常是另一次
-        （目標函數相近的）optimize_positions 呼叫的解，拿來頂替其中一個
-        隨機起點（不是額外多加一次評估，總 evaluate 次數仍等於 n_restarts，
-        不增加算力成本），用來加速收斂。
-        典型用法：with_park 用 no_park 的解 warm start，因為兩者只差在
-        是否排除打牆球，目標函數幾乎一樣。
+    warm_start_xy: optional {"LF":(x,y),"CF":(x,y),"RF":(x,y)}, typically the solution from another
+        optimize_positions call (with a similar objective function), used to replace one of the random
+        starting points (not an extra evaluation on top -- total evaluate calls still equal n_restarts,
+        so there's no added compute cost), to speed up convergence.
+        Typical usage: with_park warm-starts from the no_park solution, since the two differ only in
+        whether wall balls are excluded, and the objective function is nearly identical.
 
-    delta_re / hit_bundle: 選填，呼叫端若已有快取好的版本（如 api/main.py
-        startup 時載入的全域）可直接傳入，跳過重新讀 delta_re.json /
-        重新 joblib.load(hit_type_kde.joblib)。單一請求常呼叫本函式 2 次
-        （no_park + with_park），未傳入時每次都會各自重新讀檔。
+    delta_re / hit_bundle: optional; if the caller already has cached versions (e.g. the globals loaded
+        at api/main.py startup), pass them in directly to skip re-reading delta_re.json / re-running
+        joblib.load(hit_type_kde.joblib). A single request often calls this function twice
+        (no_park + with_park); if not passed in, each call re-reads the files independently.
 
     Returns:
         {
@@ -355,18 +358,19 @@ def optimize_positions(
     if hit_prob_dir is None:
         hit_prob_dir = re24_dir
 
-    # 載入預計算資料（呼叫端未提供快取版本時才讀檔）
+    # Load precomputed data (only reads files if the caller didn't supply cached versions)
     if delta_re is None:
         _, delta_re = load_re24(re24_dir)
     if hit_bundle is None:
         hit_bundle = load_hit_prob(hit_prob_dir)
 
-    # 載入模型參數：統一 OF 模型——LF/CF/RF 共用同一 scaler 與群體層參數，
-    # 與 precompute_model_oaa 及 API 顯示層同一口徑（2026-07-13 定案）。
-    # models/{year}/ 底下若存在分位置目錄（LF/CF/RF/）是舊模型時代的遺留產物，
-    # 這裡刻意不用：曾因 _resolve_model_dir 偏好分位置目錄，使優化器與顯示層
-    # 在 2025 用了兩套曲面，兩組站位的優劣排序可以相反。
-    # （指定外野手時，以其 player-level 參數覆寫該位置）
+    # Load model parameters: unified OF model -- LF/CF/RF share the same scaler and group-level parameters,
+    # consistent with precompute_model_oaa and the API display layer (finalized 2026-07-13).
+    # If position-specific directories (LF/CF/RF/) exist under models/{year}/, they're leftovers from an older
+    # model generation -- deliberately not used here: previously _resolve_model_dir preferred the
+    # position-specific directories, which caused the optimizer and the display layer to use two different
+    # surfaces in 2025, and the ranking of the two positioning sets could come out reversed.
+    # (When a specific outfielder is given, override that position with their player-level parameters)
     of_scaler, of_mu = load_model_params("OF", models_dir)
     scalers = {pos: of_scaler for pos in POSITIONS}
     mus = {pos: of_mu for pos in POSITIONS}
@@ -375,13 +379,13 @@ def optimize_positions(
             if m is not None:
                 mus[pos] = m
 
-    # 準備打者球資料（若外部已備妥則跳過 DB 查詢）
+    # Prepare batter ball data (skip the DB query if already supplied externally)
     if balls is None:
         balls = prepare_batter_balls(batter_id, years, dsn)
     if balls.empty:
         raise ValueError(f"Batter {batter_id} has no qualifying balls in years {years}")
 
-    # 打牆球過濾：在目標球場圍牆外的球外野手接不到，排除出最佳化
+    # Wall-ball filtering: balls beyond the target park's wall can't be caught by outfielders, exclude them from optimization
     n_wall_balls = 0
     if home_team:
         wall_mask = is_wall_ball(
@@ -395,10 +399,10 @@ def optimize_positions(
     if balls.empty:
         raise ValueError(f"No catchable balls remaining after wall filtering for {home_team}")
 
-    # 計算 w_j（若外部已備妥 hit_probs 則跳過 KDE）
+    # Compute w_j (skip the KDE if hit_probs is already supplied externally)
     w_j = compute_w_j(balls, hit_bundle, delta_re, on_1b, on_2b, on_3b, outs, hit_probs=hit_probs)
 
-    # 排除 w_j=0 的球
+    # Exclude balls with w_j=0
     mask = w_j > 0
     balls_f = balls[mask].reset_index(drop=True)
     w_j_f = w_j[mask]
@@ -419,7 +423,7 @@ def optimize_positions(
         "mus":        mus,
     }
 
-    # 極座標正規化：r ∈ [150,400] vs θ ∈ [-45,45]，映射到 [0,1] 統一梯度縮放
+    # Polar-coordinate normalization: r ∈ [150,400] vs θ ∈ [-45,45], mapped to [0,1] to unify gradient scaling
     _lows  = np.array([b[0] for b in _POLAR_BOUNDS])
     _highs = np.array([b[1] for b in _POLAR_BOUNDS])
     _range = _highs - _lows
@@ -431,15 +435,18 @@ def optimize_positions(
     unit_bounds = [(0.0, 1.0)] * 6
     best: dict[str, np.ndarray | float] | None = None
 
-    # warm start 頂替一個隨機起點的名額（不是額外加一次），維持總 evaluate 次數等於
-    # n_restarts 不變 —— 不增加算力成本，也不會因為多做一次評估而變慢。
+    # The warm start takes the slot of one random starting point (not an extra addition), keeping the total
+    # evaluate count equal to n_restarts -- no added compute cost, and no slowdown from an extra evaluation.
     #
-    # 隨機起點取樣法：沒有 warm start 時用 Latin Hypercube Sampling，有 warm start 時用均勻隨機。
-    # 這不是隨意選擇——30 樣本實測（2026-07-05，見 ARCHITECTURE.md）發現兩者效果相反：
-    #   - no_park（無 warm start）：LHS 比均勻隨機 miss rate 更低（n_restarts=20 時 2/30 vs 4/30）
-    #   - with_park（用 no_park 解 warm start）：LHS 反而比均勻隨機更差（n_restarts=8 時同一批樣本
-    #     6/30 vs 4/30）——推測 LHS 的分層設計是針對「這批起點」整體算的，硬插入一個外部的 warm
-    #     start 點會打亂分層假設的均勻覆蓋，均勻隨機沒有這個分層依賴問題。
+    # Random-start sampling method: Latin Hypercube Sampling when there's no warm start, uniform random when
+    # there is. This isn't an arbitrary choice -- a 30-sample test (2026-07-05, see ARCHITECTURE.md) found the
+    # two behave oppositely:
+    #   - no_park (no warm start): LHS has a lower miss rate than uniform random (n_restarts=20: 2/30 vs 4/30)
+    #   - with_park (warm-started from the no_park solution): LHS is actually worse than uniform random
+    #     (n_restarts=8, same sample batch: 6/30 vs 4/30) -- the hypothesis is that LHS's stratification is
+    #     computed over "this batch of starting points" as a whole, and forcibly inserting an external
+    #     warm-start point disrupts the uniform-coverage assumption behind the stratification, a problem
+    #     uniform random sampling doesn't have.
     n_random = n_restarts - 1 if warm_start_xy is not None else n_restarts
     n_random = max(n_random, 0)
     if warm_start_xy is not None:
@@ -450,10 +457,11 @@ def optimize_positions(
         warm_params = _xy_to_polar_params(warm_start_xy)
         starts.append(np.clip((warm_params - _lows) / _range, 0.0, 1.0))
 
-    # ftol/gtol 放寬過（原本 1e-10/1e-6）：診斷發現 maxiter=500 從未被打到（實測中位數只跑 15 次
-    # 迭代），真正的收斂容忍度沒有那麼嚴格的必要。30 樣本驗證（2026-07-05，見 ARCHITECTURE.md）顯示
-    # 1e-6/1e-4 這組跟原本一樣的 miss rate，快 14~17%；再放寬（1e-4/1e-3 以上）miss rate 會明顯
-    # 惡化，不要再往下調。
+    # ftol/gtol were loosened (originally 1e-10/1e-6): diagnostics showed maxiter=500 was never actually hit
+    # (the empirical median only ran 15 iterations), so convergence tolerance didn't need to be that strict.
+    # A 30-sample validation (2026-07-05, see ARCHITECTURE.md) showed that 1e-6/1e-4 gives the same miss rate
+    # as the original, 14-17% faster; loosening further (1e-4/1e-3 or beyond) noticeably worsens the miss rate,
+    # so don't relax it any further.
     for x0_norm in starts:
         res = minimize(
             _obj_normalized,
@@ -485,7 +493,7 @@ def compute_per_fielder_probs(
     mus: dict[str, GroupMu],
 ) -> dict[str, np.ndarray]:
     """
-    各守備員對每顆球的個別接殺機率。
+    Individual catch probability for each fielder, for each ball.
     Returns {"LF": ndarray(N), "CF": ndarray(N), "RF": ndarray(N)}
     """
     ball_x = balls["ball_x"].values
@@ -507,7 +515,7 @@ def compute_ball_catch_probs(
     mus: dict[str, GroupMu],
 ) -> np.ndarray:
     """
-    給定三個守備員站位，計算每顆球的聯合接殺機率 p̂_j。
+    Given the three fielders' positions, compute the joint catch probability p̂_j for each ball.
     positions: {"LF": (x,y), "CF": (x,y), "RF": (x,y)}
     balls: DataFrame with ball_x, ball_y, flight_time
     Returns array of shape (N,): p̂_j for each ball.
@@ -528,8 +536,8 @@ def compute_ball_catch_probs(
 
 def get_league_avg_positions(year: int, dsn: str = DSN) -> OutfieldXY:
     """
-    從 fielder_positioning 取指定年度各位置聯盟平均站位。
-    回傳 {"LF": (x,y), "CF": (x,y), "RF": (x,y)}
+    Fetches league-average positioning for each position in the given year, from fielder_positioning.
+    Returns {"LF": (x,y), "CF": (x,y), "RF": (x,y)}
     """
     query = """
         SELECT position,
@@ -548,8 +556,9 @@ def get_league_avg_positions(year: int, dsn: str = DSN) -> OutfieldXY:
 
 
 def get_batter_stand(batter_id: int, year: int, dsn: str = DSN) -> str:
-    """取打者在指定年度最常見的打擊姿勢（'L' / 'R' / 'S'）。查精簡預計算表（見
-    scripts/precompute_batter_balls.py），最常見值已在 precompute 階段算好。"""
+    """Fetches the batter's most common batting stance ('L' / 'R' / 'S') for the given year. Queries the lean
+    precomputed table (see scripts/precompute_batter_balls.py); the most-common value is already computed at
+    the precompute stage."""
     with psycopg2.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -561,8 +570,8 @@ def get_batter_stand(batter_id: int, year: int, dsn: str = DSN) -> str:
 
 
 def load_qualifying_batters(year: int, dsn: str = DSN, min_balls: int = 30) -> list[QualifyingBatter]:
-    """指定年度、球數 >= min_balls 的打者清單，供 api/main.py 的 /api/batters 用。
-    查精簡預計算表（見 scripts/precompute_batter_balls.py）。"""
+    """List of batters with ball count >= min_balls for the given year, used by /api/batters in api/main.py.
+    Queries the lean precomputed table (see scripts/precompute_batter_balls.py)."""
     query = """
         SELECT batter, COUNT(*) AS n_balls
         FROM precomputed_batter_balls
