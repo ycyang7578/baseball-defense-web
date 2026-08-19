@@ -25,8 +25,8 @@ def test_polar_to_xy_matches_hand_computed_values():
 
 
 def test_catch_prob_single_fielder_isolates_alpha_when_other_betas_zero():
-    # sc_mean=0, sc_scale=1（不標準化），只有 mu_alpha 非零 -> catch_prob 應該恆等於 sigmoid(mu_alpha)
-    # 不管球/守備員座標怎麼設，因為其他係數都是 0
+    # sc_mean=0, sc_scale=1 (no standardization), only mu_alpha is nonzero -> catch_prob should always equal sigmoid(mu_alpha)
+    # regardless of ball/fielder coordinates, since all other coefficients are 0
     fx, fy = 0.0, 200.0
     ball_x = np.array([0.0, 50.0, -100.0])
     ball_y = np.array([150.0, 100.0, 300.0])
@@ -44,15 +44,15 @@ def test_catch_prob_single_fielder_isolates_alpha_when_other_betas_zero():
 
 
 def test_catch_prob_single_fielder_decreases_with_higher_required_speed():
-    # mu_beta_speed 為負，且只有 speed 這個係數非零：required_speed 越大（球越難接）機率應該越低
+    # mu_beta_speed is negative, and speed is the only nonzero coefficient: the larger required_speed is (the harder the ball is to catch), the lower the probability should be
     fx, fy = 0.0, 200.0
     sc_mean = np.zeros(4)
     sc_scale = np.ones(4)
     mu = {"mu_alpha": 0.0, "mu_beta_speed": -0.1, "mu_beta_cos": 0.0,
           "mu_beta_sin": 0.0, "mu_beta_dist": 0.0}
 
-    # 球在正前方（rel_angle=0），距離分別是 50ft / 200ft，飛行時間都固定 2 秒
-    # -> required_speed 分別是 25 / 100 ft/s
+    # The ball is directly ahead (rel_angle=0), at distances of 50ft / 200ft respectively, with flight time fixed at 2 seconds
+    # -> required_speed is 25 / 100 ft/s respectively
     ball_x = np.array([0.0, 0.0])
     ball_y = np.array([150.0, 0.0])
     flight_time = np.array([2.0, 2.0])
@@ -63,11 +63,11 @@ def test_catch_prob_single_fielder_decreases_with_higher_required_speed():
     logit_far = 0.0 + (-0.1) * 100.0
     assert probs[0] == pytest.approx(expit(logit_near))
     assert probs[1] == pytest.approx(expit(logit_far))
-    assert probs[0] > probs[1]  # 距離較近、需要速度較低 -> 接殺機率較高
+    assert probs[0] > probs[1]  # closer distance, lower required speed -> higher catch probability
 
 
 def test_compute_w_j_weights_hit_probs_by_delta_re():
-    # 直接餵 hit_probs，跳過 KDE 推論；balls/hit_bundle 在這個路徑下不會被使用
+    # Feed hit_probs directly, skipping KDE inference; balls/hit_bundle are unused on this path
     hit_probs = np.array([
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
@@ -88,8 +88,8 @@ def test_compute_w_j_weights_hit_probs_by_delta_re():
 
 
 def test_objective_re24_matches_hand_computed_value_when_only_alpha_varies():
-    # 三個守備員都只有 mu_alpha 非零（其餘係數為 0），catch_prob 恆等於 sigmoid(alpha)，
-    # 跟球的座標/守備員座標完全無關，可以完全手算期望值
+    # All three fielders have only mu_alpha nonzero (all other coefficients are 0), so catch_prob
+    # always equals sigmoid(alpha), independent of ball/fielder coordinates, so the expected value can be hand-computed entirely
     mu_common = {"mu_beta_speed": 0.0, "mu_beta_cos": 0.0, "mu_beta_sin": 0.0, "mu_beta_dist": 0.0}
     mus = {
         "LF": {**mu_common, "mu_alpha": -1.0},
@@ -108,7 +108,7 @@ def test_objective_re24_matches_hand_computed_value_when_only_alpha_varies():
         "sc_scales": sc_scales,
         "mus": mus,
     }
-    # 座標任意給（不影響結果，因為 beta 全為 0）
+    # Coordinates are arbitrary (they don't affect the result since all betas are 0)
     positions_flat = np.array([-100.0, 200.0, 0.0, 250.0, 100.0, 200.0])
 
     result = objective_re24(positions_flat, ctx)

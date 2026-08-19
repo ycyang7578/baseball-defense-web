@@ -9,7 +9,7 @@ from src.model_training import ALL_COLS, build_model, load_training_data
 
 
 def _synthetic_training_df(n_per_player=10):
-    """造合成的守備機會資料，跳過 DB/PyMC 採樣，只驗證計算圖形狀。"""
+    """Build synthetic defensive-opportunity data, skipping the DB/PyMC sampling step, to verify only the computation graph's shape."""
     players = ["Player A", "Player B", "Player C"]
     rows = []
     rng = np.random.default_rng(0)
@@ -32,8 +32,9 @@ def test_build_model_does_not_trigger_sampling_and_has_expected_structure():
 
     model = build_model(df, scaler)
 
-    # build_model 只建計算圖，不應該觸發任何採樣（沒有 free_RVs 以外的副作用可觀察，
-    # 這裡主要驗證回傳型別與變數是否齊全）
+    # build_model only constructs the computation graph and should not trigger any sampling
+    # (there's no observable side effect besides free_RVs; this mainly verifies the return
+    # type and that all expected variables are present)
     import pymc as pm
     assert isinstance(model, pm.Model)
 
@@ -49,13 +50,13 @@ def test_build_model_does_not_trigger_sampling_and_has_expected_structure():
 
 
 def test_load_training_data_renames_speed_and_drops_na_and_concats_years():
-    # get_defender_opportunities 實際回傳的欄位裡只有 required_speed，沒有 speed
+    # The columns actually returned by get_defender_opportunities only include required_speed, not speed
     year_2024_df = pd.DataFrame({
         "required_speed": [25.0], "cos_angle": [0.5], "sin_angle": [0.5],
         "fielder_dist": [30.0], "caught": [1], "name_fielder": ["Player A"],
     })
     year_2025_df = pd.DataFrame({
-        # 第二列 cos_angle 是 NaN，應該被 dropna 拿掉
+        # Row 2's cos_angle is NaN, which should be dropped by dropna
         "required_speed": [20.0, 15.0], "cos_angle": [0.1, np.nan], "sin_angle": [0.2, 0.3],
         "fielder_dist": [10.0, 20.0], "caught": [0, 1], "name_fielder": ["Player B", "Player C"],
     })
@@ -65,10 +66,10 @@ def test_load_training_data_renames_speed_and_drops_na_and_concats_years():
 
         df = load_training_data("CF", [2024, 2025])
 
-    # required_speed 應該被 rename 成 speed
+    # required_speed should be renamed to speed
     assert "speed" in df.columns
     assert "required_speed" not in df.columns
-    # 3 列輸入，1 列因 cos_angle=NaN 被 dropna 拿掉，剩下 2 列
+    # 3 rows in, 1 row dropped by dropna due to cos_angle=NaN, leaving 2 rows
     assert len(df) == 2
     assert sorted(df["name_fielder"].tolist()) == ["Player A", "Player B"]
     assert mock_get.call_count == 2

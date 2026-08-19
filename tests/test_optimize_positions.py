@@ -14,23 +14,25 @@ from src.optimization import (
 )
 from src.re24 import load_re24
 
-# 用 repo 裡真的已訓練好的模型檔 + 已 precompute 的資料，不連 DB、不跑 PyMC
+# Uses the actually trained model files in the repo + precomputed data, without connecting to the DB or running PyMC
 MODELS_DIR = Path(__file__).parent.parent / "models" / "2025"
 RE24_DIR = Path(__file__).parent.parent / "data" / "precomputed"
 
-# n_restarts 從正式管線的 100 降到 10：實測同一組合成球在 5~100 之間 RF/CF/LF 的
-# 左右排序穩定不變（只有 LF 精確座標在 <30 時會卡不同 local optimum，但方向性結論不受影響）
+# n_restarts is reduced from 100 in the production pipeline to 10: empirically, for the same
+# synthetic ball set, the left-to-right ordering of RF/CF/LF stays stable across 5~100 restarts
+# (only LF's exact coordinates can land on a different local optimum below 30 restarts, but the
+# directional conclusion is unaffected)
 N_RESTARTS_TEST = 10
 
 
 def _synthetic_right_field_balls(n=8):
-    """8 顆集中在右外野深遠處的合成球，用來測試優化器是否把 RF 移向球群方向。"""
+    """8 synthetic balls clustered deep in right field, used to test whether the optimizer moves RF toward the ball cluster."""
     balls = pd.DataFrame({
         "ball_x": np.full(n, 200.0),
         "ball_y": np.full(n, 280.0),
         "flight_time": np.full(n, 4.0),
     })
-    hit_probs = np.tile(np.array([1.0, 0.0, 0.0]), (n, 1))  # 全部視為一壘安打，簡化 w_j
+    hit_probs = np.tile(np.array([1.0, 0.0, 0.0]), (n, 1))  # treat all as singles, to simplify w_j
     return balls, hit_probs
 
 
@@ -47,7 +49,7 @@ def test_optimize_positions_moves_rf_toward_ball_cluster():
     cf_x, _ = result["CF"]
     rf_x, _ = result["RF"]
 
-    # 球群集中在右外野深遠處 -> RF 應該比 CF 更靠右，CF 應該比 LF 更靠右
+    # The ball cluster is deep in right field -> RF should be further right than CF, and CF further right than LF
     assert rf_x > cf_x > lf_x
 
 
@@ -76,11 +78,11 @@ def test_optimize_positions_returns_ball_and_wall_counts():
     )
 
     assert result["n_balls"] == 8
-    assert result["n_wall_balls"] == 0  # 沒指定 home_team，不做打牆過濾
+    assert result["n_wall_balls"] == 0  # home_team not specified, so no wall-ball filtering is applied
 
 
 def test_optimize_positions_beats_a_deliberately_bad_guess():
-    """驗證優化器真的有在降低目標值，不是隨便回傳起點。"""
+    """Verify that the optimizer is actually decreasing the objective value, not just returning the starting point."""
     balls, hit_probs = _synthetic_right_field_balls()
 
     result = optimize_positions(
@@ -89,12 +91,12 @@ def test_optimize_positions_beats_a_deliberately_bad_guess():
         n_restarts=N_RESTARTS_TEST, seed=42, balls=balls, hit_probs=hit_probs,
     )
 
-    # 重建跟 optimize_positions 內部完全相同的 ctx，才能用 objective_re24 公平比較
+    # Rebuild a ctx that's identical to the one used internally by optimize_positions, so objective_re24 can be compared fairly
     _, delta_re = load_re24(RE24_DIR)
     w_j = compute_w_j(balls, None, delta_re, 0, 0, 0, 0, hit_probs=hit_probs)
-    assert (w_j > 0).all()  # 確認這組合成資料沒有被 optimize_positions 內部的 w_j>0 過濾掉任何球
+    assert (w_j > 0).all()  # confirm none of this synthetic data got filtered out by the w_j>0 filter inside optimize_positions
 
-    # optimize_positions 用統一 OF 參數（三位置共用，2026-07-13 定案），這裡同步
+    # optimize_positions uses unified OF parameters (shared across all three positions, finalized 2026-07-13), matched here
     of_scaler, of_mu = load_model_params("OF", MODELS_DIR)
     scalers = {pos: of_scaler for pos in POSITIONS}
     mus = {pos: of_mu for pos in POSITIONS}
@@ -112,7 +114,7 @@ def test_optimize_positions_beats_a_deliberately_bad_guess():
     optimized_obj = objective_re24(optimized_flat, ctx)
     assert optimized_obj == pytest.approx(result["objective"], abs=1e-6)
 
-    # 明顯不合理的站位：三個守備員都塞在扇形最左邊界，遠離球群所在的右外野深遠處
+    # A deliberately unreasonable positioning: all three fielders crammed at the leftmost edge of the sector, far from the ball cluster deep in right field
     bad_polar = np.array([150.0, -45.0, 150.0, -22.5, 150.0, -22.5])
     bad_flat = _polar_to_xy(bad_polar)
     bad_obj = objective_re24(bad_flat, ctx)
@@ -121,7 +123,7 @@ def test_optimize_positions_beats_a_deliberately_bad_guess():
 
 
 def test_optimize_positions_warm_start_reaches_same_optimum_with_zero_random_restarts():
-    """warm_start_xy 應該可以獨立當唯一起點用（n_restarts=0），驗證它真的有被拿去 minimize，不是被忽略。"""
+    """warm_start_xy should work standalone as the sole starting point (n_restarts=0), verifying it's actually fed into minimize rather than being ignored."""
     balls, hit_probs = _synthetic_right_field_balls()
 
     reference = optimize_positions(
@@ -142,9 +144,10 @@ def test_optimize_positions_warm_start_reaches_same_optimum_with_zero_random_res
 
 
 def test_optimize_positions_warm_start_from_related_problem_matches_full_restart_quality():
-    """模擬 no_park -> with_park 的實際用法：球集只差幾顆球（模擬拿掉打牆球），
-    用 no_park 的解 warm start with_park，n_restarts=2（1 隨機+1 warm start）也要能
-    達到跟 10 個隨機起點相近的品質。"""
+    """Simulates the actual no_park -> with_park usage pattern: the ball set differs by only a
+    few balls (simulating removal of wall balls); using the no_park solution to warm-start
+    with_park, n_restarts=2 (1 random + 1 warm start) should still reach a quality comparable
+    to 10 random restarts."""
     balls, hit_probs = _synthetic_right_field_balls(n=12)
 
     no_park_result = optimize_positions(

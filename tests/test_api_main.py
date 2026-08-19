@@ -1,8 +1,10 @@
-"""api/main.py 的整合測試：起 FastAPI TestClient（觸發真正的 lifespan startup），
-實際連本機 PostgreSQL + 讀本機 models/ 底下訓練好的模型檔。
+"""Integration tests for api/main.py: spins up a FastAPI TestClient (which triggers
+the real lifespan startup), and actually connects to a local PostgreSQL and reads
+the trained model files under the local models/ directory.
 
-跟 src/ 那些合成資料的單元測試不同，這支需要完整本機環境才能跑，預設不跑
-（見 pytest.ini 的 integration marker）。手動執行：
+Unlike the synthetic-data unit tests under src/, this one needs a full local
+environment to run, so it is skipped by default
+(see the integration marker in pytest.ini). Run it manually with:
     python -m pytest tests/test_api_main.py -m integration -v
 """
 import base64
@@ -14,10 +16,10 @@ from api.main import app
 
 pytestmark = pytest.mark.integration
 
-# 已知本機資料庫有完整資料的打者/年份（2026-08 手動驗證過）
-_OF_BATTER_ID = 680757   # Kwan, Steven —— 外野打者
-_IF_BATTER_ID = 650333   # Arráez, Luis —— 內野合格打者（滾地球足量）
-_IF_FIELDER_ID = 592192  # Canha, Mark —— 有貝葉斯球員層效應的內野手
+# Batter/year combos known to have complete data in the local database (manually verified 2026-08)
+_OF_BATTER_ID = 680757   # Kwan, Steven -- outfield batter
+_IF_BATTER_ID = 650333   # Arráez, Luis -- qualifying infield batter (enough ground balls)
+_IF_FIELDER_ID = 592192  # Canha, Mark -- infielder with a Bayesian player-level effect
 _YEAR = 2025
 
 
@@ -27,7 +29,7 @@ def client():
         yield c
 
 
-# ── 基本查表端點 ─────────────────────────────────────────────────
+# ── Basic lookup endpoints ─────────────────────────────────────────────────
 
 def test_years_includes_target_year(client):
     resp = client.get("/api/years")
@@ -64,7 +66,7 @@ def test_if_fielders_returns_all_four_positions(client):
     assert set(result) == {"1B", "2B", "3B", "SS"}
 
 
-# ── 外野站位優化（/api/optimize 系列）───────────────────────────
+# ── Outfield positioning optimization (/api/optimize family) ───────────────────────────
 
 def test_optimize_no_park_returns_league_avg_and_no_park(client):
     resp = client.post("/api/optimize", json={
@@ -85,7 +87,7 @@ def test_optimize_with_park_adds_with_park_and_wall_boundary(client):
     resp = client.post("/api/optimize", json={
         "batter_id": _OF_BATTER_ID, "year": _YEAR,
         "on_1b": 0, "on_2b": 0, "on_3b": 0, "outs": 0,
-        "home_team": "bos",  # 小寫也要能過（後端會 .upper()）
+        "home_team": "bos",  # lowercase should also work (backend does .upper())
     })
     assert resp.status_code == 200
     body = resp.json()
@@ -113,7 +115,7 @@ def test_optimize_plot_returns_valid_png(client):
     assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-# ── 內野站位優化（/api/if_optimize，含階段B DP 分支）─────────────
+# ── Infield positioning optimization (/api/if_optimize, including the Phase-B DP branch) ─────────────
 
 def test_if_optimize_no_runner_uses_runvalue_refinement(client):
     resp = client.post("/api/if_optimize", json={
@@ -127,9 +129,11 @@ def test_if_optimize_no_runner_uses_runvalue_refinement(client):
 
 
 def test_if_optimize_runner_on_first_pins_1b_to_hold_runner_position(client):
-    """一壘有人、<2 出局要切到階段B DP 分支：1B 釘死在聯盟 hold-runner 位置，
-    且不管有沒有指定野手，league/optimized 兩組的 1B 站位都要完全一樣（釘死
-    不隨效應動，見 ARCHITECTURE.md「內野貝葉斯球員層」/if_dp_optimize.py docstring）。
+    """With a runner on first and <2 outs, this should switch to the Phase-B DP branch:
+    1B is pinned to the league hold-runner position, and regardless of whether a
+    specific fielder is given, the 1B position must be identical between the
+    league and optimized sets (the pin doesn't move with player effects -- see
+    "Infield Bayesian Player Layer" in ARCHITECTURE.md / the if_dp_optimize.py docstring).
     """
     resp = client.post("/api/if_optimize", json={
         "batter_id": _IF_BATTER_ID, "year": _YEAR,
@@ -152,10 +156,10 @@ def test_if_result_custom_with_specified_fielder(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["fielders"]["2B"] is not None
-    assert body["fielders"]["1B"] is None  # 未指定的位置＝聯盟平均
+    assert body["fielders"]["1B"] is None  # unspecified position = league average
 
 
-# ── 內外野整合（/api/optimize_integrated）────────────────────────
+# ── Combined infield/outfield (/api/optimize_integrated) ────────────────────────
 
 def test_optimize_integrated_returns_seven_positions(client):
     resp = client.post("/api/optimize_integrated", json={
@@ -171,7 +175,7 @@ def test_optimize_integrated_returns_seven_positions(client):
 
 
 def test_optimize_integrated_runner_on_first_uses_dp_branch(client):
-    """整合頁一壘有人時內野側也要切 DP 分支，1B 同樣釘死。"""
+    """On the combined page, with a runner on first, the infield side must also switch to the DP branch, with 1B pinned the same way."""
     resp = client.post("/api/optimize_integrated", json={
         "batter_id": _IF_BATTER_ID, "year": _YEAR,
         "on_1b": 1, "on_2b": 0, "on_3b": 0, "outs": 0,
@@ -182,7 +186,7 @@ def test_optimize_integrated_runner_on_first_uses_dp_branch(client):
     assert pinned == body["league"]["positions"]["1B"]
 
 
-# ── 球場圍牆 ──────────────────────────────────────────────────────
+# ── Park boundary ──────────────────────────────────────────────────────
 
 def test_park_boundary_known_team_returns_polygon(client):
     resp = client.get("/api/park_boundary/BOS")

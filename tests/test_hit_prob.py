@@ -57,5 +57,5 @@ def test_predict_hit_probs_batch_matches_single_prediction(bundle):
     assert batch_result.shape[0] == 1
     row_sum = batch_result[0].sum()
     assert row_sum == pytest.approx(1.0)
-    # batch 與單筆預測應該對同一筆輸入給出相同結果
+    # batch and single-prediction should give the same result for the same input
     assert batch_result[0][0] == pytest.approx(single_result["1B"], abs=1e-6)

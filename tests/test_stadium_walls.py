@@ -13,7 +13,7 @@ def test_unknown_team_returns_all_false():
 
 
 def test_balls_behind_home_plate_are_never_flagged():
-    # y <= 0（本壘後方/兩側）的球一律不判定打牆，不管座標多離譜
+    # Balls with y <= 0 (behind/to the side of home plate) are never flagged as wall balls, no matter how extreme the coordinates
     x = np.array([-9999.0, 9999.0])
     y = np.array([0.0, -50.0])
 
@@ -23,7 +23,7 @@ def test_balls_behind_home_plate_are_never_flagged():
 
 
 def test_ball_far_beyond_any_outfield_wall_is_flagged():
-    # 500 呎外野落點，遠超過任何 MLB 球場的圍牆距離
+    # A landing point 500 feet into the outfield, far beyond any MLB park's wall distance
     x = np.array([0.0])
     y = np.array([500.0])
 
@@ -33,7 +33,7 @@ def test_ball_far_beyond_any_outfield_wall_is_flagged():
 
 
 def test_ball_shallow_in_play_is_not_flagged():
-    # 距本壘 50 呎、正中方向，遠在任何球場的內野/淺外野範圍內
+    # 50 feet from home plate, straight up the middle, well within the infield/shallow outfield range of any park
     x = np.array([0.0])
     y = np.array([50.0])
 
@@ -55,7 +55,7 @@ def test_get_park_boundary_coords_returns_none_for_unknown_team():
 
 
 def test_supported_teams_covers_30_mlb_clubs_with_2_alias_codes():
-    # 32 個代碼對應 30 支球隊：OAK/ATH（運動家）、AZ/ARI（響尾蛇）各是同隊的兩種代碼
+    # 32 codes map to 30 teams: OAK/ATH (Athletics) and AZ/ARI (Diamondbacks) are each two codes for the same team
     assert len(SUPPORTED_TEAMS) == 32
     assert {"OAK", "ATH"} <= set(SUPPORTED_TEAMS)
     assert {"AZ", "ARI"} <= set(SUPPORTED_TEAMS)

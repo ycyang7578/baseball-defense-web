@@ -29,7 +29,7 @@ def test_optimize_request_rejects_out_of_range_outs(outs):
 
 
 def test_optimize_request_accepts_boundary_outs():
-    # outs 的合法範圍是 0~2（ge=0, le=2）
+    # outs' valid range is 0~2 (ge=0, le=2)
     OptimizeRequest(batter_id=123, outs=0)
     OptimizeRequest(batter_id=123, outs=2)
 
@@ -58,8 +58,8 @@ def test_integrated_set_holds_seven_positions():
 
 
 def test_integrated_popup_fields_default_to_empty():
-    """popup 是後加的展示欄位：舊呼叫端（不帶 popup）必須照樣能建構，
-    雲端表未 sync 時 popup_balls 為空、n_popups 為 0。"""
+    """popup is a display field added later: old callers (without popup) must still be able to
+    construct this, and when the cloud table hasn't synced, popup_balls is empty and n_popups is 0."""
     from api.schemas import IntegratedStats, PopupBall
 
     stats = IntegratedStats(n_of_balls=1, n_gb=1, re_state=0.5,

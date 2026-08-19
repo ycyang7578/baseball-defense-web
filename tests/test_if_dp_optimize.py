@@ -1,4 +1,4 @@
-"""src/if_dp_optimize.py 純函式部分的單元測試（不碰 DB、不跑優化）。"""
+"""Unit tests for the pure-function parts of src/if_dp_optimize.py (no DB access, no optimization runs)."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,14 +9,14 @@ from src.if_dp_optimize import (FORCE_SHARE, dp_delta_re, dp_geometry,
 
 
 def _re24():
-    """簡化 RE24 表（量級接近實際值即可）。"""
+    """Simplified RE24 table (just needs to be roughly the right order of magnitude)."""
     return {(1, 0, 0, 0): 0.90, (1, 0, 0, 1): 0.52, (1, 0, 0, 2): 0.22,
             (0, 1, 0, 1): 0.66, (0, 1, 0, 2): 0.32,
             (0, 0, 0, 2): 0.10}
 
 
 def test_dp_delta_re_zero_outs():
-    """0 出局：d1=force/at-1st 混合、d2=雙殺到 (0,0,0,2)；d2 < d1 < 0。"""
+    """0 outs: d1 = force/at-1st mix, d2 = double play to (0,0,0,2); d2 < d1 < 0."""
     d1, d2 = dp_delta_re(_re24(), {}, 0)
     expect_d1 = FORCE_SHARE * (0.52 - 0.90) + (1 - FORCE_SHARE) * (0.66 - 0.90)
     assert d1 == pytest.approx(expect_d1)
@@ -25,7 +25,7 @@ def test_dp_delta_re_zero_outs():
 
 
 def test_dp_delta_re_one_out_ends_inning():
-    """1 出局的雙殺=半局結束：d2 = −RE(1,0,0,1)。"""
+    """A double play with 1 out ends the half-inning: d2 = -RE(1,0,0,1)."""
     d1, d2 = dp_delta_re(_re24(), {}, 1)
     assert d2 == pytest.approx(-0.52)
     assert d2 < d1 < 0
@@ -40,9 +40,9 @@ def _balls():
 
 
 def test_dp_geometry_pivot_and_throw_2b_zero_at_bag():
-    """2B 站上二壘壘包：pivot_dist=0；spray 0 度且最近野手深度=壘包距離時
-    throw_dist_2b=0。"""
-    angles4 = np.array([40.0, 0.0, -30.0, -20.0])   # 2B 在 0 度
+    """2B standing on second base: pivot_dist=0; when spray is 0 degrees and the nearest fielder's
+    depth equals the distance to the bag, throw_dist_2b=0."""
+    angles4 = np.array([40.0, 0.0, -30.0, -20.0])   # 2B at 0 degrees
     depths4 = np.array([90.0, SECOND_BASE_Y, 115.0, 145.0])
     feats = dp_geometry(_balls(), angles4, depths4)
     assert feats["pivot_dist"].iloc[0] == pytest.approx(0.0, abs=1e-9)
@@ -51,7 +51,7 @@ def test_dp_geometry_pivot_and_throw_2b_zero_at_bag():
 
 
 def test_dp_geometry_pivot_uses_closer_of_2b_ss():
-    """SS 比 2B 靠近壘包時，pivot_dist 取 SS 的距離。"""
+    """When SS is closer to the bag than 2B, pivot_dist takes SS's distance."""
     angles4 = np.array([40.0, 30.0, -30.0, -2.0])
     depths4 = np.array([90.0, 140.0, 115.0, SECOND_BASE_Y])
     feats = dp_geometry(_balls(), angles4, depths4)
@@ -69,7 +69,7 @@ def test_dp_params_roundtrip():
 
 
 def test_dp_scorer_fast_path_matches_pipelines():
-    """DPScorer 的 numpy 快速路徑必須與兩條 sklearn pipeline 數值等價。"""
+    """DPScorer's numpy fast path must be numerically equivalent to the two sklearn pipelines."""
     from pathlib import Path
 
     import joblib
@@ -105,7 +105,7 @@ def test_dp_scorer_fast_path_matches_pipelines():
     np.testing.assert_allclose(p1_fast, p1_ref, atol=1e-10)
     np.testing.assert_allclose(p2_fast, p2_ref, atol=1e-10)
 
-    # web 端點用的逐球 P(≥1 出局)：與 _probs 的 p1 一致、平均=expected_p1
+    # Per-ball P(>=1 out) used by the web endpoint: matches _probs's p1, and its mean equals expected_p1
     p1_public = scorer.per_ball_p1(angles3, depths3)
     np.testing.assert_allclose(p1_public, p1_fast)
     assert scorer.expected_p1(angles3, depths3) == pytest.approx(p1_public.mean())
@@ -135,7 +135,7 @@ def _rand_balls(n=60, seed=7):
 
 
 def test_dp_scorer_zero_player_effects_equal_baseline():
-    """全零效應必須跟不帶效應完全一樣（聯盟平均野手）。"""
+    """All-zero effects must be exactly identical to having no effects at all (league-average fielder)."""
     from src.if_dp_optimize import DPScorer
 
     out_model, dp_model = _real_models()
@@ -155,8 +155,8 @@ def test_dp_scorer_zero_player_effects_equal_baseline():
 
 
 def test_dp_scorer_player_effects_shift_stage1_logit_only():
-    """效應＝最近野手的 α_j + g_j×ad_z 加在階段1 logit（階段2 不掛），
-    與不帶效應的 p1 手算對照。"""
+    """Effect = nearest fielder's α_j + g_j×ad_z added to the stage-1 logit (not applied to stage 2),
+    checked against a hand-computed p1 without effects."""
     from src.if_dp_optimize import DPScorer
 
     out_model, dp_model = _real_models()
@@ -182,14 +182,14 @@ def test_dp_scorer_player_effects_shift_stage1_logit_only():
     logit = np.log(p1_base / (1 - p1_base)) + pe["alpha"][nearest] + pe["g"][nearest] * ad_z
     np.testing.assert_allclose(with_pe.per_ball_p1(angles3, depths3),
                                1 / (1 + np.exp(-logit)), atol=1e-10)
-    # 階段2 不掛效應：p2 必須不變
+    # Stage 2 has no effects applied: p2 must be unchanged
     np.testing.assert_allclose(with_pe._probs(angles3, depths3)[1],
                                base._probs(angles3, depths3)[1], atol=1e-12)
 
 
 def test_dp_optimize_personalized_keeps_slot_assignment():
-    """個人化時 3B/SS 槽位綁定野手、不做標籤重排，且回傳分數與帶效應
-    scorer 一致。"""
+    """When personalized, the 3B/SS slots are bound to fielders with no label reordering, and the
+    returned score matches the effects-aware scorer."""
     from src.if_dp_optimize import DPScorer, optimize_infield_dp
 
     out_model, dp_model = _real_models()
@@ -205,14 +205,15 @@ def test_dp_optimize_personalized_keeps_slot_assignment():
     scorer = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77, pe)
     assert res["exp_re"] == pytest.approx(
         scorer.expected_re(res["angles"], res["depths"]), abs=1e-9)
-    # bounds 仍須成立（2B 右側、3B/SS 左側）
+    # bounds must still hold (2B on the right side, 3B/SS on the left side)
     assert 1.0 <= res["angles"][0] <= 44.0
     assert all(-44.0 <= a <= -1.0 for a in res["angles"][1:])
 
 
 def test_dp_anchored_refine_never_worse_than_anchor():
-    """個人化錨定精修（anchored_starts：錨點＋抖動）必須 ≥ 錨點本身的分數——
-    零效應解常卡在 kink 上讓 L-BFGS-B 原地失敗，抖動起點要能撿到附近的改善。"""
+    """Personalized anchored refinement (anchored_starts: anchor + jitter) must score >= the anchor
+    itself -- the zero-effects solution often gets stuck on a kink and makes L-BFGS-B fail in place,
+    so the jittered starting points need to be able to pick up nearby improvements."""
     from src.if_dp_optimize import (DPScorer, anchored_starts,
                                     optimize_infield_dp,
                                     positions_to_params_dp)
@@ -235,22 +236,23 @@ def test_dp_anchored_refine_never_worse_than_anchor():
     scorer = DPScorer(out_model, dp_model, balls, pinned, w, -0.29, -0.77, pe)
     f_anchor = scorer.expected_re(base["angles"], base["depths"])
     assert res["exp_re"] <= f_anchor + 1e-12
-    # 錨定語意：位移該是小幅修正，不是跳去別的解家族
+    # Anchoring semantics: the shift should be a small correction, not a jump to a different solution family
     assert np.abs(res["angles"] - base["angles"]).max() < 5.0
     assert np.abs(res["depths"] - base["depths"]).max() < 15.0
 
 
 def test_on1b_constants_json_complete_for_deploy():
-    """/api/if_optimize DP 分支的離線常數（scripts/precompute_if_on1b_constants.py）
-    必須在 repo 裡且欄位齊全——雲端沒有 fielder_positioning_on1b / sprint_speed，
-    這個檔缺了 DP 分支會靜默退回無壘況精修。"""
+    """The offline constants for the /api/if_optimize DP branch (scripts/precompute_if_on1b_constants.py)
+    must exist in the repo with all fields present -- the cloud environment doesn't have
+    fielder_positioning_on1b / sprint_speed, so if this file is missing, the DP branch silently
+    falls back to the no-runner refinement."""
     import json
     from pathlib import Path
 
     path = (Path(__file__).resolve().parent.parent
             / "data" / "precomputed" / "if_on1b_constants.json")
     const = json.loads(path.read_text(encoding="utf-8"))
-    assert const["train_years"] == [2023, 2024]   # 須同階段B 模型訓練年
+    assert const["train_years"] == [2023, 2024]   # must match the Phase-B model's training years
     assert set(const["positions"]) == {"1B", "2B", "3B", "SS"}
     for angle, depth in const["positions"].values():
         assert -50 <= angle <= 50 and 60 <= depth <= 160

@@ -1,4 +1,4 @@
-"""src/if_model.py 的單元測試（合成資料，不碰 DB）。"""
+"""Unit tests for src/if_model.py (synthetic data, no DB access)."""
 import numpy as np
 import pandas as pd
 
@@ -19,7 +19,7 @@ def _synthetic(n=400, seed=7):
         "stand_R": rng.integers(0, 2, n),
         "spray_deg": rng.uniform(-50, 50, n),
     })
-    # 角差越大越難出局的合成標籤
+    # Synthetic label where a larger angle difference means it's harder to make an out
     p = 1 / (1 + np.exp(-(1.2 - 0.08 * df["ad_min"])))
     df["is_out"] = (rng.uniform(size=n) < p).astype(int)
     return df
@@ -36,7 +36,7 @@ def test_feature_builder_shape_and_determinism():
 
 
 def test_optimizer_glm_responds_to_fielder_geometry():
-    """counterfactual 檢查:同一顆球，角差變大 → 出局率必須下降。"""
+    """Counterfactual check: for the same ball, a larger angle difference must lower the out probability."""
     df = _synthetic()
     glm = make_optimizer_glm().fit(df[OPTIMIZER_FEATURES], df["is_out"])
     ball = df[OPTIMIZER_FEATURES].iloc[[0]].copy()
@@ -64,13 +64,14 @@ def test_difficulty_glm_probability_range_and_determinism():
 
 
 def test_difficulty_glm_spray_mirroring():
-    """左打鏡像：左右打在「各自拉打側」同角度的球應拿到相近的難度形狀。"""
+    """Left-handed mirror check: for balls at the same angle on each batter's "pull side,"
+    left- and right-handed batters should get similar difficulty shapes."""
     df = _synthetic()
     glm = make_difficulty_glm().fit(df[DIFFICULTY_FEATURES], df["is_out"])
     ball = df[DIFFICULTY_FEATURES].iloc[[0]].copy()
-    rhb_pull = ball.assign(stand_R=1, spray_deg=-20.0)   # 右打拉向三壘側
-    lhb_pull = ball.assign(stand_R=0, spray_deg=20.0)    # 左打拉向一壘側
+    rhb_pull = ball.assign(stand_R=1, spray_deg=-20.0)   # right-handed batter pulling toward the third-base side
+    lhb_pull = ball.assign(stand_R=0, spray_deg=20.0)    # left-handed batter pulling toward the first-base side
     p_r = glm.predict_proba(rhb_pull)[0, 1]
     p_l = glm.predict_proba(lhb_pull)[0, 1]
-    # 鏡像後兩者只差 stand_R 主效應，不應該差出天際
+    # After mirroring, the two should only differ by the stand_R main effect, so the gap shouldn't be huge
     assert abs(p_r - p_l) < 0.2
