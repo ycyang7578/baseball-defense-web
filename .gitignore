@@ -21,8 +21,6 @@ __pycache__/
 .env
 
 # 本機開發工具設定：含 DB 連線字串，不上 repo
-.localconfig.json
-.devtool/
 .vscode/
 
 # 本機用的目錄樹快照（tree /F /A 產生），非專案內容
