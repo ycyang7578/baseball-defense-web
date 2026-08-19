@@ -1,15 +1,18 @@
-"""階段B 增益分解：+0.090 分/GB 的額外增益裡，多少是「補 1B 被釘走的洞」、
-多少是「雙殺感知」？
+"""Stage B gain decomposition: of the extra +0.090 runs/GB gain, how much comes
+from "patching the hole created by pinning 1B" and how much comes from "double
+play awareness"?
 
-對 validate_if_dp.py 同一批打者，加一個中間基準：
-- p1 解＝釘死 1B、優化 2B/3B/SS、但只最大化 P(≥1 出局)（懂幾何、不懂雙殺計價）
-分解（皆 2023–24 優化、2025 球失分評估）：
-  聯盟 → 無壘況解：−（負值＝破洞）      [validate_if_dp 已算]
-  聯盟 → p1 解    ：補洞＋幾何適應
-  p1 解 → DP 解   ：雙殺感知的淨貢獻    [關鍵數字]
+For the same batters as in validate_if_dp.py, add an intermediate benchmark:
+- p1 solution: pin 1B, optimize 2B/3B/SS, but only maximize P(>=1 out)
+  (understands geometry, not double-play valuation)
+Decomposition (all optimized on 2023-24, evaluated on 2025 ball run value):
+  League -> no-baserunner solution: - (negative = hole)   [already computed by
+                                                             validate_if_dp]
+  League -> p1 solution: hole patching + geometric adaptation
+  p1 solution -> DP solution: net contribution of DP awareness    [the key number]
 
-逐打者 checkpoint，中斷後重跑續算。
-執行：python scripts/experiments/exp_if_dp_decompose.py
+Per-batter checkpointing, resumable after interruption.
+Run: python scripts/experiments/exp_if_dp_decompose.py
 """
 import sys
 from pathlib import Path
@@ -76,8 +79,8 @@ def main() -> None:
             print(f"  ...{i}/{len(batters)}", flush=True)
 
     dec = pd.read_csv(CKPT).merge(valid, on="batter")
-    gain_p1 = dec["dre_league"] - dec["dre_p1sol"]          # 聯盟 → p1 解
-    dp_net = dec["gain_cross_dp"] - gain_p1                 # p1 解 → DP 解
+    gain_p1 = dec["dre_league"] - dec["dre_p1sol"]          # League -> p1 solution
+    dp_net = dec["gain_cross_dp"] - gain_p1                 # p1 solution -> DP solution
     print(f"\n=== 增益分解（n={len(dec)}，2025 球、分/GB）===")
     print(f"聯盟 → 無壘況解:  {dec['gain_cross_base'].mean():+.5f}（破洞）")
     print(f"聯盟 → p1 解:     {gain_p1.mean():+.5f}（補洞＋幾何適應）")

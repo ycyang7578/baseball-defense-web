@@ -14,7 +14,7 @@ from src.config import DSN
 
 from scripts._savant_leaderboard import fetch_leaderboard_raw
 
-# (df欄位, JSON欄位) 對照；INSERT 欄位順序也依這裡
+# (df column, JSON field) mapping; the INSERT column order also follows this
 COLUMNS = [
     ("player_id", "entity_id"),
     ("player_name", "entity_name"),

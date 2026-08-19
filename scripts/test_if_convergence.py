@@ -1,15 +1,20 @@
-"""內野優化器收斂穩定性測試：決定 web 整合要用的 n_restarts。
+"""Infield optimizer convergence stability test: determines the n_restarts
+value to use for the web integration.
 
-30 個隨機打者（樣本數 <20 的收斂測試會產生錯誤安全感——外野教訓），
-每人先用 n_restarts=150 算參考真解，再掃描候選值 20/16/12/10/8，
-統計 miss rate（候選解的期望出局率落後參考解超過容忍值）。
+30 random batters (a convergence test with sample size <20 produces false
+confidence -- a lesson learned from the outfield work). For each batter,
+first compute a reference "true" solution with n_restarts=150, then sweep
+candidate values 20/16/12/10/8, and tally the miss rate (candidate solution's
+expected out rate falling short of the reference solution beyond a tolerance).
 
-參考解與候選解用不同的 LHS seed，避免起點集合重疊造成的假一致。
-所有 run 都帶 extra_starts=[聯盟平均站位]，跟 demo／跨年驗證的用法一致。
+The reference and candidate solutions use different LHS seeds, to avoid a
+false consistency from overlapping starting-point sets.
+All runs include extra_starts=[league average positioning], matching the
+usage in the demo / cross-year validation.
 
-逐 (打者, 候選值) checkpoint 落盤，可從當機中續跑。
+Checkpoints to disk per (batter, candidate value), resumable from a crash.
 
-執行：python -m scripts.test_if_convergence [n_batters，預設 30]
+Run: python -m scripts.test_if_convergence [n_batters, default 30]
 """
 import sys
 from pathlib import Path
@@ -25,16 +30,18 @@ from src.if_optimize import (POSITIONS, fetch_batter_gbs,
                              positions_to_params)
 
 YEARS = [2023, 2024]
-MIN_GB = 80          # 放寬到 80（跨年驗證用 150）：涵蓋樣本較少、地形較崎嶇的打者
+MIN_GB = 80          # Relaxed to 80 (cross-year validation uses 150): covers batters
+                     # with smaller samples and rougher terrain
 REF_RESTARTS = 150
 REF_SEED = 999
 CAND_RESTARTS = (20, 16, 12, 10, 8)
-CAND_SEED = 42       # 與 demo／跨年驗證相同
+CAND_SEED = 42       # Same as demo / cross-year validation
 SAMPLE_SEED = 7
-MISS_TOL = 1e-4      # 期望出局率落後超過此值算 miss（典型增益 ~0.01-0.03 的 1%）
+MISS_TOL = 1e-4      # A shortfall in expected out rate beyond this value counts as a
+                     # miss (1% of the typical ~0.01-0.03 gain)
 _MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "if_gb"
 MODEL = _MODEL_DIR / "if_gb_optimizer_glm.joblib"
-ROWS_PATH = _MODEL_DIR / "convergence_rows.csv"   # checkpoint：逐列落盤，可續跑
+ROWS_PATH = _MODEL_DIR / "convergence_rows.csv"   # checkpoint: written row by row, resumable
 
 
 def sample_batters(n: int) -> pd.DataFrame:
@@ -49,7 +56,7 @@ def sample_batters(n: int) -> pd.DataFrame:
 
 
 def max_position_gap(res_a: dict, res_b: dict) -> float:
-    """兩組解的最大單一野手距離差（呎）。"""
+    """Maximum single-fielder distance difference between two solutions (feet)."""
     def xy(res):
         rad = np.radians(res["angles"])
         return np.column_stack([res["depths"] * np.sin(rad),

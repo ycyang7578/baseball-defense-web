@@ -1,18 +1,23 @@
-"""內野球員層路線 A 變體 2：前一年官方 OAA rate 縮放最近野手有效角距。
+"""Infield player-level route A, variant 2: scale the nearest fielder's effective
+angular distance by prior-year official OAA rate.
 
-sprint speed（跑壘量測）縮放無訊號（exp_if_speed_scaling.py，γ=0 最佳），
-換守備結果量測再試最後一次：ad_eff = ad_min × exp(−γ·z)，z = 野手前一年
-OAA rate 在同 primary_pos-年內的 z 分數（proxy 永遠取球年份的前一年，無洩漏；
-無前一年資料者 z=0 = 不縮放）。
+Sprint speed (baserunning measurement) scaling showed no signal
+(exp_if_speed_scaling.py, gamma=0 was best); trying once more with a defensive-
+outcome measurement instead: ad_eff = ad_min x exp(-gamma*z), where z is the
+fielder's prior-year OAA rate z-score within the same primary_pos-year (the proxy
+always uses the year before the ball's year, so no leakage; fielders with no
+prior-year data get z=0, i.e. no scaling).
 
-兩種 proxy：overall = oaa/n_opp；lateral = (oaa_toward3b+oaa_toward1b)/n_opp
-（橫向 range 才是縮放 ad 的機制，overall 混入 charge/hands）。
+Two proxies: overall = oaa/n_opp; lateral = (oaa_toward3b+oaa_toward1b)/n_opp
+(lateral range is the actual mechanism that would justify scaling ad; overall
+mixes in charge/hands).
 
-官方 leaderboard 只有 2023–25 → 球 2024 訓練（proxy 2023）→ 球 2025 驗證
-（proxy 2024）。此掃描即最終答案（事前註冊 γ 網格，不再調），若有改善加跑
-安慰劑（z 同位置-年內重排）。
+The official leaderboard only covers 2023-25 -> train on 2024 balls (proxy 2023)
+-> validate on 2025 balls (proxy 2024). This sweep is the final answer (the gamma
+grid was pre-registered, not tuned afterward); if there is improvement, also run
+a placebo check (z reshuffled within the same position-year).
 
-執行：python scripts/experiments/exp_if_oaa_scaling.py
+Run: python scripts/experiments/exp_if_oaa_scaling.py
 """
 import sys
 from pathlib import Path
@@ -29,12 +34,13 @@ from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm
 
 TRAIN_BALLS, TRAIN_PROXY = 2024, 2023
 VAL_BALLS, VAL_PROXY = 2025, 2024
-GAMMAS = [0.0, 0.02, 0.05, 0.1, 0.15, 0.25]   # z=±2 時 γ=0.05 → ad ±10%
+GAMMAS = [0.0, 0.02, 0.05, 0.1, 0.15, 0.25]   # at z=+-2, gamma=0.05 -> ad +-10%
 SEED = 42
 
 
 def load_proxy(year: int) -> pd.DataFrame:
-    """該年 leaderboard → player_id、z_overall、z_lateral（同 primary_pos 內標準化）。"""
+    """That year's leaderboard -> player_id, z_overall, z_lateral (standardized
+    within the same primary_pos)."""
     with psycopg2.connect(DSN) as conn:
         lb = pd.read_sql(
             "SELECT player_id, primary_pos, oaa, oaa_toward3b, oaa_toward1b, n_opp "
@@ -77,7 +83,7 @@ def fit_eval(train: pd.DataFrame, test: pd.DataFrame) -> tuple[float, float]:
 
 
 def shuffle_z(df: pd.DataFrame, zcol: str, seed: int) -> pd.DataFrame:
-    """安慰劑：z 在同 (最近位置, 年) 內逐野手重排。"""
+    """Placebo: shuffle z per fielder within the same (nearest position, year) group."""
     rng = np.random.default_rng(seed)
     uniq = df[["nearest_id", "nearest_pos", zcol]].drop_duplicates("nearest_id")
     parts = []

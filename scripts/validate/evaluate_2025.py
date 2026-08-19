@@ -1,6 +1,6 @@
 """Evaluate the definitive model (unified OF) on 2025 held-out data (official subset).
 
-執行：python -m scripts.validate.evaluate_2025
+Run: python -m scripts.validate.evaluate_2025
 """
 from pathlib import Path
 

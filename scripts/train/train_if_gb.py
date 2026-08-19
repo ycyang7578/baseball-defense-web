@@ -1,18 +1,25 @@
-"""訓練內野滾地球 out probability 模型（階段 1）。
+"""Train the infield ground-ball out probability model (stage 1).
 
-兩個模型、兩種角色（詳見 src/if_model.py 的 docstring）：
-- 優化用 GLM：野手相對幾何（可反事實——搬動野手預測會跟著變）
-- 評價用難度 GLM：spray+球質+跑者的聯盟平均難度模型（位置固定情境的 p̂；
-  2026-07-12 起取代 GBM，可解釋性優先；GBM 續留當 benchmark 指標）
+Two models, two roles (see the docstring in src/if_model.py for details):
+- Optimization GLM: fielder-relative geometry (counterfactual-capable --
+  predictions respond to moving fielders)
+- Difficulty GLM for evaluation: a league-average difficulty model over
+  spray + batted-ball quality + runner (p-hat for a fixed positioning
+  scenario; replaced the GBM as of 2026-07-12, prioritizing
+  interpretability; the GBM is kept around as a benchmark metric)
 
-訓練 2023–2024（禁令後，賽季平均站位不混 shift 佈陣；2021–22 的整季平均混入
-shift 球——2B 深度/3B 角度有系統性偏差——Melville 2024 同理只用禁令後資料。
-2026-07-09 實驗確認兩種年份配置 2025 樣本外三指標差異皆在雜訊內，取乾淨者），
-測試 2025（樣本外）。
-交互作用配置是先用 train 2023 → validate 2024 選定的，2025 只在這裡碰一次。
-主範圍：無人在壘 + Standard 佈陣（Melville 同樣排除壘上有人；1B hold runner 會拉動站位）。
+Trained on 2023-2024 (post-shift-ban years, so the season-average positioning
+doesn't mix in shift alignments; the 2021-22 season averages mix in shifted
+balls -- causing systematic bias in 2B depth / 3B angle -- Melville 2024
+similarly uses only post-ban data. A 2026-07-09 experiment confirmed the
+three 2025 out-of-sample metrics differ within noise between the two year
+configurations, so the cleaner one was chosen), tested on 2025 (out-of-sample).
+The interaction configuration was selected using train 2023 -> validate 2024;
+2025 is touched only once, here.
+Main scope: bases empty + Standard alignment (Melville similarly excludes
+runners on base; a 1B hold-runner situation pulls positioning).
 
-執行：python -m scripts.train.train_if_gb
+Run: python -m scripts.train.train_if_gb
 """
 import json
 from pathlib import Path
@@ -57,7 +64,7 @@ def main() -> None:
 
     glm = make_optimizer_glm()
     dglm = make_difficulty_glm()
-    gbm = make_difficulty_gbm()  # benchmark，不進生產
+    gbm = make_difficulty_gbm()  # benchmark, not shipped to production
     report = {
         "train_years": TRAIN_YEARS, "test_year": TEST_YEAR,
         "n_train": len(train), "n_test": len(test),
@@ -79,8 +86,10 @@ def main() -> None:
     p = dglm.predict_proba(test[DIFFICULTY_FEATURES])[:, 1]
     print(calibration_table(test["is_out"].to_numpy(), p).round(3).to_string())
 
-    # 安打類型模型（P(長打|滾地安打)，run-value 計價用——見 src/if_runvalue.py。
-    # 訓練域是聯盟滾地安打（不限壘況/佈陣），與 out 模型的主範圍限制無關）
+    # Hit-type model (P(extra-base hit | ground-ball hit), used for run-value
+    # pricing -- see src/if_runvalue.py. The training domain is league-wide
+    # ground-ball hits (no base state/alignment restriction), unrelated to
+    # the out model's main scope restriction)
     hits_tr = fetch_gb_hits(TRAIN_YEARS)
     hits_te = fetch_gb_hits([TEST_YEAR])
     xb = make_gb_xb_model().fit(hits_tr[XB_FEATURES], hits_tr["is_xb"])

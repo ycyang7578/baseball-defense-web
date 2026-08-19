@@ -1,17 +1,24 @@
-"""內野球員層路線 A 原型：sprint speed 縮放最近野手的有效角距。
+"""Infield player-level route A prototype: scale the nearest fielder's effective
+angular distance by sprint speed.
 
-假設：野手速度 v 縮放橫向覆蓋 → ad_eff = ad_min × (v_ref / v_i)^γ。
-γ=0 退化為現行模型；γ 顯著 >0 且樣本外變好，才有做球員層的價值。
+Hypothesis: fielder speed v scales lateral coverage -> ad_eff = ad_min *
+(v_ref / v_i)^gamma. gamma=0 degenerates to the current model; only if gamma is
+significantly >0 and out-of-sample performance improves is there value in going
+to the player level.
 
-兩種 v_ref 變體（區分「位置效應」與「個人效應」）：
-- league：v_ref = 聯盟平均——γ 會同時吃到位置間差異（SS 快、1B 慢）
-- within：v_ref = 同位置同年平均——只留同位置的個人差異，是球員層的乾淨檢定
+Two v_ref variants (separating "positional effect" from "individual effect"):
+- league: v_ref = league average -- gamma would also absorb between-position
+  differences (SS is fast, 1B is slow)
+- within: v_ref = same-position same-year average -- keeps only the within-
+  position individual differences, a clean test of the player-level signal
 
-方法論（沿用交互作用配置的流程）：γ 用 train 2021–23 → validate 2024 選，
-2025 只在選定後最終評估碰一次。安慰劑對照：v 在同 (位置, 年) 內隨機重排，
-若 γ 增益不消失代表是假訊號。
+Methodology (follows the same process as the interaction-configuration
+experiment): gamma is selected on train 2021-23 -> validate 2024; 2025 is
+touched only once for the final evaluation after selection. Placebo control:
+shuffle v randomly within the same (position, year) group -- if the gamma gain
+doesn't disappear, that indicates a spurious signal.
 
-執行：python scripts/experiments/exp_if_speed_scaling.py
+Run: python scripts/experiments/exp_if_speed_scaling.py
 """
 import sys
 from pathlib import Path
@@ -26,7 +33,7 @@ from src.config import DSN
 from src.if_dataset import INFIELD_COLS, build_gb_dataset
 from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm
 
-SELECT_TRAIN = [2021, 2022, 2023]   # γ 選擇用
+SELECT_TRAIN = [2021, 2022, 2023]   # for gamma selection
 SELECT_VAL = 2024
 FINAL_TRAIN = [2021, 2022, 2023, 2024]
 FINAL_TEST = 2025
@@ -35,7 +42,8 @@ SEED = 42
 
 
 def attach_nearest_speed(df: pd.DataFrame) -> pd.DataFrame:
-    """接上最近野手的 sprint_speed（v）與同位置-年平均（v_pos）。"""
+    """Attach the nearest fielder's sprint_speed (v) and the same-position-year
+    average (v_pos)."""
     pos_to_col = {v: k for k, v in INFIELD_COLS.items()}
     ids = np.select([df["nearest_pos"] == p for p in pos_to_col],
                     [df[c] for c in (pos_to_col[p] for p in pos_to_col)])
@@ -49,14 +57,14 @@ def attach_nearest_speed(df: pd.DataFrame) -> pd.DataFrame:
     ss_map = ss.set_index(["player_id", "season"])["sprint_speed"]
     idx = pd.MultiIndex.from_arrays([df["nearest_id"], df["game_year"]])
     df["v"] = ss_map.reindex(idx).to_numpy()
-    # 同位置-年平均以「不重複野手」計，避免常規先發的球數權重
+    # same-position-year average computed over distinct fielders, to avoid weighting by regular starters' ball counts
     uniq = (df[["nearest_id", "nearest_pos", "game_year", "v"]]
             .drop_duplicates(["nearest_id", "nearest_pos", "game_year"]))
     pos_mean = (uniq.groupby(["nearest_pos", "game_year"])["v"].mean()
                 .rename("v_pos"))
     df = df.merge(pos_mean, left_on=["nearest_pos", "game_year"],
                   right_index=True, how="left")
-    df["v"] = df["v"].fillna(df["v_pos"])   # 缺值（<0.3%）→ 比值 1，等同無縮放
+    df["v"] = df["v"].fillna(df["v_pos"])   # missing values (<0.3%) -> ratio of 1, equivalent to no scaling
     return df
 
 
@@ -74,7 +82,8 @@ def fit_eval(train: pd.DataFrame, test: pd.DataFrame) -> tuple[float, float]:
 
 
 def shuffle_within(df: pd.DataFrame, seed: int) -> pd.DataFrame:
-    """安慰劑：野手→速度的對應在同 (位置, 年) 內隨機重排（逐野手，非逐球）。"""
+    """Placebo: randomly shuffle the fielder-to-speed mapping within the same
+    (position, year) group (per fielder, not per ball)."""
     rng = np.random.default_rng(seed)
     uniq = (df[["nearest_id", "nearest_pos", "game_year", "v"]]
             .drop_duplicates(["nearest_id", "nearest_pos", "game_year"]))

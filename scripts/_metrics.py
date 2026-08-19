@@ -1,8 +1,9 @@
-"""共用：分類機率預測的校準表。
+"""Shared: calibration table for classification probability predictions.
 
-train_if_gb.py 與 train_if_on1b.py 都要看「預測機率十分位 vs 實際發生率」
-偏差多大，原本各自複製一份同樣的 qcut + groupby 邏輯，抽成這裡的
-calibration_table。
+Both train_if_gb.py and train_if_on1b.py need to check how much "predicted
+probability decile vs. actual occurrence rate" deviates. Each script used to
+duplicate the same qcut + groupby logic; it has been factored out here into
+calibration_table.
 """
 import numpy as np
 import pandas as pd

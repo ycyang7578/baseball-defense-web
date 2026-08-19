@@ -1,13 +1,19 @@
-"""階段B 線上常數的離線預算：聯盟一壘有人站位＋跑者中位速度 → JSON。
+"""Offline precomputation of Stage B's online constants: league runner-on-1B
+positioning + median runner speed -> JSON.
 
-/api/if_optimize 的 DP 分支（僅一壘有人、<2 出局）需要兩組常數：
-- 聯盟一壘有人平均站位（fielder_positioning_on1b，本機才有這張表）——
-  1B 的 hold-runner 釘死位置＋2B/3B/SS 的對照基準
-- 聯盟跑者 hp_to_1b 中位數（優化情境的一壘跑者未知，見 src/if_dp_optimize.py）
+The DP branch of /api/if_optimize (runner on 1B only, <2 outs) needs two sets
+of constants:
+- League average runner-on-1B positioning (fielder_positioning_on1b, a table
+  that only exists locally) -- 1B's hold-runner pinned position plus the
+  2B/3B/SS reference baseline
+- League median runner hp_to_1b (the runner on 1B is unknown in the
+  optimization scenario, see src/if_dp_optimize.py)
 
-照 if_league_positions.json 的模式存 data/precomputed/if_on1b_constants.json
-（API startup 讀），雲端因此不需要 fielder_positioning_on1b / sprint_speed。
-年份須與階段B 模型的訓練年一致（scripts/train_if_on1b.py 的 2023–24）。
+Saved to data/precomputed/if_on1b_constants.json following the same pattern
+as if_league_positions.json (read at API startup), so the cloud deployment
+doesn't need fielder_positioning_on1b / sprint_speed.
+The years must match the training years of the Stage B model
+(2023-24, as in scripts/train_if_on1b.py).
 
 Usage:
     python -m scripts.precompute.precompute_if_on1b_constants

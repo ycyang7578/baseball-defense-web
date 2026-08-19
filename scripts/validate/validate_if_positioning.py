@@ -1,17 +1,24 @@
-"""階段 5：內野站位建議的跨年驗證（2023–24 → 2025）。
+"""Stage 5: cross-year validation of infield positioning recommendations (2023-24 -> 2025).
 
-對每位合格打者：
-- 跨年增益 = E[outs | 用 2023–24 球優化的站位, 2025 球] − E[outs | 聯盟平均, 2025 球]
-- 同年上限 = E[outs | 用 2025 球優化的站位, 2025 球] − E[outs | 聯盟平均, 2025 球]
-兩者都評估在 2025 資料上，可直接比較（同年增益若評在自身訓練資料上會高估）。
-保留率 = 跨年增益 / 同年上限。跨打者對「跨年增益 > 0」做單樣本 t 檢定。
+For each qualifying batter:
+- Cross-year gain = E[outs | positioning optimized on 2023-24 balls, 2025 balls]
+  - E[outs | league average, 2025 balls]
+- Same-year ceiling = E[outs | positioning optimized on 2025 balls, 2025 balls]
+  - E[outs | league average, 2025 balls]
+Both are evaluated on 2025 data so they're directly comparable (evaluating the same-year
+gain on its own training data would overestimate it).
+Retention = cross-year gain / same-year ceiling. A one-sample t-test is run across batters
+against "cross-year gain > 0".
 
-注意：反事實站位下的實際出局結果不可觀測，這裡的成效是模型評分
-（optimizer GLM，2021–24 訓練，已在 2025 樣本外驗證 AUC 0.753/校準偏差 0.031）。
-跨年設計檢驗的是「打者傾向與模型可遷移性」——站位建議隔年是否仍有效。
-TRAIN_YEARS 是打者分布年份（跨年驗證設計本身），與 GLM 訓練年份無關，維持 2023–24。
+Note: the actual out outcomes under counterfactual positioning are unobservable, so the
+effect reported here is a model score (optimizer GLM, trained on 2021-24, already validated
+out-of-sample on 2025 with AUC 0.753 / calibration deviation 0.031). The cross-year design
+tests "batter tendency and model transferability" — whether the positioning recommendation
+still holds up the following year. TRAIN_YEARS is the batter-distribution year range (part
+of the cross-year validation design itself) and is unrelated to the GLM's training years;
+it stays fixed at 2023-24.
 
-執行：python -m scripts.validate.validate_if_positioning [min_train_gb] [min_test_gb]
+Run: python -m scripts.validate.validate_if_positioning [min_train_gb] [min_test_gb]
 """
 import json
 import sys
@@ -33,8 +40,8 @@ TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 _MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "if_gb"
 OUT_PATH = _MODEL_DIR / "validation_2025.json"
-ROWS_PATH = _MODEL_DIR / "validation_rows_2025.csv"   # checkpoint：逐打者落盤，可續跑
-MODEL = _MODEL_DIR / "bayes" / "if_bayes_group_pipeline.joblib"   # 群體層＝生產優化器
+ROWS_PATH = _MODEL_DIR / "validation_rows_2025.csv"   # checkpoint: written per-batter, resumable
+MODEL = _MODEL_DIR / "bayes" / "if_bayes_group_pipeline.joblib"   # group-level = production optimizer
 
 
 def main(min_train: int = 150, min_test: int = 80) -> None:
@@ -45,7 +52,7 @@ def main(min_train: int = 150, min_test: int = 80) -> None:
     batters = qualifying_batters(DSN, TRAIN_YEARS, TEST_YEAR, min_train, min_test)
     print(f"合格打者（train GB>={min_train}, test GB>={min_test}）: {len(batters)} 位")
 
-    # checkpoint：已算過的打者直接沿用（長批次在這台機器上要能從當機中續跑）
+    # checkpoint: reuse batters already computed (long batch jobs on this machine need to be resumable after a crash)
     done: set[int] = set()
     if ROWS_PATH.exists():
         done = set(pd.read_csv(ROWS_PATH)["batter"])

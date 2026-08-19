@@ -30,15 +30,15 @@ OUT_PATH     = BASE / "figures" / f"validation_scatter_{TARGET_YEAR}.png"
 
 
 def main():
-    # ── 計算 model OAA（群體層 mu，絕不用 player-level）──────────
+    # ── Compute model OAA (group-level mu, never player-level) ──────────
     model_oaa = load_model_oaa(MODELS_DIR, TARGET_YEAR)
     print(f"Model OAA 球員數: {len(model_oaa)}")
 
-    # ── 官方 OAA（is_qualified=True，跨位置加總）────────────────
+    # ── Official OAA (is_qualified=True, summed across positions) ────────────────
     official = load_official_oaa(DSN, TARGET_YEAR)
     print(f"官方 OAA (qualified) 球員數: {len(official)}")
 
-    # ── 合併 ─────────────────────────────────────────────────────
+    # ── Merge ─────────────────────────────────────────────────────
     merged = official.merge(model_oaa, on="key", how="inner").dropna(subset=["oaa", "oaa_play"])
     x = merged["oaa_play"].values
     y = merged["oaa"].values
@@ -46,21 +46,21 @@ def main():
     n = len(merged)
     print(f"n={n}  R={r:.4f}  p={p:.2e}")
 
-    # ── 繪圖 ─────────────────────────────────────────────────────
+    # ── Plotting ─────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(9, 8))
     ax.set_facecolor("white")
     fig.patch.set_facecolor("white")
 
-    # 散點
+    # Scatter points
     ax.scatter(x, y, color="#4a8ab5", s=45, alpha=0.85, edgecolors="none", zorder=3)
 
-    # 迴歸線（含信賴區間）
+    # Regression line (with confidence interval)
     m, b = np.polyfit(x, y, 1)
     x_line = np.linspace(x.min() - 1, x.max() + 1, 300)
     y_line = m * x_line + b
     ax.plot(x_line, y_line, color="red", lw=2, zorder=4, label=f"r = {r:.3f}")
 
-    # 信賴區間（手動算 95% CI）
+    # Confidence interval (95% CI computed manually)
     n_pts = len(x)
     x_mean = x.mean()
     se = np.sqrt(np.sum((y - (m * x + b)) ** 2) / (n_pts - 2))
@@ -68,7 +68,7 @@ def main():
     ci = t_val * se * np.sqrt(1/n_pts + (x_line - x_mean)**2 / np.sum((x - x_mean)**2))
     ax.fill_between(x_line, y_line - ci, y_line + ci, color="red", alpha=0.15, zorder=2)
 
-    # 標記離群點：residual 最大 or model OAA 最高
+    # Label outliers: largest residual or highest model OAA
     merged["resid"] = np.abs(y - (m * x + b))
     merged["model_oaa"] = x
     top_resid = merged.nlargest(4, "resid")
@@ -82,7 +82,7 @@ def main():
             fontsize=8.5, color="#1a1a2e",
         )
 
-    # 格線
+    # Gridlines
     ax.grid(True, linestyle="--", linewidth=0.7, color="#cccccc", zorder=0)
     ax.axhline(0, color="#888888", linewidth=0.8, zorder=1)
     ax.axvline(0, color="#888888", linewidth=0.8, zorder=1)

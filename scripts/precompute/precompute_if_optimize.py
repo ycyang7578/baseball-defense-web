@@ -1,19 +1,26 @@
-"""離線預算內野站位最佳化，服務 web 內野頁（線上即時算不可行，見 DDL 註解）。
+"""Offline precomputation of infield positioning optimization, serving the web
+infield page (online real-time computation isn't feasible, see the DDL comment).
 
-對每個 (打者, 年份)（該年滾地球 ≥ --min-gb）：
-- 用該年歷史滾地球優化四內野手站位（n_restarts 預設 50，離線不必省；
-  收斂測試見 scripts/test_if_convergence.py，n=20 已是線上下限）
-- 記錄該年聯盟平均站位的期望出局率當對照
-- 逐球存兩組站位下的出局機率（前端上色用）
+For each (batter, year) pair (with ground balls that year >= --min-gb):
+- Optimize the four infielders' positioning using that year's historical
+  ground balls (n_restarts defaults to 50; no need to economize offline —
+  see scripts/test_if_convergence.py for the convergence test, where n=20
+  is already the online lower bound)
+- Record the expected out rate under that year's league average positioning
+  as a baseline
+- Store the out probability under both positioning sets per ball (used for
+  frontend coloring)
 
-逐 (打者, 年份) checkpoint 落盤（這台機器會 BSOD），positions 列是 commit
-marker：balls 先寫、positions 後寫，續跑時先清掉沒有 marker 的孤兒 balls。
-算完後把兩張 CSV 灌進 PostgreSQL；--target-dsn 可指定雲端 DB（同
-precompute_batter_balls.py 的部署模式）。聯盟平均站位另存
-data/precomputed/if_league_positions.json（API startup 讀）。
+Checkpoints to disk per (batter, year) (this machine BSODs), with the
+positions row acting as the commit marker: balls is written first, positions
+second, so on resume, orphan balls rows without a marker are cleared first.
+After computation, the two CSVs are loaded into PostgreSQL; --target-dsn can
+specify a cloud DB (same deployment pattern as precompute_batter_balls.py).
+League average positioning is separately saved to
+data/precomputed/if_league_positions.json (read at API startup).
 
 Usage:
-    python -m scripts.precompute.precompute_if_optimize                     # 算 + 灌本機 DB
+    python -m scripts.precompute.precompute_if_optimize                     # compute + load into local DB
     python -m scripts.precompute.precompute_if_optimize --load-only --target-dsn "postgresql://..."
 """
 import argparse
@@ -34,8 +41,9 @@ from src.if_optimize import (POSITIONS, expected_outs, fetch_batter_gbs,
 
 from scripts._pg_load import copy_dataframe
 
-# Savant hc 座標單位 → 呎（慣用換算；出局球換算後中位深度 ~118 呎落在內野手
-# 深度帶、對得上歸責野手位置，經驗上成立）
+# Savant hc coordinate units -> feet (conventional conversion; converted
+# out balls have a median depth of ~118 ft, which falls within the infielder
+# depth band and matches the attributed fielder position -- empirically valid)
 FT_PER_UNIT = 2.5
 
 BASE = Path(__file__).resolve().parent.parent.parent
@@ -44,8 +52,9 @@ PRE_DIR = BASE / "data" / "precomputed"
 POS_CSV = PRE_DIR / "if_positions_rows.csv"
 GBS_CSV = PRE_DIR / "if_gbs_rows.csv"
 LEAGUE_JSON = PRE_DIR / "if_league_positions.json"
-# 2026-07-10 起優化器 = 貝葉斯群體層 pipeline（後驗平均，介面同 GLM；
-# 見 scripts/export_if_bayes.py）。此處預算零效應（聯盟平均野手）解
+# As of 2026-07-10, the optimizer = Bayesian population-level pipeline
+# (posterior mean, same interface as the GLM; see scripts/export_if_bayes.py).
+# This precomputes the zero-effect (league average fielder) solution
 MODEL = BASE / "models" / "if_gb" / "bayes" / "if_bayes_group_pipeline.joblib"
 SEED = 42
 
@@ -59,8 +68,9 @@ GBS_COLS = ["batter", "game_year", "spray_deg", "ball_x", "ball_y",
 
 def gbs_frame(batter: int, year: int, balls: pd.DataFrame,
               p_league, p_opt) -> pd.DataFrame:
-    """逐球表的一個 (打者, 年份) 區塊。ball_x/ball_y 是 hc 換算成呎的
-    「被處理/撿起位置」（展示用；語意與內生性見 DDL 註解）。"""
+    """One (batter, year) block of the per-ball table. ball_x/ball_y are the
+    "fielded/picked-up position" converted from hc into feet (for display;
+    see the DDL comment for semantics and endogeneity caveats)."""
     return pd.DataFrame({
         "batter": batter, "game_year": year,
         "spray_deg": balls["spray_deg"].round(2),
@@ -74,7 +84,8 @@ def gbs_frame(batter: int, year: int, balls: pd.DataFrame,
 
 
 def candidate_batters(year: int, min_gb: int) -> list[int]:
-    """粗篩（基本欄位條件，是 fetch_batter_gbs 精確篩選的超集，不會漏人）。"""
+    """Coarse filter (basic field conditions, a superset of fetch_batter_gbs's
+    precise filtering, so it won't miss anyone)."""
     with psycopg2.connect(DSN) as conn:
         df = pd.read_sql(
             "SELECT batter FROM statcast "
@@ -85,7 +96,8 @@ def candidate_batters(year: int, min_gb: int) -> list[int]:
 
 
 def load_done() -> set[tuple[int, int]]:
-    """已完成的 (batter, year)；順便清掉沒有 positions marker 的孤兒 balls 列。"""
+    """Completed (batter, year) pairs; also clears orphan balls rows without
+    a positions marker."""
     done = set()
     if POS_CSV.exists():
         pos = pd.read_csv(POS_CSV)
@@ -154,9 +166,12 @@ def compute(years: list[int], min_gb: int, n_restarts: int) -> None:
 
 
 def refresh_gbs() -> None:
-    """只重算逐球表：沿用 DB 已存的最佳化站位與該年聯盟平均，重抓球、重算
-    兩組站位的出局率（不重跑優化）。改逐球表 schema（如新增 ball_x/ball_y）
-    或展示欄位時用這個，幾十分鐘就能重建，不用重跑 3 小時的優化。"""
+    """Recompute only the per-ball table: reuse the optimized positioning and
+    that year's league average already stored in the DB, refetch balls, and
+    recompute out rates under both positioning sets (without rerunning the
+    optimization). Use this when changing the per-ball table schema (e.g.
+    adding ball_x/ball_y) or display columns -- it rebuilds in tens of
+    minutes instead of rerunning the 3-hour optimization."""
     model = joblib.load(MODEL)
     with psycopg2.connect(DSN) as conn:
         pos = pd.read_sql(
@@ -191,12 +206,14 @@ def refresh_gbs() -> None:
 def load_to_db(target_dsn: str) -> None:
     pos = pd.read_csv(POS_CSV)[POS_COLS]
     gbs = pd.read_csv(GBS_CSV)[GBS_COLS]
-    # 只灌有 marker 的球（防孤兒），bool 轉 PostgreSQL 認的 t/f 由 to_csv 的 True/False 處理
+    # Only load balls with a marker (avoids orphans); bool -> PostgreSQL's t/f is
+    # handled by to_csv's True/False output
     key = set(zip(pos["batter"], pos["game_year"]))
     gbs = gbs[[k in key for k in zip(gbs["batter"], gbs["game_year"])]]
     with psycopg2.connect(target_dsn) as conn:
         with conn.cursor() as cur:
-            # 純衍生表：直接重建，schema 變動（如新增欄位）才不會卡在 IF NOT EXISTS
+            # Purely derived tables: rebuild directly, so schema changes (e.g. new
+            # columns) won't get stuck on IF NOT EXISTS
             cur.execute("DROP TABLE IF EXISTS precomputed_if_positions")
             cur.execute("DROP TABLE IF EXISTS precomputed_if_gbs")
             for ddl in ("create_precomputed_if_positions_table.sql",

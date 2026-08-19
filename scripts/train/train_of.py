@@ -4,7 +4,8 @@ Usage:
     python -m scripts.train.train_of [target_year]   # default 2025
     python -m scripts.train.train_of 2024             # trains on 2020-2023, saves to models/2024/OF/
 
-訓練資料：target_year 前 4 年全量球（LF+CF+RF，無 is_official 過濾）。
+Training data: the full set of balls (LF+CF+RF, no is_official filter) from
+the 4 years preceding target_year.
 """
 import os
 os.environ.setdefault("PYTENSOR_FLAGS", "optimizer_excluding=constant_folding")

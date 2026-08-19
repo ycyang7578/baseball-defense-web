@@ -1,18 +1,25 @@
-"""實驗（階段A / 內外野整合的橋樑）：run-value 目標 vs 出局率目標。
+"""Experiment (stage A / bridge to infield-outfield integration): run-value
+objective vs. out-rate objective.
 
-重現 Melville 的比較（他發現 wOBA 優化站位連期望出局都更好，但為樣本內），
-本實驗在跨年設定下檢驗：2023-24 球優化站位、2025 球評估、無人在壘 0 出局。
+Reproduces Melville's comparison (he found that wOBA-optimized positioning was
+even better on expected outs, but that was in-sample); this experiment checks it
+under a cross-year setup: optimize positioning on 2023-24 balls, evaluate on 2025
+balls, bases empty and 0 outs.
 
-零件：
-- P(長打|滾地安打) 模型（src/if_runvalue.py），先報告 2025 樣本外品質與
-  邊線 sanity check（|spray|>40 的 P(XB) 應遠高於中間地帶）
-- w_j 與 ΔRE(out) 用外野同一份 RE24/delta_re 表（data/precomputed）
-- 兩種目標各自優化（n_restarts=50，同 production 預算），同批 2025 球上
-  評兩個指標：期望出局率、期望失分 E[ΔRE]
+Components:
+- P(extra-base hit | ground ball) model (src/if_runvalue.py); first report its 2025
+  out-of-sample quality and a sideline sanity check (P(XB) for |spray|>40 should be
+  much higher than for the middle zone)
+- w_j and ΔRE(out) use the same RE24/delta_re table as the outfield model
+  (data/precomputed)
+- Optimize separately for each objective (n_restarts=50, same budget as
+  production), then evaluate both metrics on the same batch of 2025 balls:
+  expected out rate, expected runs E[ΔRE]
 
-逐打者 checkpoint（這台機器會 BSOD），中斷後重跑同指令續算。
+Per-batter checkpointing (this machine is prone to BSODs), resumable with the
+same command after an interruption.
 
-執行：python scripts/experiments/exp_if_runvalue_objective.py
+Run: python scripts/experiments/exp_if_runvalue_objective.py
 """
 import sys
 from pathlib import Path
@@ -37,17 +44,17 @@ PRE_DIR = BASE / "data" / "precomputed"
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
-STATE = (0, 0, 0, 0)          # 無人在壘、0 出局
+STATE = (0, 0, 0, 0)          # bases empty, 0 outs
 N_RESTARTS = 50
 SEED = 42
 
 COLS = ["batter", "n_tr", "n_te",
-        "eo_outsopt", "eo_runsopt",          # 2025 期望出局率
-        "dre_outsopt", "dre_runsopt"]        # 2025 期望失分 E[ΔRE]
+        "eo_outsopt", "eo_runsopt",          # 2025 expected out rate
+        "dre_outsopt", "dre_runsopt"]        # 2025 expected runs E[ΔRE]
 
 
 def main() -> None:
-    # ── 1. 安打類型模型 ────────────────────────────────────────
+    # -- 1. Hit-type model ----------------------------------------
     hits_tr = fetch_gb_hits(TRAIN_YEARS)
     hits_te = fetch_gb_hits([TEST_YEAR])
     xb = make_gb_xb_model().fit(hits_tr[XB_FEATURES], hits_tr["is_xb"])
@@ -67,7 +74,7 @@ def main() -> None:
     print(f"ΔRE(out)={dre_o:+.4f}, ΔRE(1B)={delta_re.get(('1B', *STATE)):+.4f}, "
           f"ΔRE(2B)={delta_re.get(('2B', *STATE)):+.4f}")
 
-    # ── 2. 打者樣本（沿用跨年驗證的 212 位）──────────────────────
+    # -- 2. Batter sample (reuses the same 212 batters from cross-year validation) --
     batters = pd.read_csv(VALID_ROWS)["batter"].astype(int).tolist()
     done = set()
     if CKPT.exists():
@@ -103,10 +110,10 @@ def main() -> None:
         if i % 10 == 0 or i == len(batters):
             print(f"  ...{i}/{len(batters)}", flush=True)
 
-    # ── 3. 總結 ───────────────────────────────────────────────
+    # -- 3. Summary ------------------------------------------------
     df = pd.read_csv(CKPT)
-    d_eo = df["eo_runsopt"] - df["eo_outsopt"]        # 出局率：run目標 − 出局目標
-    d_dre = df["dre_runsopt"] - df["dre_outsopt"]     # 失分：越負越好
+    d_eo = df["eo_runsopt"] - df["eo_outsopt"]        # out rate: run-objective - out-objective
+    d_dre = df["dre_runsopt"] - df["dre_outsopt"]     # runs: more negative is better
     print(f"\n=== run-value 目標 vs 出局率目標（n={len(df)}，2025 樣本外）===")
     print(f"期望出局率差:  mean {d_eo.mean():+.5f}  median {d_eo.median():+.5f}  "
           f"run目標較高比例 {(d_eo > 0).mean():.1%}")

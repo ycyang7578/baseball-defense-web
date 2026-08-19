@@ -1,14 +1,18 @@
-"""內野模型指標總表（對齊外野的驗收做法：AUC / Brier / BSS / 校準 / 官方 OAA 相關）。
+"""Infield model metrics summary (matches the outfield acceptance approach: AUC / Brier /
+BSS / calibration / correlation with official OAA).
 
-BSS（Brier Skill Score）= 1 − Brier_model / Brier_ref，
-Brier_ref = 氣候學參照（對每球都預測訓練集平均出局率）——與論文外野 Model_3 同法。
+BSS (Brier Skill Score) = 1 - Brier_model / Brier_ref,
+Brier_ref = climatology reference (predicting the training-set average out rate for every
+ball) — same approach as the paper's outfield Model_3.
 
-範圍說明：
-- 優化用 GLM、貝葉斯（群體層/＋球員層）評在主範圍（無人在壘+Standard）
-- 難度 GLM 與 GBM benchmark 評在全量球群（評價實際使用的球群）
-兩個範圍的 BSS 各自用自己訓練集的基準率。
+Scope notes:
+- The optimizer GLM and Bayesian models (group-level / +player-level) are evaluated on the
+  main scope (bases empty + Standard alignment)
+- The difficulty GLM and GBM benchmark are evaluated on the full ball population (the
+  population actually used for evaluation)
+Each scope's BSS uses its own training set's baseline rate.
 
-執行：python -m scripts.validate.report_if_metrics（2025 樣本外）
+Run: python -m scripts.validate.report_if_metrics (2025 out-of-sample)
 """
 import json
 from pathlib import Path
@@ -46,7 +50,7 @@ def metrics_row(name, y, p, ref_rate):
 
 
 def bayes_player_logit_adjust(test: pd.DataFrame) -> np.ndarray:
-    """生產個人化路徑同款：alpha[最近野手] + g[最近野手]×ad_z（未見野手=0）。"""
+    """Same as the production personalization path: alpha[nearest fielder] + g[nearest fielder]*ad_z (unseen fielder = 0)."""
     eff = pd.read_csv(MODEL_DIR / "bayes" / "IF_player_effects.csv")
     meta = json.loads((MODEL_DIR / "bayes" / "IF_meta.json").read_text("utf-8"))
     id_col = eff.columns[0]
@@ -64,7 +68,7 @@ def bayes_player_logit_adjust(test: pd.DataFrame) -> np.ndarray:
 def main() -> None:
     rows = []
 
-    # ── 主範圍（優化端模型）────────────────────────────────
+    # ── Main scope (optimizer-side models) ────────────────────────────────
     tr = build_gb_dataset(TRAIN_YEARS, bases_empty=True, alignment="Standard")
     te = build_gb_dataset([TEST_YEAR], bases_empty=True, alignment="Standard")
     y = te["is_out"].to_numpy()
@@ -84,7 +88,7 @@ def main() -> None:
     p_ply = 1 / (1 + np.exp(-(logit_grp + bayes_player_logit_adjust(te))))
     rows.append(metrics_row("貝葉斯 ＋球員層", y, p_ply, ref))
 
-    # ── 全量球群（評價端模型）──────────────────────────────
+    # ── Full ball population (evaluation-side models) ──────────────────────────────
     tr_f = build_gb_dataset(TRAIN_YEARS)
     te_f = build_gb_dataset([TEST_YEAR])
     y_f = te_f["is_out"].to_numpy()

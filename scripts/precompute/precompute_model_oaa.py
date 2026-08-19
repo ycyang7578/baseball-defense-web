@@ -1,13 +1,16 @@
 """
-計算指定年度各外野手在我方模型下的 OAA 與星級分布（全量守備機會）。
+Computes each outfielder's OAA and star rating distribution under our model
+for a given year (across all fielding opportunities).
 
 Usage:
     python -m scripts.precompute.precompute_model_oaa [target_year]   # default 2025
     python -m scripts.precompute.precompute_model_oaa 2024
 
-使用合併外野手模型 models/{target_year}/OF/，LF+CF+RF 共用同一 scaler 與群體層參數。
-API 端以跨位置統一中心化（avg_oaa_per_ball = LF+CF+RF 合計）。
-輸出：
+Uses the combined outfielder model models/{target_year}/OF/, where LF+CF+RF
+share the same scaler and population-level parameters.
+On the API side, centering is unified across positions (avg_oaa_per_ball =
+LF+CF+RF combined).
+Output:
   data/precomputed/model_oaa_{target_year}.csv
   PostgreSQL: model_oaa, model_star_stats
 """
@@ -32,7 +35,7 @@ POSITIONS    = ["LF", "CF", "RF"]
 FEATURE_COLS = ["speed", "cos_angle", "sin_angle", "fielder_dist"]
 
 
-STAR_THRESHOLDS = [0.25, 0.50, 0.75, 0.90, 0.95]  # 5★ ≤ 0.25, 4★ ≤ 0.50, ..., 0★ > 0.95
+STAR_THRESHOLDS = [0.25, 0.50, 0.75, 0.90, 0.95]  # 5-star <= 0.25, 4-star <= 0.50, ..., 0-star > 0.95
 
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
@@ -44,7 +47,7 @@ def assign_star(catch_prob: float) -> int:
     return 0
 
 
-# 載入合併 OF 模型（一次即可，三個位置共用）
+# Load the combined OF model (only need to do this once, shared across the three positions)
 of_dir   = MODELS_DIR / "OF"
 scaler   = joblib.load(of_dir / "OF_scaler.joblib")
 group    = pd.read_csv(of_dir / "OF_summary_group.csv", encoding="utf-8-sig", index_col=0)
@@ -53,7 +56,7 @@ sc_mean  = scaler.mean_
 sc_scale = scaler.scale_
 
 rows = []
-all_balls = []  # 全位置合併，用於算星級
+all_balls = []  # Combined across all positions, used to compute star ratings
 print(f"目標年份: {TARGET_YEAR}，模型路徑: {MODELS_DIR}")
 for pos in POSITIONS:
     print(f"Computing {pos}...", flush=True)
@@ -101,7 +104,7 @@ with psycopg2.connect(DSN) as conn:
     conn.commit()
 print(f"Upserted {len(result)} rows into model_oaa")
 
-# ── 星級彙總（跨位置合併，同一球員 LF+CF+RF 合計）───────────────────
+# -- Star rating aggregation (combined across positions, same player's LF+CF+RF summed) --
 balls_all = pd.concat(all_balls, ignore_index=True)
 star_rows = []
 for name, grp in balls_all.groupby("name_fielder"):

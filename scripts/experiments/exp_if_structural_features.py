@@ -1,23 +1,31 @@
-"""實驗：Tango 式結構特徵 vs 現行 GLM（訓練 2023-24、評估 2025 樣本外）。
+"""Experiment: Tango-style structural features vs. the current GLM (trained on
+2023-24, evaluated out-of-sample on 2025).
 
-動機（2026-07-12，文獻精讀後）：官方內野 OAA 的競速結構
-race_margin = hp_to_1b - (球到野手時間 + 出手時間 + 傳球飛行時間)
-其中出手時間為常數被截距吸收；ball_time 是無減速 proxy、跟 hp_to_1b 的實測秒
-時間軸不對齊，故引入校正係數 c 與傳球速度 v（皆只用訓練集擬合，不能照搬官方
-1.72s/100ft/s——那是配實測時間的參數）。
+Motivation (2026-07-12, after close reading of the literature): the official
+infield OAA race-based structure is
+race_margin = hp_to_1b - (time for the ball to reach the fielder + release time +
+throw flight time)
+where release time is a constant absorbed by the intercept; ball_time is a
+no-deceleration proxy that isn't on the same measured-second timeline as
+hp_to_1b, so we introduce a correction coefficient c and a throw velocity v (both
+fit only on the training set -- we cannot just reuse the official 1.72s/100ft/s,
+since that parameter was fit to measured times).
 
-required_speed = lat_ft / ball_time：野手到位所需橫移速度（官方「到位機率」段）。
+required_speed = lat_ft / ball_time: the lateral speed a fielder needs to reach
+position (the official "in-position probability" component).
 
-配置（累加消融）：
-  A  現行 production GLM（splines + tensor，7 特徵）
-  S2 required_speed + race_margin（純結構）
+Configurations (cumulative ablation):
+  A  current production GLM (splines + tensor, 7 features)
+  S2 required_speed + race_margin (pure structural)
   S3 S2 + launch_angle
-  S4 S3 + launch_speed（球質海綿：慢滾球減速誤差與處理難度）
+  S4 S3 + launch_speed (ball-quality proxy: deceleration error and handling
+     difficulty for slow rollers)
 
-判準（事先定）：結構配置落後 A 在 0.003 AUC 內且校準不惡化 → 可採納精簡版；
-S4-S3 < 0.003 → launch_speed 可拿掉。
+Criteria (pre-specified): a structural configuration within 0.003 AUC of A with
+no calibration degradation -> the simplified version is adoptable;
+S4-S3 < 0.003 -> launch_speed can be dropped.
 
-執行：python scripts/experiments/exp_if_structural_features.py
+Run: python scripts/experiments/exp_if_structural_features.py
 """
 import sys
 from pathlib import Path
@@ -36,8 +44,8 @@ from src.if_model import OPTIMIZER_FEATURES, make_optimizer_glm
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
 
-C_GRID = np.arange(0.8, 3.01, 0.1)     # ball_time 校正係數（>1 = 減速讓真實時間更長）
-V_GRID = np.arange(60.0, 141.0, 5.0)   # 傳球飛行速度 ft/s
+C_GRID = np.arange(0.8, 3.01, 0.1)     # ball_time correction coefficient (>1 = deceleration makes the actual time longer)
+V_GRID = np.arange(60.0, 141.0, 5.0)   # throw flight speed, ft/s
 
 
 def calibration_max_dev(y, p, bins: int = 10) -> float:
@@ -56,7 +64,8 @@ def add_structural(df: pd.DataFrame, c: float, v: float) -> pd.DataFrame:
 
 
 def fit_margin_params(train: pd.DataFrame) -> tuple[float, float]:
-    """在訓練集上 grid search (c, v)：單特徵 logistic(race_margin) 的 logloss 最小。"""
+    """Grid search (c, v) on the training set: minimizes the logloss of a
+    single-feature logistic(race_margin) model."""
     y = train["is_out"].to_numpy()
     best = (np.inf, None, None)
     for c in C_GRID:
@@ -71,7 +80,7 @@ def fit_margin_params(train: pd.DataFrame) -> tuple[float, float]:
 
 
 def make_plain_glm() -> Pipeline:
-    # 鏡射 production LR 設定（C=1.0），只是設計矩陣換成結構特徵
+    # Mirrors the production LR settings (C=1.0), just swaps the design matrix for structural features
     return Pipeline([("scale", StandardScaler()),
                      ("lr", LogisticRegression(max_iter=8000, C=1.0))])
 
@@ -87,7 +96,7 @@ def main() -> None:
     train = add_structural(train, c, v)
     test = add_structural(test, c, v)
 
-    # margin<0 的球該不該留在訓練集：看它們的實際出局率
+    # whether margin<0 balls should stay in the training set: look at their actual out rate
     neg = train[train["race_margin"] < 0]
     print(f"\nrace_margin < 0 in train: n={len(neg):,} "
           f"({len(neg) / len(train):.1%}), actual out rate = "
@@ -99,12 +108,12 @@ def main() -> None:
                   f"out_rate={sub['is_out'].mean():.3f}")
 
     configs = {
-        "A_production": None,  # 特例：production pipeline
+        "A_production": None,  # special case: production pipeline
         "S2_structural": ["required_speed", "race_margin"],
         "S3_+LA": ["required_speed", "race_margin", "launch_angle"],
         "S4_+LA+EV": ["required_speed", "race_margin", "launch_angle",
                       "launch_speed"],
-        # backlog 的原始問題：結構特徵加在現行 GLM 上有沒有殘餘增益
+        # the original backlog question: does adding structural features on top of the current GLM give any residual gain
         "A+req_speed": "aug_rs",
         "A+rs+margin": "aug_rs_rm",
     }
@@ -117,7 +126,7 @@ def main() -> None:
             model.fit(train[OPTIMIZER_FEATURES], y_tr)
             p = model.predict_proba(test[OPTIMIZER_FEATURES])[:, 1]
             nf = "7+splines"
-        elif isinstance(feats, str):  # production 設計矩陣 + 追加結構欄位
+        elif isinstance(feats, str):  # production design matrix + additional structural columns
             extra = (["required_speed"] if feats == "aug_rs"
                      else ["required_speed", "race_margin"])
             fg = make_optimizer_glm().named_steps["features"].fit(

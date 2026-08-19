@@ -1,5 +1,7 @@
--- 自動從 data/raw/statcast/2025.parquet 的欄位結構生成（119 個欄位，型態對應 pandas/pyarrow dtype）
--- 一個 pitch (球) 由 (game_pk, at_bat_number, pitch_number) 唯一識別，設為複合主鍵
+-- Auto-generated from the column structure of data/raw/statcast/2025.parquet
+-- (119 columns, types mapped from the pandas/pyarrow dtypes)
+-- A single pitch is uniquely identified by (game_pk, at_bat_number, pitch_number),
+-- set as the composite primary key
 
 DROP TABLE IF EXISTS statcast;
 

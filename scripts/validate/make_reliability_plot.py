@@ -2,7 +2,7 @@
 Generate reliability diagram (calibration plot) for web model, 2025 out-of-sample.
 Output: data/reliability_diagram.png
 
-執行：python -m scripts.validate.make_reliability_plot
+Run: python -m scripts.validate.make_reliability_plot
 """
 from pathlib import Path
 
@@ -21,7 +21,7 @@ MODELS_DIR   = Path(__file__).resolve().parent.parent.parent / "models" / "2025"
 OUT_PATH     = Path(__file__).resolve().parent.parent.parent / "figures" / "reliability_diagram.png"
 N_BINS       = 20
 
-# 統一 OF 模型
+# Unified OF model
 scaler, _mu_raw = load_of_model(MODELS_DIR)
 
 
@@ -52,7 +52,7 @@ def main():
     mae     = float(np.mean(np.abs(y - p)))
     print(f"Brier={brier:.4f}  LogLoss={ll:.4f}  MAE={mae:.4f}")
 
-    # ── 等寬分箱（N_BINS = 20）──────────────────────────────────
+    # ── Equal-width binning (N_BINS = 20) ──────────────────────────────────
     edges  = np.linspace(0, 1, N_BINS + 1)
     bins   = np.digitize(p, edges[1:-1])   # 0 … N_BINS-1
 
@@ -68,7 +68,7 @@ def main():
         })
     cal = pd.DataFrame(rows)
 
-    # ── 繪圖 ─────────────────────────────────────────────────────
+    # ── Plotting ─────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(9, 8))
     ax.set_facecolor("white")
 
@@ -79,7 +79,7 @@ def main():
     ax.plot(cal["mean_pred"], cal["actual_rate"],
             "o-", color="#3a7ebf", lw=2, ms=6, zorder=4, label="Model")
 
-    # 每點標注
+    # Per-point annotation
     for _, row in cal.iterrows():
         px, ay, n = row["mean_pred"], row["actual_rate"], int(row["n"])
         ax.annotate(

@@ -1,23 +1,30 @@
-"""實驗：評價用難度模型改用可解釋的 spline GLM（取代 GBM）。
+"""Experiment: switch the difficulty model to an interpretable spline GLM
+(replacing GBM).
 
-動機（2026-07-12，使用者決定）：不用無法說明的模型，接受準確度損失換可解釋性。
-難度模型不搬野手、無反事實需求，故內生性禁令不適用——spray 合法、spline/交互
-可自由使用。
+Motivation (2026-07-12, user decision): avoid an unexplainable model, accept some
+accuracy loss in exchange for interpretability. The difficulty model does not
+reposition fielders and has no counterfactual requirement, so the endogeneity ban
+does not apply -- spray is a legitimate feature, and splines/interactions are
+free to use.
 
-特徵工程（對齊 Melville §2 的鏡像處理）：
-- spray_rel：左打 spray 翻號，讓「拉打」方向全聯盟對齊（負=拉、正=推）
-- splines：spray_rel（8 節點，要容納四守位的 lane 結構）、LA/EV/hp（6 節點）
-- 交互：spray×EV（強襲穿洞）、spray×hp（慢滾內野安打的方向性）
+Feature engineering (mirrors the treatment in Melville Sec. 2):
+- spray_rel: flip the sign of spray for left-handed batters so the "pull" direction
+  is aligned league-wide (negative = pull, positive = push/oppo)
+- splines: spray_rel (8 knots, needs to accommodate the lane structure across the
+  four infield positions), LA/EV/hp (6 knots)
+- interactions: spray x EV (hard-hit balls finding gaps), spray x hp (directional
+  bias of slow-roller infield hits)
 
-配置：
-  GBM        現行 HistGradientBoosting（對照）
-  D1         主效應 splines + stand_R
-  D2         D1 + spray×EV
-  D3         D2 + spray×hp
-輸出：2025 樣本外 AUC/Brier/校準 + 最佳 GLM 的官方 OAA 相關（qualified R、
-分位置、scale），供拍板是否換入生產。
+Configurations:
+  GBM        current HistGradientBoosting (baseline)
+  D1         main-effect splines + stand_R
+  D2         D1 + spray x EV
+  D3         D2 + spray x hp
+Output: 2025 out-of-sample AUC/Brier/calibration + the best GLM's correlation with
+official OAA (qualified R, by position, scale), to decide whether to promote it to
+production.
 
-執行：python scripts/experiments/exp_if_difficulty_glm.py
+Run: python scripts/experiments/exp_if_difficulty_glm.py
 """
 import sys
 from pathlib import Path
@@ -90,7 +97,7 @@ def main() -> None:
     print("\n2025 out-of-sample (difficulty model):")
     print(pd.DataFrame(rows).to_string(index=False))
 
-    # 官方 OAA 相關：GBM vs 最佳 GLM（D3）
+    # Official OAA correlation: GBM vs best GLM (D3)
     scored_gbm = score_test_year(TRAIN_YEARS, TEST_YEAR)
     official_correlations(scored_gbm, "GBM")
     scored_glm = score_test_year(

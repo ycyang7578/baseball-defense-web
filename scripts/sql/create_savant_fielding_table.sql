@@ -1,5 +1,7 @@
--- Baseball Savant 官方逐球守備記錄（baseballsavant.mlb.com/player-services/gamelogs API）
--- 用來判斷哪些球是官方計算OAA時真正算進去的（official_defenders的判斷依據）
+-- Baseball Savant's official per-play fielding records
+-- (baseballsavant.mlb.com/player-services/gamelogs API)
+-- Used to determine which balls are actually counted in the official OAA
+-- calculation (the basis for the official_defenders determination)
 
 DROP TABLE IF EXISTS savant_fielding;
 

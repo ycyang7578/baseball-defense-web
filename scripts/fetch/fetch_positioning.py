@@ -29,7 +29,7 @@ def fetch_one(year: int, position_code: int, retries: int = 3,
         r = requests.get(URL, params=params, headers=HEADERS, timeout=30)
         if r.status_code < 500:
             break
-        time.sleep(3 * (attempt + 1))  # Savant偶爾回502，稍等後重試
+        time.sleep(3 * (attempt + 1))  # Savant occasionally returns 502, wait and retry
     r.raise_for_status()
     r.encoding = "utf-8-sig"
     import io
@@ -40,14 +40,17 @@ IF_POSITIONS = {"1B": 3, "2B": 4, "3B": 5, "SS": 6}
 
 
 def fetch_year_on1b(year: int) -> None:
-    """「一壘有人（1B Only）」切分的內野四位置站位（階段B 雙殺模型的幾何代理）。
+    """Infield four-position starting positions split by "runner on first (1B Only)" (the geometric proxy for the Phase B double-play model).
 
-    端點參數陷阱（2026-07-13 實測）：runner-state 過濾必須同時帶
-    batSide + firstBase + shift 才會生效——只帶 firstBase 會被忽略回全量、
-    只帶 shift 會回傳異常的小子集。因此 L/R 分開抓、PA 加權合併成
-    每野手一筆（與主表「每野手每年每位置一筆」慣例一致）。
-    shift=1 在禁趨位時代只剩零星 PA（實測 337 vs 9），取 shift=0。
-    輸出 {year}_on1b.parquet，欄位與主表相同。
+    Endpoint parameter gotcha (verified 2026-07-13): the runner-state filter only
+    takes effect if batSide + firstBase + shift are all supplied together --
+    passing firstBase alone gets ignored and falls back to the full dataset, and
+    passing shift alone returns an anomalously small subset. So L/R are fetched
+    separately and merged with PA weighting into one row per fielder (consistent
+    with the main table's "one row per fielder per year per position" convention).
+    shift=1 only has scattered PA left in the shift-ban era (verified 337 vs 9),
+    so shift=0 is used.
+    Outputs {year}_on1b.parquet, with the same columns as the main table.
     """
     out_path = OUTPUT_DIR / f"{year}_on1b.parquet"
     if out_path.exists():
@@ -96,9 +99,9 @@ def fetch_year(year: int) -> None:
     frames = []
     for pos_name, pos_code in POSITIONS.items():
         df = fetch_one(year, pos_code)
-        df["position"] = pos_name  # API回傳的position欄位用縮寫，這裡統一覆寫成LF/CF/RF避免混淆
+        df["position"] = pos_name  # The API's position column uses abbreviations; overwrite it uniformly to LF/CF/RF to avoid confusion
         frames.append(df)
-        time.sleep(0.5)  # 對Savant伺服器友善一點，不要過快連續請求
+        time.sleep(0.5)  # Be nice to the Savant server, don't fire requests too fast back-to-back
 
     combined = pd.concat(frames, ignore_index=True)
     combined.to_parquet(out_path, index=False)

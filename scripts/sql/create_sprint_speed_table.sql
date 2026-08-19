@@ -1,6 +1,8 @@
--- 跑者速度資料（baseballsavant.mlb.com/leaderboard/sprint_speed CSV）
--- hp_to_1b（本壘到一壘秒數）是滾地球出局率模型的跑者端輸入；sprint_speed 單位 ft/s
--- 欄位順序須與 data/raw/sprint_speed/{year}.parquet 一致（COPY 依序對應）
+-- Runner speed data (baseballsavant.mlb.com/leaderboard/sprint_speed CSV)
+-- hp_to_1b (home-to-first time in seconds) is the runner-side input to the ground
+-- ball out-rate model; sprint_speed is in ft/s
+-- Column order must match data/raw/sprint_speed/{year}.parquet (COPY maps by
+-- position)
 
 DROP TABLE IF EXISTS sprint_speed;
 

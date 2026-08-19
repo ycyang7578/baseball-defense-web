@@ -1,13 +1,18 @@
-"""生成部署用的精簡預計算表：precomputed_batter_popups（整合頁展示用內野高飛）。
+"""Generate the lean deployment precomputed table: precomputed_batter_popups
+(infield pop-ups for display on the combined page).
 
-popup 站位無槓桿（出局率 98.6%）不參與優化，但整合頁要呈現打者的所有場內球，
-缺了 popup（場內球的 ~7%）圖會少一塊。從有完整 statcast 的來源 DB 撈出、
-換算展示座標後灌進目標 DB；部署到雲端用 --target-dsn（同
-precompute_batter_balls.py 的部署模式）。
+Popup positioning has no leverage (98.6% out rate) so it's excluded from
+optimization, but the combined page needs to show all of a batter's balls in
+play — without popups (~7% of balls in play) the chart would be missing a
+chunk. Pulled from the source DB with full statcast data, converted to
+display coordinates, and loaded into the target DB; deploy to the cloud with
+--target-dsn (same deployment pattern as precompute_batter_balls.py).
 
-座標＝hc × 2.5 呎（同 precomputed_if_gbs 的展示座標慣例，popup 落點多在
-內野，跟滾地球用同一套換算圖上才對得齊）。
-launch_speed 缺值保留 NULL（前端只當展示，不做計算）。
+Coordinates = hc x 2.5 ft (same display-coordinate convention as
+precomputed_if_gbs; popup landing spots are mostly in the infield, so using
+the same conversion as ground balls keeps the chart aligned).
+Missing launch_speed values are kept as NULL (the frontend only uses it for
+display, not computation).
 
 Usage:
     python -m scripts.precompute.precompute_batter_popups
@@ -25,7 +30,7 @@ from src.if_dataset import HOME_X, HOME_Y
 from scripts._pg_load import copy_dataframe
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
-FT_PER_UNIT = 2.5   # 同 scripts/precompute_if_optimize.py 的展示座標換算
+FT_PER_UNIT = 2.5   # Same display-coordinate conversion as scripts/precompute_if_optimize.py
 
 _POPUPS_QUERY = """
     SELECT batter, game_year, hc_x, hc_y, launch_speed, events
@@ -37,8 +42,9 @@ _POPUPS_QUERY = """
       AND hc_x IS NOT NULL AND hc_y IS NOT NULL
 """
 
-# popup 的非出局事件只有這四種（其餘 field_out/force_out/double_play/
-# sac_fly/... 全都至少拿到一個出局），用白名單反向判定最不易漏
+# These are the only four non-out events for popups (all other events like
+# field_out/force_out/double_play/sac_fly/... record at least one out);
+# using a whitelist for the inverse check is the least error-prone approach
 _NONOUT_EVENTS = ("single", "double", "triple", "field_error")
 
 

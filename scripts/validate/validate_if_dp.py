@@ -1,16 +1,22 @@
-"""階段B 跨年驗證：一壘有人（0 出局）雙殺情境站位，2023–24 → 2025。
+"""Stage B cross-year validation: runner-on-first (0 outs) double-play-situation
+positioning, 2023-24 -> 2025.
 
-設計同 validate_if_runvalue.py（同一批合格打者、全部評估在 2025 球上、
-失分口徑），1B 一律釘死在聯盟 hold-runner 位置（2023–24 一壘有人平均）。
-對每位打者比較（皆以階段B 兩段模型＋DPScorer 評估）：
-- 跨年增益(DP 解)   = E[ΔRE|聯盟一壘有人站位] − E[ΔRE|2023–24 DP 優化站位]
-- 跨年增益(無壘況解) = 同上，但站位=2023–24 出局率目標最佳解（現行 production，
-  代表「不做壘況調整」）——兩者之差＝階段B 情境優化的**額外**跨年價值
-- 同年上限(DP 解)   = 2025 球優化、2025 球評估
+Same design as validate_if_runvalue.py (same batch of qualifying batters, everything
+evaluated on 2025 balls, run-value denominated), with 1B always pinned to the league
+hold-runner position (2023-24 average with a runner on first). For each batter, compare
+(all evaluated with the Stage B two-stage model + DPScorer):
+- Cross-year gain (DP solution)      = E[ΔRE | league runner-on-first positioning]
+  - E[ΔRE | 2023-24 DP-optimized positioning]
+- Cross-year gain (no-base-state solution) = same as above, but positioning = the
+  2023-24 out-rate-objective optimal solution (current production, i.e. "no base-state
+  adjustment") — the difference between the two is Stage B's situational optimization's
+  **incremental** cross-year value
+- Same-year ceiling (DP solution)    = optimized on 2025 balls, evaluated on 2025 balls
 
-逐打者 checkpoint（這台機器會 BSOD），中斷後重跑同指令續算。
+Per-batter checkpointing (this machine BSODs), so an interrupted run can be resumed with
+the same command.
 
-執行：python -m scripts.validate.validate_if_dp [min_train_gb] [min_test_gb]
+Run: python -m scripts.validate.validate_if_dp [min_train_gb] [min_test_gb]
 """
 import json
 import sys
@@ -34,7 +40,7 @@ from scripts._if_validation import qualifying_batters
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
-OUTS = 0                      # 一壘有人、0 出局
+OUTS = 0                      # runner on first, 0 outs
 BASE = Path(__file__).resolve().parent.parent.parent
 _MODEL_DIR = BASE / "models" / "if_gb" / "on1b"
 OUT_PATH = _MODEL_DIR / "validation_dp_2025.json"
@@ -77,7 +83,8 @@ def main(min_train: int = 150, min_test: int = 80) -> None:
 
         dre_league = scorer_te.expected_re(*lg3)
 
-        # 2023–24 無壘況（出局率目標）最佳解 → 當 DP 優化 warm start 兼對照組
+        # 2023-24 no-base-state (out-rate objective) optimal solution -> used as the DP
+        # optimization warm start and as the control group
         base_opt = optimize_infield(tr, bayes, n_restarts=16, seed=42)
         base3 = (base_opt["angles"][1:], base_opt["depths"][1:])
         base_start = positions_to_params_dp(*base3)

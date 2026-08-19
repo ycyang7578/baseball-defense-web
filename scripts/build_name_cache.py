@@ -1,7 +1,7 @@
 """
-查所有年份 batter_id → 姓名，存到 data/reference/batter_names.json
+Look up batter_id -> name across all years, save to data/reference/batter_names.json
 
-執行：python -m scripts.build_name_cache
+Run: python -m scripts.build_name_cache
 """
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ from src.config import DSN
 OUT  = Path(__file__).parent.parent / "data" / "reference" / "batter_names.json"
 
 def main():
-    # 撈所有年份有效飛球打者 ID
+    # Fetch valid fly-ball batter IDs across all years
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -39,7 +39,7 @@ def main():
         bid = int(row['key_mlbam'])
         name_map[bid] = f"{row['name_last'].title()}, {row['name_first'].title()}"
 
-    # 補遺漏（playerid_reverse_lookup 不是每個都查得到）
+    # Fill in gaps (playerid_reverse_lookup doesn't find every ID)
     missing = set(ids) - set(name_map.keys())
     if missing:
         print(f"Warning: {len(missing)} IDs not found: {sorted(missing)[:5]}...")

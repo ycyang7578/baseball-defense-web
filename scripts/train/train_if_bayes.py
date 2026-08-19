@@ -1,19 +1,29 @@
-"""內野階層貝葉斯 out 模型：對齊外野架構的球員層（隨機截距＋ad 隨機斜率）。
+"""Infield hierarchical Bayesian out model: a player level (random intercept +
+random slope on ad) aligned with the outfield architecture.
 
-結構（對照 train_of.py）：
-- 歸責：每球掛在「最近角距野手」上（外野=追球者，內野最接近的類比）
-- 群體層：沿用優化 GLM 的完整設計矩陣（FielderGeometryFeatures：splines＋tensor
-  交互），品質對齊 GLM（2025 AUC 0.753），不因貝葉斯化犧牲非線性
-- 球員層（非中心化）：alpha_j（隨機截距=整體轉換力）＋ g_j×ad_z（隨機斜率=
-  range 形狀）。事前已知：γ 掃描顯示外部 proxy 的 range 訊號測不到
-  （scripts/experiments/exp_if_speed_scaling / scripts/experiments/exp_if_oaa_scaling），外野自己的斜率 shrinkage 比值
-  也 <1（beta_dist 0.65）——預期 g_j 會被 shrink 到很小，靠 shrinkage 當安全網，
-  這是使用者知情後的方向決定
+Structure (compare with train_of.py):
+- Attribution: each ball is credited to the "nearest-angular-distance fielder"
+  (the infield analogue of the outfield's "chaser")
+- Population level: reuses the optimization GLM's full design matrix
+  (FielderGeometryFeatures: splines + tensor interactions), matching GLM
+  quality (2025 AUC 0.753) without sacrificing nonlinearity from
+  Bayesianizing it
+- Player level (non-centered): alpha_j (random intercept = overall conversion
+  ability) + g_j x ad_z (random slope = range shape). Known going in: a
+  gamma sweep showed the range signal from the external proxy isn't
+  detectable (scripts/experiments/exp_if_speed_scaling /
+  scripts/experiments/exp_if_oaa_scaling), and the outfield's own slope
+  shrinkage ratio is also <1 (beta_dist 0.65) -- g_j is expected to be
+  shrunk to near zero, relying on shrinkage as a safety net. This is a
+  direction decision the user made with full knowledge of the tradeoff.
 
-範圍與年份同 train_if_gb.py：無人在壘＋Standard，2023–2024 訓練、2025 樣本外。
-產出 models/if_gb/bayes/：trace、群體/球員摘要 CSV、特徵 transformer、metadata。
+Scope and years match train_if_gb.py: bases empty + Standard alignment,
+trained on 2023-2024, 2025 held out as out-of-sample.
+Produces models/if_gb/bayes/: trace, population/player summary CSVs, feature
+transformer, metadata.
 
-執行：python -m scripts.train.train_if_bayes [--smoke]（smoke=小抽樣快速驗證可跑）
+Run: python -m scripts.train.train_if_bayes [--smoke] (smoke = quick sanity
+check on a small sample)
 """
 import os
 
@@ -46,8 +56,10 @@ PROGRESS_LOG = OUT_DIR / "sampling_progress.log"
 
 
 def make_progress_logger(total_per_chain: int, every: int = 50):
-    """pm.sample 的 callback：進度條進不了重導向輸出，改逐 chain 寫檔。
-    callback 在主程序執行（worker 每回傳一個 draw 呼叫一次），寫檔安全。"""
+    """Callback for pm.sample: the progress bar doesn't work under redirected
+    output, so write to a log file per chain instead. The callback runs in
+    the main process (called once per draw returned by each worker), so
+    writing to the file is safe."""
     counts: dict[int, int] = {}
     t0 = time.time()
 
@@ -76,8 +88,8 @@ def build_model(X: np.ndarray, ad_z: np.ndarray, player_idx: np.ndarray,
                 players: np.ndarray, y: np.ndarray) -> pm.Model:
     coords = {"player": players, "col": np.arange(X.shape[1]), "obs": np.arange(len(y))}
     with pm.Model(coords=coords) as model:
-        beta0 = pm.Normal("beta0", mu=1.0, sigma=3.0)          # out 率 ~0.73 → logit ~1
-        betas = pm.Normal("betas", mu=0.0, sigma=1.0, dims="col")  # ridge 式收縮
+        beta0 = pm.Normal("beta0", mu=1.0, sigma=3.0)          # out rate ~0.73 -> logit ~1
+        betas = pm.Normal("betas", mu=0.0, sigma=1.0, dims="col")  # ridge-style shrinkage
 
         sigma_alpha = pm.HalfNormal("sigma_alpha", sigma=0.5)
         sigma_g = pm.HalfNormal("sigma_g", sigma=0.5)
@@ -93,7 +105,7 @@ def build_model(X: np.ndarray, ad_z: np.ndarray, player_idx: np.ndarray,
 
 
 def posterior_logit(trace, X, ad_z, player_idx_or_none) -> np.ndarray:
-    """後驗平均係數的 logit。player_idx_or_none=None → 純群體層。"""
+    """Logit from posterior mean coefficients. player_idx_or_none=None -> population level only."""
     post = trace.posterior
     beta0 = float(post["beta0"].mean())
     betas = post["betas"].mean(dim=("chain", "draw")).to_numpy()
@@ -146,9 +158,11 @@ def main() -> None:
             **kwargs, progressbar=False,
             callback=make_progress_logger(kwargs["draws"] + kwargs["tune"]))
 
-    # 取樣後**立即存檔**再做評估與列印——長跑產出不可被後續任何錯誤毀掉
-    # （2026-07-13 事故：print 裡的 ≈ 在 stdout 重導向 cp950 下 UnicodeEncodeError，
-    #  3.1 小時 trace 因存檔在列印之後而全數丟失）
+    # Save to disk **immediately** after sampling, before evaluation/printing --
+    # a long-running job's output must not be destroyed by any later error
+    # (2026-07-13 incident: the "≈" in a print statement triggered a
+    #  UnicodeEncodeError under stdout redirected to cp950, and 3.1 hours of
+    #  trace was lost entirely because saving happened after printing)
     sum_grp = az.summary(trace, var_names=["beta0", "sigma_alpha", "sigma_g"])
     sum_ply = az.summary(trace, var_names=["alpha", "g"])
     if not args.smoke:

@@ -1,16 +1,20 @@
-"""生成排名頁/野手選單用的 if_model_oaa 表（內野手 model OAA）。
+"""Generate the if_model_oaa table (infield model OAA) used by the rankings
+page / fielder selector.
 
-計算邏輯與 scripts/evaluate_if_2025.py 共用 src/if_eval.py（難度 GLM 2023–2024
-訓練、指定年評分、hit_location 歸責、分位置中心化），這裡只負責落表。
-球員姓名從 if_oaa_leaderboard 帶入（對不上官方 leaderboard 者為 NULL，
-排名頁不顯示）。
+The scoring logic is shared with scripts/evaluate_if_2025.py via src/if_eval.py
+(difficulty GLM trained on 2023-2024, scores a specified year, attributes via
+hit_location, centered per position) — this script is only responsible for
+writing the table. Player names are joined in from if_oaa_leaderboard (players
+that don't match the official leaderboard get NULL and aren't shown on the
+rankings page).
 
-⚠️ 評 2023/2024 是 in-sample（評分年落在訓練年內），數字會偏樂觀，
-只作選單標籤/展示用（2026-07-14 使用者知情決策），不可當驗證引用；
-2025 才是樣本外。
+Warning: scoring 2023/2024 is in-sample (the scored year falls within the
+training years), so the numbers skew optimistic — this is only for menu
+labels/display purposes (an informed decision made by the user on 2026-07-14)
+and must not be cited as validation; only 2025 is out-of-sample.
 
 Usage:
-    python -m scripts.precompute.precompute_if_model_oaa                     # 2025（樣本外）
+    python -m scripts.precompute.precompute_if_model_oaa                     # 2025 (out-of-sample)
     python -m scripts.precompute.precompute_if_model_oaa --test-year 2023    # in-sample
     python -m scripts.precompute.precompute_if_model_oaa --target-dsn "postgresql://..."
 """

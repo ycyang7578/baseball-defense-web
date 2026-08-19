@@ -1,18 +1,24 @@
-"""球員個人化站位的量級實驗 v2（v1 的跨模型比較無效，見教訓）。
+"""Magnitude experiment v2 for player-personalized positioning (v1's cross-model
+comparison was invalid, see lessons learned).
 
-正確的比較（全部在同一個效應設定的模型內）：
-  repositioning gain = E[outs | 個人化最佳站位] − E[outs | 零效應最佳站位]
-  兩者都用「帶該陣容效應」的模型評估 → 回答「為這套陣容重新優化值多少」。
-v1 教訓：不同效應設定的 exp_outs 不可直接相減（g 的 ad_z 中心化會整體平移
-預測水準，好陣容會出現假的負差）。
+The correct comparison (everything evaluated within a single effects-setting model):
+  repositioning gain = E[outs | personalized optimal positioning] -
+                        E[outs | zero-effects optimal positioning]
+  both evaluated with the model that "carries this lineup's effects" -> answers
+  "how much is it worth to re-optimize for this lineup."
+v1 lesson: exp_outs from different effects settings cannot be subtracted directly
+(g's ad_z centering shifts the overall prediction level, so a good lineup can show
+a spurious negative gap).
 
-同時做外插診斷：g·ad_z 是線性項，訓練支撐外（nearest ad_min 大於 ~25°）仍
-線性成長，可能被優化器鑽漏洞。記錄各設定最佳解下的 ad_min 分布對照。
+Also run an extrapolation diagnostic: g*ad_z is a linear term, so outside the
+training support (nearest ad_min greater than ~25 degrees) it keeps growing
+linearly, which the optimizer could exploit as a loophole. Record the ad_min
+distribution under each setting's optimal solution for comparison.
 
-陣容設定：全隊 g=P90 / 全隊 g=P10 / 只有 SS 槽 g=P90（單槽解讀）。
-25 位 2025 年 GB 最多的打者。
+Lineup settings: whole team g=P90 / whole team g=P10 / only the SS slot g=P90
+(single-slot interpretation). The 25 batters with the most 2025 ground balls.
 
-執行：python scripts/experiments/exp_if_personalized_positions.py
+Run: python scripts/experiments/exp_if_personalized_positions.py
 """
 import json
 import sys
@@ -78,7 +84,7 @@ def main() -> None:
         ad0_mean, ad0_p95 = ad_stats(balls, r0["angles"])
         for name, effects in lineups.items():
             r1 = optimize_infield(balls, model, player_effects=effects, **base_kw)
-            # 零效應最佳解在「這套陣容的模型」下重新評分（同模型比較）
+            # re-score the zero-effects optimum under "this lineup's model" (same-model comparison)
             e_r0 = expected_outs(model, balls, r0["angles"], r0["depths"], effects)
             d_ang = np.abs(r1["angles"] - r0["angles"])
             x0 = r0["depths"] * np.sin(np.radians(r0["angles"]))

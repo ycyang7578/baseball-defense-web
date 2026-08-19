@@ -1,8 +1,10 @@
-"""內野站位最佳化 demo：對滾地球最多的打者跑優化，對照聯盟平均站位。
+"""Infield positioning optimization demo: run the optimizer on the batters with
+the most ground balls, comparing against league-average positioning.
 
-打者分布用 2023–2024 歷史滾地球（訓練年，不碰 2025——留給之後的跨年驗證）。
+Batter distributions use 2023-2024 historical ground balls (training years; 2025
+is left untouched for later cross-year validation).
 
-執行：python -m scripts.optimize_if_demo [打者數，預設 6]
+Run: python -m scripts.optimize_if_demo [number of batters, default 6]
 """
 import sys
 from pathlib import Path

@@ -1,5 +1,7 @@
--- 球員平均站位資料（baseballsavant.mlb.com/visuals/position_data API，2026-06-23 從瀏覽器網路請求找到的端點）
--- 每位球員每年每位置一筆，avg_norm_start_distance/angle 是計算 fielder_x/fielder_y 的依據
+-- Player average positioning data (baseballsavant.mlb.com/visuals/position_data
+-- API, endpoint found from browser network requests on 2026-06-23)
+-- One row per player per year per position; avg_norm_start_distance/angle are the
+-- basis for computing fielder_x/fielder_y
 
 DROP TABLE IF EXISTS fielder_positioning;
 

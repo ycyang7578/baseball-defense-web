@@ -1,18 +1,23 @@
-"""階段 2：內野手球員評價 —— model OAA 對照官方內野 OAA（2025 樣本外）。
+"""Stage 2: infield player evaluation — model OAA vs. official infield OAA (2025 out-of-sample).
 
-p̂ 用評價用難度 GLM（spray+球質+跑者，無野手資訊 → 無循環論證；2026-07-12 起
-取代 GBM，可解釋性優先，見 if_model.py docstring），在全量滾地球
-（不限壘況/佈陣）上以 2023–2024 訓練、2025 評分，跟官方球群（所有情境）對齊。
-逐球歸責給最近角距的內野手（對應官方「slice」概念）。
-球員 model OAA = Σ(is_out − p̂)。
+p̂ comes from the evaluation-only difficulty GLM (spray + batted-ball quality + runner,
+no fielder info -> no circularity; replaced the GBM as of 2026-07-12, prioritizing
+interpretability — see the if_model.py docstring), trained on 2023-2024 and scored on
+2025 over the full ground-ball population (no restriction on base state / alignment),
+matched to the official ball population (all situations).
+Each ball is attributed to the infielder nearest in angle/depth (mirrors the official
+"slice" concept).
+Player model OAA = Sum(is_out - p̂).
 
-計算邏輯在 src/if_eval.py（與 web 排名預算 scripts/precompute_if_model_oaa.py
-共用同一份實作），此腳本負責對照官方數字的統計報表。
+The computation logic lives in src/if_eval.py (shares the same implementation with the
+web ranking budget script scripts/precompute_if_model_oaa.py); this script is responsible
+for the statistical report comparing against the official numbers.
 
-已知的球群差異（會壓低相關係數，屬預期）：官方內野 OAA 另含觸擊、內野平飛等，
-且用逐球實際起始位置；我們只有非觸擊滾地球＋賽季平均站位。
+Known ball-population differences (expected to depress the correlation): official infield
+OAA also includes bunts, infield line drives, etc., and uses the actual per-play starting
+position; we only have non-bunt ground balls + season-average positioning.
 
-執行：python -m scripts.validate.evaluate_if_2025
+Run: python -m scripts.validate.evaluate_if_2025
 """
 import numpy as np
 import pandas as pd
@@ -53,7 +58,7 @@ def main() -> None:
         print(f"  {label:<22} n={len(sub):>3}  Pearson R={r:.3f}（中心化前 {r_raw:.3f}）  "
               f"Spearman={rho:.3f}  每球率 R={r_rate:.3f}")
 
-    # 分位置相關（歸責球最多的位置當作該球員的位置）
+    # Per-position correlation (the position with the most attributed balls is taken as the player's position)
     print("\n分位置（n_balls >= 100）：")
     for pos in ("1B", "2B", "3B", "SS"):
         sub = merged[(merged["resp_pos"] == pos) & (merged["n_balls"] >= 100)]
@@ -63,7 +68,7 @@ def main() -> None:
         print(f"  {pos}: n={len(sub):>3}  R={r:.3f}  "
               f"model SD={sub['model_oaa'].std():.1f} vs 官方 SD={sub['oaa'].std():.1f}")
 
-    # 無人在壘子集：檢驗 1B hold runner 假說（壘上有人時 1B 貼壘，賽季平均位置失真）
+    # Bases-empty subset: test the 1B hold-runner hypothesis (with a runner on, 1B holds close to the bag, so the season-average position is distorted)
     empty = test[test["bases_empty"]]
     m2 = (empty.groupby("resp_fielder")
           .agg(model_oaa_e=("oaa_play", "sum"), n_e=("oaa_play", "size"))

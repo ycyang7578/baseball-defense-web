@@ -45,7 +45,7 @@ def parse_plays(raw: list[dict], player_id: int) -> pd.DataFrame:
     rows = []
     for play in raw:
         if not play.get("ev"):
-            continue  # 跳過無EV的非守備機會（三振、保送等）
+            continue  # Skip non-fielding chances without an exit velocity (strikeouts, walks, etc.)
         rows.append({
             "player_id": player_id,
             "game_pk": int(play["game_pk"]) if play.get("game_pk") else None,
@@ -88,7 +88,7 @@ def fetch_year(year: int, sleep_sec: float = 1.0) -> None:
 
 
 def reload_db(years: list[int]) -> None:
-    """將指定年份的 parquet 追加進 savant_fielding（不 TRUNCATE，只插入缺少的年份）。"""
+    """Append the given years' parquet files into savant_fielding (no TRUNCATE, only inserts the missing years)."""
     import psycopg2
     from src.config import DSN
     from scripts._pg_load import copy_dataframe
@@ -99,7 +99,7 @@ def reload_db(years: list[int]) -> None:
                 print(f"[skip db] {year}.parquet 不存在")
                 continue
             df = pd.read_parquet(path)
-            # 刪除該年份舊資料再插入（避免重複）
+            # Delete old data for this year before inserting (to avoid duplicates)
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM savant_fielding WHERE game_date >= %s AND game_date < %s",
                             (f"{year}-01-01", f"{year+1}-01-01"))

@@ -1,7 +1,10 @@
--- 「一壘有人（1B Only）」切分的內野球員平均站位（階段B 雙殺模型的幾何代理）
--- 來源同 fielder_positioning（Savant position_data），但帶 firstBase=1&shift=0&batSide 參數
--- 抓取、L/R 打者 PA 加權合併（見 scripts/fetch_positioning.py fetch_year_on1b docstring）。
--- 平均欄位是加權合併後的值，用 DOUBLE PRECISION（主表是 Savant 原始整數）。
+-- Average infield positioning split by "runner on 1B only" (geometric proxy for
+-- the stage B double-play model)
+-- Same source as fielder_positioning (Savant position_data), but fetched with the
+-- firstBase=1&shift=0&batSide parameters, then PA-weighted merged across L/R
+-- batters (see the fetch_year_on1b docstring in scripts/fetch_positioning.py).
+-- The average columns are the post-weighted-merge values, hence DOUBLE PRECISION
+-- (the main table keeps Savant's original integers).
 
 DROP TABLE IF EXISTS fielder_positioning_on1b;
 

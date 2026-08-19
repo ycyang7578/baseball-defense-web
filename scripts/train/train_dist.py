@@ -1,6 +1,6 @@
 """Train the speed+cos+sin+fielder_dist model → models/2025/.
 
-執行：python -m scripts.train.train_dist
+Run: python -m scripts.train.train_dist
 """
 import sys
 from pathlib import Path

@@ -1,18 +1,26 @@
-"""跨年驗證升級為失分口徑（內外野整合的統一計價，2023–24 → 2025）。
+"""Cross-year validation upgraded to run-value denomination (unified pricing integrating
+infield and outfield, 2023-24 -> 2025).
 
-設計同 validate_if_positioning.py（同一批合格打者、聯盟基準=2023–24 平均站位、
-全部評估在 2025 球上），但成效以期望失分 E[ΔRE] 計價（無人在壘 0 出局，
-權重見 src/if_runvalue.py）。對每位打者：
-- 跨年增益(outs 目標) = E[ΔRE | 聯盟平均] − E[ΔRE | 2023–24 出局率目標站位]
-  ——生產 cascade 部署的就是這組站位，這是網站實際提供建議的失分口徑成效
-- 跨年增益(run 目標)  = 同上，但站位用 run-value 目標優化（整合端點的精修目標）
-- 同年上限 = E[ΔRE | 聯盟平均] − E[ΔRE | 2025 球 run-value 目標站位]
-  （同年增益評估在驗證年資料上，才能與跨年增益直接比較）
-保留率 = Σ跨年 / Σ同年。跨打者對「跨年增益 > 0」做單樣本 t 檢定。
+Same design as validate_if_positioning.py (same batch of qualifying batters, league
+baseline = 2023-24 average positioning, everything evaluated on 2025 balls), but the
+effect is denominated in expected runs E[ΔRE] (bases empty, 0 outs; weights are in
+src/if_runvalue.py). For each batter:
+- Cross-year gain (outs objective) = E[ΔRE | league average] - E[ΔRE | 2023-24
+  out-rate-objective positioning] — this is exactly the positioning the production
+  cascade deploys, i.e. the run-value-denominated effect of what the site actually
+  recommends
+- Cross-year gain (run objective) = same as above, but positioning is optimized against
+  the run-value objective (the refined objective for the integration endpoint)
+- Same-year ceiling = E[ΔRE | league average] - E[ΔRE | 2025-ball run-value-objective
+  positioning] (the same-year gain is evaluated on the validation year's data so it's
+  directly comparable to the cross-year gain)
+Retention = Sum(cross-year) / Sum(same-year). A one-sample t-test is run across batters
+against "cross-year gain > 0".
 
-逐打者 checkpoint（這台機器會 BSOD），中斷後重跑同指令續算。
+Per-batter checkpointing (this machine BSODs), so an interrupted run can be resumed with
+the same command.
 
-執行：python -m scripts.validate.validate_if_runvalue [min_train_gb] [min_test_gb]
+Run: python -m scripts.validate.validate_if_runvalue [min_train_gb] [min_test_gb]
 """
 import json
 import sys
@@ -34,7 +42,7 @@ from scripts._if_validation import qualifying_batters
 
 TRAIN_YEARS = [2023, 2024]
 TEST_YEAR = 2025
-STATE = (0, 0, 0, 0)          # 無人在壘、0 出局（同 cascade 主範圍）
+STATE = (0, 0, 0, 0)          # bases empty, 0 outs (same as the cascade's main scope)
 BASE = Path(__file__).resolve().parent.parent.parent
 _MODEL_DIR = BASE / "models" / "if_gb"
 OUT_PATH = _MODEL_DIR / "validation_runvalue_2025.json"

@@ -1,8 +1,9 @@
 """
 Generate improved Model OAA vs Official OAA validation scatter plot (v2).
 
-不修改 make_validation_plot.py，也不寫入 DB，只是套用更好的視覺化設計重新畫圖。
-資料來源與計算邏輯與原腳本完全相同。
+Does not modify make_validation_plot.py and does not write to the DB — it just
+re-plots with a better visualization design. Data source and computation logic
+are identical to the original script.
 
 Usage:
     python -m scripts.validate.make_validation_plot_v2 [year]   # default 2025
@@ -38,15 +39,15 @@ COLOR_REF    = "#888888"   # neutral gray (reference line, de-emphasized)
 
 
 def main():
-    # ── 計算 model OAA（群體層 mu，絕不用 player-level）──────────
+    # ── Compute model OAA (group-level mu, never player-level) ──────────
     model_oaa = load_model_oaa(MODELS_DIR, TARGET_YEAR)
     print(f"Model OAA 球員數: {len(model_oaa)}")
 
-    # ── 官方 OAA（is_qualified=True，跨位置加總）────────────────
+    # ── Official OAA (is_qualified=True, summed across positions) ────────────────
     official = load_official_oaa(DSN, TARGET_YEAR)
     print(f"官方 OAA (qualified) 球員數: {len(official)}")
 
-    # ── 合併 ─────────────────────────────────────────────────────
+    # ── Merge ─────────────────────────────────────────────────────
     merged = official.merge(model_oaa, on="key", how="inner").dropna(subset=["oaa", "oaa_play"])
     x = merged["oaa_play"].values
     y = merged["oaa"].values
@@ -56,7 +57,7 @@ def main():
     print(f"n={n}  R={r:.4f}  p={p:.2e}  slope={m:.3f}  "
           f"model_sd={x.std():.2f}  official_sd={y.std():.2f}")
 
-    # ── 版面：主散點圖 + 上/右邊際分布，共用同一組軸範圍（等比例）──
+    # ── Layout: main scatter + top/right marginal distributions, sharing one axis range (equal aspect) ──
     lo = min(x.min(), y.min())
     hi = max(x.max(), y.max())
     pad = (hi - lo) * 0.08
@@ -68,12 +69,13 @@ def main():
     ax_main  = fig.add_subplot(gs[1:4, 0:3])
     ax_right = fig.add_subplot(gs[1:4, 3])
 
-    # 主圖：y = x 參考線（灰、虛線，代表「完全一致」）─ 這是判斷模型是否
-    # 只是「排名相關」還是「數值上也吻合官方 OAA」的關鍵基準線
+    # Main plot: y = x reference line (gray, dashed, representing "perfect agreement") —
+    # this is the key baseline for judging whether the model is merely "rank-correlated"
+    # or also "numerically matches official OAA"
     ax_main.plot(lims, lims, "--", color=COLOR_REF, lw=1.6, zorder=2,
                  label="Perfect Agreement (y = x)")
 
-    # OLS 迴歸線 + 95% CI
+    # OLS regression line + 95% CI
     x_line = np.linspace(lims[0], lims[1], 300)
     y_line = m * x_line + b
     n_pts = len(x)
@@ -85,7 +87,7 @@ def main():
     ax_main.plot(x_line, y_line, color=COLOR_FIT, lw=2.2, zorder=4,
                  label=f"OLS Fit (r = {r:.3f})")
 
-    # 散點（白色描邊避免重疊點糊成一團）
+    # Scatter points (white outline so overlapping points don't blur together)
     ax_main.scatter(x, y, color=COLOR_POINTS, s=55, alpha=0.85,
                      edgecolors="white", linewidths=0.5, zorder=5)
 
@@ -93,7 +95,7 @@ def main():
     ax_main.axvline(0, color=COLOR_REF, linewidth=0.7, zorder=1)
     ax_main.grid(True, linestyle="--", linewidth=0.6, color="#dddddd", zorder=0)
 
-    # 標記離群點（residual 最大 or model OAA 最高）
+    # Label outliers (largest residual or highest model OAA)
     merged["resid"] = np.abs(y - (m * x + b))
     merged["model_oaa"] = x
     top_resid = merged.nlargest(4, "resid")
@@ -119,12 +121,12 @@ def main():
     ax_main.spines["right"].set_visible(False)
     ax_main.legend(loc="lower right", fontsize=9.5, framealpha=0.9)
 
-    # 上邊際：model OAA 分布
+    # Top margin: model OAA distribution
     ax_top.hist(x, bins=20, color=COLOR_POINTS, alpha=0.75, range=lims)
     ax_top.set_xlim(lims)
     ax_top.axis("off")
 
-    # 右邊際：official OAA 分布
+    # Right margin: official OAA distribution
     ax_right.hist(y, bins=20, orientation="horizontal", color=COLOR_FIT, alpha=0.6, range=lims)
     ax_right.set_ylim(lims)
     ax_right.axis("off")

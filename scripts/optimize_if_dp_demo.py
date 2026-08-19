@@ -1,12 +1,15 @@
-"""階段B 示範：一壘有人的雙殺情境優化，對照聯盟站位與無人在壘最佳解。
+"""Phase B demo: double-play scenario optimization with a runner on first,
+compared against league positioning and the no-runner-on-base optimal solution.
 
-對每位示範打者（2023–24 滾地球、0 與 1 出局兩種情境）比較三組站位的
-E[ΔRE] / E[outs]（皆以階段B 兩段模型評估、1B 釘死在 hold-runner 位置）：
-  A. 聯盟一壘有人平均站位（fielder_positioning_on1b）
-  B. 無人在壘的出局率最佳解（現行 production 優化器，代表「不管壘況」）
-  C. 階段B 雙殺優化解（optimize_infield_dp）
+For each demo batter (2023-24 ground balls, 0-out and 1-out scenarios), compares
+E[dRE] / E[outs] across three sets of positioning (all evaluated with the Phase B
+two-stage model, with 1B pinned to the hold-runner position):
+  A. League-average runner-on-first positioning (fielder_positioning_on1b)
+  B. Optimal solution for out rate with bases empty (the current production
+     optimizer, representing "ignore the base state")
+  C. Phase B double-play optimized solution (optimize_infield_dp)
 
-執行：python -m scripts.optimize_if_dp_demo [batter_id ...]
+Run: python -m scripts.optimize_if_dp_demo [batter_id ...]
 """
 import sys
 from pathlib import Path

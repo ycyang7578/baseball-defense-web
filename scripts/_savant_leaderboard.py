@@ -1,9 +1,12 @@
-"""共用：解析 Baseball Savant leaderboard 頁面內嵌的 `var data = [...]` JSON。
+"""Shared: parses the `var data = [...]` JSON embedded in Baseball Savant
+leaderboard pages.
 
-fetch_savant_fielding.py／fetch_oaa_leaderboard.py（outfield_directional_outs_
-average）與 fetch_if_oaa_leaderboard.py（outs_above_average，pos=if）打的是不同
-端點、不同參數，但頁面格式一樣：都是非官方端點，回傳內嵌在 `var data = [...]`
-的 JSON。抓取＋解析這段共用，端點/參數與欄位整理留在各自檔案。
+fetch_savant_fielding.py / fetch_oaa_leaderboard.py (outfield_directional_outs_
+average) and fetch_if_oaa_leaderboard.py (outs_above_average, pos=if) hit
+different endpoints with different params, but the page format is the same: all
+are unofficial endpoints that return JSON embedded in `var data = [...]`. The
+fetch + parse step is shared here; endpoint/params and column cleanup stay in
+each individual file.
 """
 import json
 import re
@@ -16,7 +19,7 @@ HEADERS: dict[str, str] = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x
 
 
 def fetch_leaderboard_raw(endpoint: str, params: dict[str, str | int]) -> pd.DataFrame:
-    """打指定 leaderboard 端點，回傳未整理欄位的原始 JSON。"""
+    """Hit the given leaderboard endpoint and return the raw JSON with columns unprocessed."""
     r = requests.get(
         f"{BASE_URL}/leaderboard/{endpoint}",
         params=params, headers=HEADERS, timeout=30,

@@ -1,15 +1,18 @@
-"""把內野貝葉斯模型的後驗平均匯出成優化器可用的產物。
+"""Export the infield Bayesian model's posterior means into artifacts the optimizer can use.
 
-兩個產出（models/if_gb/bayes/）：
-- if_bayes_group_pipeline.joblib：群體層係數塞進 sklearn Pipeline
-  （FielderGeometryFeatures + LogisticRegression 殼）。與現行優化 GLM 介面
-  完全相同 → _FastGLMObjective、precompute、tests 全部直接沿用。
-- IF_player_effects.csv：player_id, alpha, g（後驗平均）＋ meta 的 ad 標準化
-  參數。優化器以 alpha_j + g_j·ad_z 個人化（見 src/if_optimize.py）。
+Two outputs (models/if_gb/bayes/):
+- if_bayes_group_pipeline.joblib: population-level coefficients packed into an
+  sklearn Pipeline (a FielderGeometryFeatures + LogisticRegression shell). Its
+  interface is identical to the existing optimization GLM -> _FastGLMObjective,
+  precompute, and the tests all reuse it directly.
+- IF_player_effects.csv: player_id, alpha, g (posterior means) plus the ad
+  standardization params from meta. The optimizer personalizes with
+  alpha_j + g_j*ad_z (see src/if_optimize.py).
 
-匯出後驗證：pipeline predict_proba 與 trace 後驗平均 logit 等價（1e-10）。
+Verified after export: pipeline predict_proba matches the trace's posterior-mean
+logit (within 1e-10).
 
-執行：python -m scripts.export_if_bayes
+Run: python -m scripts.export_if_bayes
 """
 import json
 from pathlib import Path
@@ -48,7 +51,7 @@ def main() -> None:
                         "g": g.round(6)})
     eff.to_csv(BAYES_DIR / "IF_player_effects.csv", index=False)
 
-    # 驗證：pipeline 與後驗平均 logit 等價（抽 2025 主範圍）
+    # Verify: pipeline matches the posterior-mean logit (sampled from the 2025 main range)
     test = build_gb_dataset([meta["test_year"]], bases_empty=True,
                             alignment="Standard").head(2000)
     X = feat.transform(test[OPTIMIZER_FEATURES])

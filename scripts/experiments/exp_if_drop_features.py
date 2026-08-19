@@ -1,9 +1,12 @@
-"""消融：現行 GLM 拿掉 stand_R / launch_speed（含其 ad×EV 交互）的代價。
+"""Ablation: cost of dropping stand_R / launch_speed (including its ad x EV
+interaction) from the current GLM.
 
-使用者提議精簡特徵（2026-07-12）。訓練 2023-24、2025 樣本外，
-判準沿用結構特徵實驗：AUC 差 <0.003 視為等價、校準不得惡化。
+User proposed simplifying the feature set (2026-07-12). Trained on 2023-24,
+evaluated out-of-sample on 2025; criterion follows the structural features
+experiment: an AUC gap <0.003 is considered equivalent, and calibration must
+not worsen.
 
-執行：python scripts/experiments/exp_if_drop_features.py
+Run: python scripts/experiments/exp_if_drop_features.py
 """
 import sys
 from pathlib import Path
@@ -24,10 +27,12 @@ TEST_YEAR = 2025
 
 
 class VariantFeatures(BaseEstimator, TransformerMixin):
-    """FielderGeometryFeatures 的可開關版：include_ev / include_stand / spline_all。
+    """Toggleable version of FielderGeometryFeatures: include_ev / include_stand /
+    spline_all.
 
-    spline_all=True 時 launch_speed/throw_dist/hp_to_1b 的主效應也上 spline
-    （交互項仍用 z 分數，隔離「主效應形狀」這一個變因）。
+    When spline_all=True, the main effects of launch_speed/throw_dist/hp_to_1b are
+    also splined (interaction terms still use z-scores, isolating "main-effect
+    shape" as the single variable under test).
     """
 
     def __init__(self, include_ev=True, include_stand=True, spline_all=False,
@@ -60,15 +65,15 @@ class VariantFeatures(BaseEstimator, TransformerMixin):
         throw, hp = z[:, [0]], z[:, [1]]
         n = len(X)
         extra = self._extra_spline_cols()
-        main = []  # 主效應：extra 名單內用 spline，其餘用 z 分數線性
+        main = []  # main effects: columns in `extra` use splines, the rest use linear z-scores
         for i, c in enumerate(self.lin_cols_):
             main.append(self.splines_[c].transform(X[[c]]) if c in extra
                         else z[:, [i]])
         parts = [*main, a, b, la,
-                 (a[:, :, None] * b[:, None, :]).reshape(n, -1),  # tensor ad×bt
-                 hp * throw, hp * b]                              # 跑者交互
+                 (a[:, :, None] * b[:, None, :]).reshape(n, -1),  # tensor ad x bt
+                 hp * throw, hp * b]                              # baserunner interactions
         if self.include_ev:
-            parts.append(a * z[:, [2]])                           # ad×EV
+            parts.append(a * z[:, [2]])                           # ad x EV
         if self.include_stand:
             parts.append(X[["stand_R"]].to_numpy(float))
         return np.hstack(parts)

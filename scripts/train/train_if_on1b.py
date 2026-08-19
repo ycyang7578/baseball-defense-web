@@ -1,14 +1,17 @@
-"""訓練階段B（一壘有人、<2 出局）的兩段式出局模型。
+"""Train Stage B's two-stage out model (runner on 1B, <2 outs).
 
-E[outs] = P(≥1 出局) × (1 + P(雙殺 | ≥1 出局))
-- 階段1：候選＝基準幾何 vs ＋throw_dist_2b，2023→2024 驗證選定
-- 階段2：候選＝base vs ＋hp×ball_time 交互，2023→2024 驗證選定
-- 最終：2023–24 重訓、2025 樣本外評估一次（AUC/Brier/校準＋E[outs] 十分位校準）
+E[outs] = P(>=1 out) x (1 + P(double play | >=1 out))
+- Stage 1: candidate = base geometry vs +throw_dist_2b, selected via
+  2023->2024 validation
+- Stage 2: candidate = base vs +hp x ball_time interaction, selected via
+  2023->2024 validation
+- Final: retrained on 2023-24, evaluated once on 2025 out-of-sample
+  (AUC/Brier/calibration + E[outs] decile calibration)
 
-主範圍：一壘有人（僅一壘）、<2 出局、Standard、非觸擊、|spray|≤55°；
-站位代理＝fielder_positioning_on1b（一壘有人切分）。
+Main scope: runner on 1B (1B only), <2 outs, Standard, non-bunt, |spray|<=55
+degrees; positioning proxy = fielder_positioning_on1b (runner-on-1B split).
 
-執行：python -m scripts.train.train_if_on1b
+Run: python -m scripts.train.train_if_on1b
 """
 import json
 from pathlib import Path
@@ -44,7 +47,7 @@ def main() -> None:
           f"(E[outs] {tr['n_outs'].mean():.3f}), test n={len(te):,} "
           f"(E[outs] {te['n_outs'].mean():.3f})")
 
-    # ── 結構選擇（train 2023 → validate 2024，不碰 2025）─────────────
+    # -- Structure selection (train 2023 -> validate 2024, 2025 untouched) --
     t23, t24 = tr[tr.game_year == 2023], tr[tr.game_year == 2024]
     print("\n結構選擇（2023→2024）:")
 
@@ -67,7 +70,7 @@ def main() -> None:
     print(f"  階段2 base AUC={auc_dp_base:.4f} vs +hp×bt 交互 {auc_dp_int:.4f} "
           f"→ {'採用' if use_int else '不採用'} 交互")
 
-    # ── 最終模型（2023–24 重訓，2025 只在這裡碰一次）────────────────
+    # -- Final model (retrained on 2023-24, 2025 touched only once, here) --
     feats1 = ON1B_OUT_FEATURES if use_2b else OPTIMIZER_FEATURES
     m1 = (make_on1b_out_glm() if use_2b else make_optimizer_glm())
     y1_tr, y1_te = (tr["n_outs"] >= 1).astype(int), (te["n_outs"] >= 1).astype(int)
@@ -88,7 +91,7 @@ def main() -> None:
     print(f"  階段2 P(DP|≥1out) AUC={rep2['auc']:.4f}  Brier={rep2['brier']:.4f}  "
           f"校準最大偏差={rep2['calibration_max_dev']:.3f}")
 
-    # E[outs] 校準（全樣本）：E = p1 × (1 + p2)，p2 對全部球都要算
+    # E[outs] calibration (full sample): E = p1 x (1 + p2), p2 must be computed for every ball
     p2_all_te = m2.predict_proba(te[ON1B_DP_FEATURES])[:, 1]
     e_outs = p1_te * (1.0 + p2_all_te)
     cal = pd.DataFrame({"pred": e_outs, "actual": te["n_outs"].to_numpy(float)})

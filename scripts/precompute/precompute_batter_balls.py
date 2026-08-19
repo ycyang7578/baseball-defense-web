@@ -1,11 +1,13 @@
-"""生成部署用的精簡預計算表：precomputed_batter_balls / precomputed_batter_stand。
+"""Generate the lean deployment precomputed tables: precomputed_batter_balls / precomputed_batter_stand.
 
-從有完整 statcast 的來源 DB 撈資料、用 src/physics.py 算好衍生欄位，寫入目標 DB。
-本機測試時 source=target 是同一顆 DB；部署到雲端免費方案時用 --target-dsn 帶雲端 DSN，
-把這兩張精簡表（而不是整個 5GB 的 statcast）灌進去。
+Pulls data from the source DB with full statcast data, computes derived columns via
+src/physics.py, and writes them to the target DB. For local testing, source=target
+is the same DB; when deploying to a cloud free tier, pass --target-dsn with the cloud
+DSN so only these two lean tables (not the full 5GB statcast table) get loaded.
 
-篩選條件跟 src/optimization.py 的 _BATTER_QUERY（prepare_batter_balls 用）與
-get_batter_stand（不限 bb_type，整季所有打席）保持一致，否則兩邊資料會對不上。
+The filter conditions must stay in sync with _BATTER_QUERY in src/optimization.py
+(used by prepare_batter_balls) and get_batter_stand (no bb_type restriction, all
+plate appearances for the season), otherwise the two sides' data won't line up.
 
 Usage:
     python -m scripts.precompute.precompute_batter_balls
@@ -25,7 +27,7 @@ from scripts._pg_load import copy_dataframe
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
 
-# 跟 src/optimization.py 的 _BATTER_QUERY 篩選條件保持一致（打出去的球）
+# Stay in sync with the filter conditions in _BATTER_QUERY in src/optimization.py (balls in play)
 _BALLS_QUERY = """
     SELECT batter, game_year, stand, hit_distance_sc, launch_speed, launch_angle, hc_x, hc_y, plate_z,
            bb_type
@@ -43,7 +45,7 @@ _BALLS_QUERY = """
       AND plate_z         IS NOT NULL
 """
 
-# 跟 src/optimization.py 的 get_batter_stand 篩選條件保持一致（不限 bb_type）
+# Stay in sync with the filter conditions in get_batter_stand in src/optimization.py (no bb_type restriction)
 _STAND_QUERY = """
     SELECT batter, game_year, stand, COUNT(*) AS n
     FROM statcast
@@ -76,7 +78,7 @@ def build_batter_balls(source_dsn: str, years: list[int]) -> pd.DataFrame:
 def build_batter_stand(source_dsn: str, years: list[int]) -> pd.DataFrame:
     with psycopg2.connect(source_dsn) as conn:
         df = pd.read_sql(_STAND_QUERY, conn, params={"years": years})
-    # 每個 (batter, game_year) 取出現次數最多的 stand
+    # For each (batter, game_year), take the most frequently occurring stand
     df = df.sort_values("n", ascending=False).drop_duplicates(subset=["batter", "game_year"])
     print(f"[stand] (batter, year) 組合數: {len(df):,}")
     return df[["batter", "game_year", "stand"]].reset_index(drop=True)
@@ -97,8 +99,8 @@ def main():
 
     with psycopg2.connect(target_dsn) as conn:
         with conn.cursor() as cur:
-            # DROP 而非 TRUNCATE：schema 可能改版（如 2026-07-14 加 bb_type 欄），
-            # CREATE IF NOT EXISTS 不會補欄位
+            # DROP instead of TRUNCATE: the schema may have changed (e.g. bb_type column
+            # added on 2026-07-14), and CREATE IF NOT EXISTS won't add missing columns
             cur.execute("DROP TABLE IF EXISTS precomputed_batter_balls")
             cur.execute((SQL_DIR / "create_precomputed_batter_balls_table.sql").read_text(encoding="utf-8"))
             cur.execute((SQL_DIR / "create_precomputed_batter_stand_table.sql").read_text(encoding="utf-8"))

@@ -1,8 +1,10 @@
-"""共用：外野 Model OAA vs 官方 OAA 驗證用的資料計算。
+"""Shared: data computation for validating outfield Model OAA against official OAA.
 
-make_validation_plot.py 與 make_validation_plot_v2.py 畫不同版面的驗證散點圖
-（v2 刻意不改 v1、只是換版面設計，見 v2 docstring），但抓資料／算 model OAA／
-查官方 OAA／名字標準化這段完全相同，抽出來避免兩份定義互相漂移。
+make_validation_plot.py and make_validation_plot_v2.py render validation scatter
+plots with different layouts (v2 deliberately leaves v1 untouched and only changes
+the layout — see the v2 docstring), but the data fetching / model OAA computation /
+official OAA lookup / name normalization steps are identical, so they're factored
+out here to keep the two definitions from drifting apart.
 """
 import re
 import unicodedata
@@ -30,7 +32,7 @@ def sigmoid(x: np.ndarray) -> np.ndarray:
 
 
 def load_of_model(models_dir: Path) -> tuple[StandardScaler, pd.Series]:
-    """回傳統一 OF 模型的 (scaler, mu)，mu 為群體層後驗平均（Series）。"""
+    """Return the unified OF model's (scaler, mu), where mu is the population-level posterior mean (Series)."""
     of_dir = models_dir / "OF"
     scaler = joblib.load(of_dir / "OF_scaler.joblib")
     mu = pd.read_csv(of_dir / "OF_summary_group.csv", encoding="utf-8-sig", index_col=0)["mean"]
@@ -38,7 +40,7 @@ def load_of_model(models_dir: Path) -> tuple[StandardScaler, pd.Series]:
 
 
 def compute_model_oaa(pos: str, year: int, scaler: StandardScaler, mu: pd.Series) -> pd.DataFrame:
-    """單一位置逐球 model OAA（is_official 子集，群體層 mu，絕不用 player-level）。"""
+    """Per-play model OAA for a single position (is_official subset, population-level mu, never player-level)."""
     df = get_defender_opportunities(pos, year)
     df = df.rename(columns={"required_speed": "speed"})
     df = df.dropna(subset=FEATURE_COLS + ["caught", "name_fielder"])
@@ -57,7 +59,7 @@ def compute_model_oaa(pos: str, year: int, scaler: StandardScaler, mu: pd.Series
 
 
 def load_model_oaa(models_dir: Path, year: int) -> pd.DataFrame:
-    """跨 LF+CF+RF 加總逐球 oaa_play → 每位球員一筆，含標準化姓名 key。"""
+    """Sum per-play oaa_play across LF+CF+RF -> one row per player, with a normalized-name key."""
     scaler, mu = load_of_model(models_dir)
     all_plays = pd.concat(
         [compute_model_oaa(p, year, scaler, mu) for p in POSITIONS], ignore_index=True)
@@ -67,7 +69,7 @@ def load_model_oaa(models_dir: Path, year: int) -> pd.DataFrame:
 
 
 def load_official_oaa(dsn: str, year: int) -> pd.DataFrame:
-    """官方 OAA（is_qualified=True，同一球員可能多位置達標，加總視為整體外野 OAA）。"""
+    """Official OAA (is_qualified=True; the same player may qualify at multiple positions, summed to a total outfield OAA)."""
     with psycopg2.connect(dsn) as conn:
         raw_off = pd.read_sql(
             "SELECT player_name, oaa FROM oaa_leaderboard "

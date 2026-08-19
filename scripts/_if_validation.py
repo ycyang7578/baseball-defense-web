@@ -1,8 +1,9 @@
-"""共用：跨年驗證腳本的合格打者查詢。
+"""Shared: qualifying-batter query for cross-year validation scripts.
 
-validate_if_positioning.py／validate_if_runvalue.py／validate_if_dp.py 都用同一套
-「訓練年滾地球數 >= min_train 且測試年滾地球數 >= min_test」篩選邏輯抓合格打者，
-原本各自複製一份同樣的 SQL，抽成這裡的 qualifying_batters。
+validate_if_positioning.py / validate_if_runvalue.py / validate_if_dp.py all use the
+same "train-year ground ball count >= min_train AND test-year ground ball count >=
+min_test" filter to find qualifying batters. Each script used to duplicate the same
+SQL; it has been factored out here into qualifying_batters.
 """
 import pandas as pd
 import psycopg2

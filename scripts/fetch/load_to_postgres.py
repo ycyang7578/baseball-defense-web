@@ -42,7 +42,7 @@ def load_fielder_positioning(conn) -> None:
 
 
 def load_fielder_positioning_on1b(conn) -> None:
-    """一壘有人切分（{year}_on1b.parquet，2023 起才有；階段B 雙殺模型用）。"""
+    """Runner-on-first split ({year}_on1b.parquet, only available from 2023 onward; used by the Phase B double-play model)."""
     with conn.cursor() as cur:
         cur.execute("TRUNCATE fielder_positioning_on1b;")
     conn.commit()
@@ -63,7 +63,7 @@ def load_sprint_speed(conn) -> None:
     for year in YEARS:
         path = DATA_DIR / "sprint_speed" / f"{year}.parquet"
         if not path.exists():
-            continue  # 尚未抓取的年份直接跳過
+            continue  # Skip years that haven't been fetched yet
         df = pd.read_parquet(path)
         _copy(conn, "sprint_speed", df)
         print(f"[loaded] sprint_speed {year}: {len(df):,} rows")
@@ -76,14 +76,15 @@ def load_savant_fielding(conn) -> None:
     for year in YEARS:
         path = DATA_DIR / "savant_fielding" / f"{year}.parquet"
         if not path.exists():
-            continue  # 目前只抓了部分年份，尚未覆蓋的年份直接跳過
+            continue  # Only some years have been fetched so far; skip years not yet covered
         df = pd.read_parquet(path)
         _copy(conn, "savant_fielding", df)
         print(f"[loaded] savant_fielding {year}: {len(df):,} rows")
 
 
 if __name__ == "__main__":
-    # 無參數=全部重載；帶表名（如 `on1b`）只載該表，避免為單表跑全量 TRUNCATE 重灌
+    # No args = reload everything; passing a table name (e.g. `on1b`) loads only that table,
+    # avoiding a full TRUNCATE-and-reload just to refresh one table
     _LOADERS = {
         "statcast": load_statcast,
         "positioning": load_fielder_positioning,
