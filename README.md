@@ -45,7 +45,12 @@ With a runner on first and fewer than two outs, a ground ball's value isn't just
 ## The web app
 
 - **Home** (`/`) — pick a batter, year, base/out state, and stadium; see league-average vs. optimized positioning for all seven fielders (LF/CF/RF + 1B/2B/3B/SS) at once, with the double-play logic kicking in automatically when the situation calls for it. Optionally pin specific fielders to see the optimal positioning *for that lineup*. Side-by-side A/B compare mode for two situations/lineups at once.
+
+  ![Positioning view: league-average (star) vs. batted-ball density for a specific batter/situation](figures/app_positioning_view.png)
+
 - **Rankings** (`/rankings`) — model-derived OAA per position, year, and team, cross-referenced against MLB's official leaderboard.
+
+  ![OAA rankings, filterable by position/team/year, with model vs. official OAA side by side](figures/app_rankings_view.png)
 
 ## Results
 
