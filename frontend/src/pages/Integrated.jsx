@@ -4,6 +4,7 @@ import { fetchFielders, fetchIfFielderOptions, fetchIntegratedBatters, fetchIfYe
 import GameStateForm from '../components/GameStateForm'
 import SearchSelect from '../components/SearchSelect'
 import IntegratedChart from '../components/IntegratedChart'
+import { useLanguage } from '../i18n/LanguageContext.jsx'
 
 const displayName = (s) => (s && s.includes(', ')) ? s.split(', ').reverse().join(' ') : (s || '')
 const OF_POSITIONS = ['LF', 'CF', 'RF']
@@ -34,6 +35,7 @@ const buildIf = (sel) => {
 }
 
 export default function Integrated() {
+  const { t } = useLanguage()
   const [availYears, setAvailYears] = useState([])
   const [year, setYear]             = useState(null)
   const [batters, setBatters]       = useState([])
@@ -137,12 +139,12 @@ export default function Integrated() {
             <div style={{ flex: 1 }}>
               <SearchSelect
                 options={[
-                  { value: '', label: '聯盟平均' },
+                  { value: '', label: t('panel.leagueAvg') },
                   ...(ofOpts?.[p] || []).map(f => ({ value: f.name, label: fielderLabel(f, 'n_opp') })),
                 ]}
                 value={of[p]}
                 onChange={v => setOf(s => ({ ...s, [p]: v }))}
-                placeholder="聯盟平均"
+                placeholder={t('panel.leagueAvg')}
               />
             </div>
           </div>
@@ -154,13 +156,13 @@ export default function Integrated() {
             <div style={{ flex: 1 }}>
               <SearchSelect
                 options={[
-                  { value: '', label: '聯盟平均' },
+                  { value: '', label: t('panel.leagueAvg') },
                   ...(ifOpts?.[p] || []).filter(f => (f.n_balls || 0) >= minOpp)
                     .map(f => ({ value: String(f.player_id), label: fielderLabel(f, 'n_balls') })),
                 ]}
                 value={ifSel[p]}
                 onChange={v => setIf(s => ({ ...s, [p]: v }))}
-                placeholder="聯盟平均"
+                placeholder={t('panel.leagueAvg')}
               />
             </div>
           </div>
@@ -188,7 +190,7 @@ export default function Integrated() {
             </div>
           </div>
 
-          <Sec title="打者">
+          <Sec title={t('panel.batter')}>
             <SearchSelect
               options={batters.map(b => ({
                 value: String(b.batter_id),
@@ -196,18 +198,18 @@ export default function Integrated() {
               }))}
               value={batterId}
               onChange={setBatterId}
-              placeholder="搜尋打者…"
+              placeholder={t('panel.batterPlaceholder')}
             />
             <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 8, lineHeight: 1.6 }}>
-              括號內為該年場內球數。內外野七人一起排：飛球交給外野、滾地球交給內野
+              {t('panel.batterHint')}
             </div>
           </Sec>
 
-          <Sec title="比賽狀況">
+          <Sec title={t('panel.gameState')}>
             <GameStateForm state={gameState} onChange={setGameState} />
           </Sec>
 
-          <Sec title={compareMode ? '球場（各組獨立）' : '球場'}>
+          <Sec title={compareMode ? t('panel.parkIndependent') : t('panel.park')}>
             {compareMode ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {[['A', homeTeam, setHomeTeam], ['B', homeTeamB, setHomeTeamB]].map(([lbl, val, set]) => (
@@ -215,26 +217,26 @@ export default function Integrated() {
                     <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-400)',
                                    minWidth: 14 }}>{lbl}</span>
                     <select value={val} onChange={e => set(e.target.value)} style={{ ...s.select, flex: 1 }}>
-                      <option value="">— 通用 —</option>
-                      {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                      <option value="">{t('panel.parkGeneric')}</option>
+                      {teams.map(tm => <option key={tm} value={tm}>{tm}</option>)}
                     </select>
                   </div>
                 ))}
               </div>
             ) : (
               <select value={homeTeam} onChange={e => setHomeTeam(e.target.value)} style={s.select}>
-                <option value="">— 通用 —</option>
-                {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="">{t('panel.parkGeneric')}</option>
+                {teams.map(tm => <option key={tm} value={tm}>{tm}</option>)}
               </select>
             )}
             <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6, lineHeight: 1.6 }}>
-              指定球場會把打到牆的球視為必失分，外野站位跟著調整（計算較久）
+              {t('panel.parkHint')}
             </div>
           </Sec>
 
-          <Sec title="野手">
+          <Sec title={t('panel.fielders')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <span style={{ fontSize: 10, color: 'var(--slate-400)', whiteSpace: 'nowrap' }}>最低守備次數</span>
+              <span style={{ fontSize: 10, color: 'var(--slate-400)', whiteSpace: 'nowrap' }}>{t('panel.minOpp')}</span>
               <input
                 type="range" min={0} max={400} step={25}
                 value={minOpp}
@@ -245,13 +247,13 @@ export default function Integrated() {
                              textAlign: 'right', fontWeight: 600 }}>{minOpp}</span>
             </div>
             <div style={{ fontSize: 9, color: '#cbd5e1', marginBottom: 10, lineHeight: 1.6 }}>
-              括號內為模型估計 OAA/100，非 Statcast 官方數值。指定野手時以該球員的守備參數微調站位
+              {t('panel.fielderHint')}
             </div>
             {compareMode ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {fielderSection(selOf,  setSelOf,  selIf,  setSelIf,  '組合 A')}
+                {fielderSection(selOf,  setSelOf,  selIf,  setSelIf,  t('panel.comboA'))}
                 <div style={{ borderTop: '1px solid var(--slate-100)' }} />
-                {fielderSection(selOfB, setSelOfB, selIfB, setSelIfB, '組合 B')}
+                {fielderSection(selOfB, setSelOfB, selIfB, setSelIfB, t('panel.comboB'))}
               </div>
             ) : (
               fielderSection(selOf, setSelOf, selIf, setSelIf, null)
@@ -267,14 +269,14 @@ export default function Integrated() {
                 border:     `1px solid ${compareMode ? '#c4b5fd' : 'var(--slate-200)'}`,
               }}
             >
-              {compareMode ? '✕ 關閉比較模式' : '⇔ 比較模式'}
+              {compareMode ? t('panel.closeCompare') : t('panel.compareMode')}
             </button>
             <button
               onClick={handleOptimize}
               disabled={!batterId || loading}
               style={{ ...s.btn, opacity: (!batterId || loading) ? 0.5 : 1 }}
             >
-              {loading ? '計算中…' : '計算最佳站位'}
+              {loading ? t('panel.calculating') : t('panel.calculate')}
             </button>
             {error && <div style={s.error}>{error}</div>}
           </div>
@@ -285,8 +287,8 @@ export default function Integrated() {
           {compareMode && (data || dataB) ? (
             <div style={{ width: '100%', maxWidth: 1500 }}>
               <div className="compare-row" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <ChartBox data={data}  park={homeTeam}  label="組合 A" loading={loading} />
-                <ChartBox data={dataB} park={homeTeamB} label="組合 B" loading={loading} />
+                <ChartBox data={data}  park={homeTeam}  label={t('panel.comboA')} loading={loading} />
+                <ChartBox data={dataB} park={homeTeamB} label={t('panel.comboB')} loading={loading} />
               </div>
               {data && dataB && !loading && <CompareStats dataA={data} dataB={dataB} />}
             </div>
@@ -332,22 +334,23 @@ export default function Integrated() {
 }
 
 function TitleBar({ data, park }) {
+  const { t } = useLanguage()
   const picked = ALL_POSITIONS.filter(p => data.fielders && data.fielders[p])
   const nFly = data.of_balls.filter(b => b.bb_type === 'fly_ball').length
   const nLd = data.of_balls.filter(b => b.bb_type === 'line_drive').length
   const counts = (nFly + nLd === data.stats.n_of_balls)
-    ? `飛球 ${nFly} 球＋平飛 ${nLd} 球`
-    : `外野 ${data.stats.n_of_balls} 球`   // fall back to the total when older data has no bb_type
+    ? t('titleBar.flyPlusLine', { fly: nFly, line: nLd })
+    : t('titleBar.ofTotal', { n: data.stats.n_of_balls })   // fall back to the total when older data has no bb_type
   return (
     <div style={{ background: 'white', padding: '12px 18px 0' }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--slate-800)' }}>
-        {displayName(data.name)}（{data.year}, {data.stand}打）{park ? ` @ ${park}` : ''}
+        {displayName(data.name)}{t('titleBar.yearStand', { year: data.year, stand: data.stand })}{park ? ` @ ${park}` : ''}
       </div>
       <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--slate-600)', marginTop: 3 }}>
-        壘況 {data.situation}・{counts}
-        {data.stats.n_gb > 0 && `＋滾地 ${data.stats.n_gb} 球`}
-        {data.stats.n_popups > 0 && `＋高飛 ${data.stats.n_popups} 球（展示）`}
-        {data.stats.n_gb === 0 && '　（滾地球樣本不足，只排外野三人）'}
+        {t('titleBar.situation')} {data.situation}・{counts}
+        {data.stats.n_gb > 0 && t('titleBar.plusGb', { n: data.stats.n_gb })}
+        {data.stats.n_popups > 0 && t('titleBar.plusPopup', { n: data.stats.n_popups })}
+        {data.stats.n_gb === 0 && t('titleBar.gbInsufficient')}
       </div>
       {picked.length > 0 && (
         <div style={{ fontSize: 11, color: 'var(--blue-600)', fontWeight: 600, marginTop: 2 }}>
@@ -381,46 +384,48 @@ function ChartBox({ data, park, label, loading }) {
 }
 
 function EmptyState() {
+  const { t } = useLanguage()
   return (
     <div style={{ background: 'white', borderRadius: 8, border: '1px solid var(--slate-200)',
                   padding: '64px 32px', textAlign: 'center',
                   boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
       <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--slate-700)', marginBottom: 8 }}>
-        選擇打者與壘況開始分析
+        {t('emptyState.title')}
       </div>
       <div style={{ fontSize: 12, color: 'var(--slate-400)', lineHeight: 1.7, maxWidth: 320, margin: '0 auto' }}>
-        七名野手一起排：外野三人對付飛球、內野四人對付滾地球，
-        以「預期失分」同一把尺衡量，加總就是這套站位替球隊省下的分數
+        {t('emptyState.body')}
       </div>
     </div>
   )
 }
 
 function StatsPanel({ data }) {
+  const { t } = useLanguage()
   const { league, optimized } = data
   return (
     <div style={{ background: 'white', borderRadius: '0 0 8px 8px', padding: '12px 18px',
                   borderTop: '1px solid var(--slate-200)', boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 12 }}>
-        {[{ label: '聯盟平均站位', set: league }, { label: '最佳化站位', set: optimized }].map(({ label, set }) => (
+        {[{ label: t('statsPanel.leagueAvgPositions'), set: league },
+          { label: t('statsPanel.optimizedPositions'), set: optimized }].map(({ label, set }) => (
           <div key={label} style={{ background: 'var(--slate-50)', border: '1px solid var(--slate-200)',
                                     borderRadius: 7, padding: '8px 16px', minWidth: 190 }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--slate-500)',
                           textTransform: 'uppercase', letterSpacing: '0.05em',
                           marginBottom: 5 }}>{label}</div>
             <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
-              外野接殺率 <strong style={{ fontSize: 14 }}>{set.catch_pct.toFixed(1)}%</strong>
+              {t('statsPanel.catchRateOf')} <strong style={{ fontSize: 14 }}>{set.catch_pct.toFixed(1)}%</strong>
             </div>
             {data.stats.n_gb > 0 && (
               <div style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 2 }}>
-                內野出局率 <strong style={{ fontSize: 14 }}>{(set.exp_outs_if * 100).toFixed(1)}%</strong>
+                {t('statsPanel.outRateIf')} <strong style={{ fontSize: 14 }}>{(set.exp_outs_if * 100).toFixed(1)}%</strong>
               </div>
             )}
             <div style={{ fontSize: 12, color: 'var(--slate-700)' }}>
-              預期失分 <strong style={{ fontSize: 14 }}>{set.runs_total.toFixed(1)}</strong>
+              {t('statsPanel.expectedRuns')} <strong style={{ fontSize: 14 }}>{set.runs_total.toFixed(1)}</strong>
               {data.stats.n_gb > 0 && (
                 <span style={{ fontSize: 10, color: 'var(--slate-500)' }}>
-                  {'　'}（外野 {set.runs_of.toFixed(1)}＋內野 {set.runs_if.toFixed(1)}）
+                  {t('statsPanel.ofIfBreakdown', { of: set.runs_of.toFixed(1), if: set.runs_if.toFixed(1) })}
                 </span>
               )}
             </div>
@@ -432,8 +437,8 @@ function StatsPanel({ data }) {
           <thead>
             <tr>
               <th style={spc.th} />
-              <th style={spc.th}>聯盟平均</th>
-              <th style={spc.th}>最佳化</th>
+              <th style={spc.th}>{t('statsPanel.leagueAvgShort')}</th>
+              <th style={spc.th}>{t('statsPanel.optimizedShort')}</th>
             </tr>
           </thead>
           <tbody>
@@ -460,6 +465,7 @@ function StatsPanel({ data }) {
 const fmtPos = (pos) => `(${Math.round(pos.x)}, ${Math.round(pos.y)})`
 
 function CompareStats({ dataA, dataB }) {
+  const { t } = useLanguage()
   const sA = dataA.stats
   const sB = dataB.stats
 
@@ -502,17 +508,17 @@ function CompareStats({ dataA, dataB }) {
         <thead>
           <tr>
             <th style={td.head} />
-            <th style={td.head}>組合 A</th>
-            <th style={td.head}>組合 B</th>
-            <th style={td.head}>A − B</th>
+            <th style={td.head}>{t('compareStats.comboA')}</th>
+            <th style={td.head}>{t('compareStats.comboB')}</th>
+            <th style={td.head}>{t('compareStats.diff')}</th>
           </tr>
         </thead>
         <tbody>
-          {numRow('多守下幾分（總）', sA.runs_saved_total.toFixed(2), sB.runs_saved_total.toFixed(2),
+          {numRow(t('compareStats.runsSavedTotal'), sA.runs_saved_total.toFixed(2), sB.runs_saved_total.toFixed(2),
                   sA.runs_saved_total - sB.runs_saved_total)}
-          {numRow('多守下幾分（外野）', sA.runs_saved_of.toFixed(2), sB.runs_saved_of.toFixed(2),
+          {numRow(t('compareStats.runsSavedOf'), sA.runs_saved_of.toFixed(2), sB.runs_saved_of.toFixed(2),
                   sA.runs_saved_of - sB.runs_saved_of)}
-          {numRow('多守下幾分（內野）', sA.runs_saved_if.toFixed(2), sB.runs_saved_if.toFixed(2),
+          {numRow(t('compareStats.runsSavedIf'), sA.runs_saved_if.toFixed(2), sB.runs_saved_if.toFixed(2),
                   sA.runs_saved_if - sB.runs_saved_if)}
           <tr><td colSpan={4} style={{ padding: '4px 0' }}>
             <hr style={{ border: 'none', borderTop: '1px solid var(--slate-100)', margin: 0 }} />
@@ -539,11 +545,12 @@ const spc = {
 }
 
 function Overlay() {
+  const { t } = useLanguage()
   return (
     <div style={s.overlay}>
       <div style={s.spinner} />
       <p style={{ color: 'white', marginTop: 12, fontSize: 13, fontWeight: 500 }}>
-        七人站位計算中（約需一分鐘）…
+        {t('overlay.computing')}
       </p>
     </div>
   )

@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLanguage } from '../i18n/LanguageContext.jsx'
 
 // Typeahead-searchable dropdown. options: [{ value, label }]
 export default function SearchSelect({ options, value, onChange, placeholder }) {
+  const { t } = useLanguage()
   const [query, setQuery] = useState('')
   const [open, setOpen]   = useState(false)
   const [hi, setHi]       = useState(0)
@@ -42,7 +44,7 @@ export default function SearchSelect({ options, value, onChange, placeholder }) 
       />
       {open && (
         <div style={st.drop}>
-          {filtered.length === 0 && <div style={st.empty}>無符合</div>}
+          {filtered.length === 0 && <div style={st.empty}>{t('searchSelect.noMatches')}</div>}
           {filtered.map((o, i) => (
             <div
               key={o.value || '__none__'}

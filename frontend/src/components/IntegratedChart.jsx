@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useLanguage } from '../i18n/LanguageContext.jsx'
 
 // ── Layout (1 SVG unit ≈ 1 ft, home plate is the origin, +x toward first base) ────────────
 // Viewport covers the whole field: infield dirt to deep outfield (same coordinate convention
@@ -176,6 +177,7 @@ function marchingSquares(grid, gw, gh, level, cell) {
 const POPUP_CATCH = 0.985
 
 export default function IntegratedChart({ data }) {
+  const { t } = useLanguage()
   const svgRef = useRef(null)
   // SVG defs ids must be unique per instance: with two charts on the same page in comparison mode,
   // a fixed id would make chart B reference chart A's clipPath/gradient (2026-07-14 user report:
@@ -327,19 +329,23 @@ export default function IntegratedChart({ data }) {
   const tip = hovered ? (() => {
     const { kind, ball } = hovered
     const [bx, by] = clampXY(ball.x, ball.y)
-    const ofLabel = ball.bb_type === 'line_drive' ? '平飛球'
-      : ball.bb_type === 'fly_ball' ? '飛球' : '外野球'
+    const ofLabel = ball.bb_type === 'line_drive' ? t('chart.tooltip.lineDrive')
+      : ball.bb_type === 'fly_ball' ? t('chart.tooltip.flyBall') : t('chart.tooltip.ofBall')
+    const outHit = ball.is_out ? t('chart.tooltip.out') : t('chart.tooltip.hitError')
     const lines = kind === 'of'
-      ? [`${ofLabel}　接殺機率 ${(ball.catch_prob * 100).toFixed(0)}%`
-         + (ballOwner?.[of_balls.indexOf(ball)] ? `　歸屬 ${ballOwner[of_balls.indexOf(ball)]}` : '')]
+      ? [`${ofLabel}　${t('chart.tooltip.catchProb')} ${(ball.catch_prob * 100).toFixed(0)}%`
+         + (ballOwner?.[of_balls.indexOf(ball)] ? t('chart.tooltip.owner', { code: ballOwner[of_balls.indexOf(ball)] }) : '')]
       : kind === 'popup'
       ? [
-          `內野高飛　${ball.is_out ? '出局' : '安打/失誤'}　接殺機率 ~99%（實證）`,
-          '站哪都接得到，不參與站位優化',
+          `${t('chart.tooltip.popupLabel')}　${outHit}　${t('chart.tooltip.popupCatchProb')}`,
+          t('chart.tooltip.popupHint'),
         ]
       : [
-          `滾地球　${ball.is_out ? '出局' : '安打/失誤'}　EV ${ball.launch_speed.toFixed(0)} mph`,
-          `P(out) 平均 ${(ball.p_out_league * 100).toFixed(0)}% → 最佳化 ${(ball.p_out_opt * 100).toFixed(0)}%`,
+          `${t('chart.tooltip.gbLabel')}　${outHit}　EV ${ball.launch_speed.toFixed(0)} mph`,
+          t('chart.tooltip.avgToOpt', {
+            avg: (ball.p_out_league * 100).toFixed(0),
+            opt: (ball.p_out_opt * 100).toFixed(0),
+          }),
         ]
     return { x: tx(bx), y: ty(by), lines }
   })() : null
@@ -390,23 +396,23 @@ export default function IntegratedChart({ data }) {
           background: colorMode === 'owner' ? '#1e40af' : 'white',
           color: colorMode === 'owner' ? 'white' : '#334155',
         }}>
-          {colorMode === 'prob' ? '切換：責任歸屬色' : '切換：接殺機率色'}
+          {colorMode === 'prob' ? t('chart.toggleOwner') : t('chart.toggleProb')}
         </button>
         <label style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer',
                         fontSize: '12px', color: '#475569' }}>
           <input type="checkbox" checked={showDensity}
             onChange={e => setShowDensity(e.target.checked)}
             style={{ accentColor: '#4472C4', cursor: 'pointer' }} />
-          落點密度
+          {t('chart.density')}
         </label>
         <button onClick={downloadPng} style={{
           marginLeft: 'auto', padding: '3px 10px', borderRadius: '4px', cursor: 'pointer',
           fontSize: '12px', border: '1px solid #cbd5e1', background: 'white', color: '#334155',
         }}>
-          ↓ 下載圖
+          {t('chart.download')}
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
-          <span>機率範圍</span>
+          <span>{t('chart.probRange')}</span>
           <span style={{ minWidth: '28px', textAlign: 'right' }}>{probMin}%</span>
           <input type="range" min={0} max={100} value={probMin}
             onChange={e => setProbMin(Math.min(+e.target.value, probMax))}
@@ -418,9 +424,9 @@ export default function IntegratedChart({ data }) {
           <span style={{ minWidth: '28px' }}>{probMax}%</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', color: '#475569' }}>
-          <span>球種</span>
-          {[['ground_ball', '滾地球'], ['fly_ball', '飛球'],
-            ['line_drive', '平飛球'], ['popup', '內野高飛']].map(([key, label]) => (
+          <span>{t('chart.ballType')}</span>
+          {[['ground_ball', t('chart.ballTypes.ground_ball')], ['fly_ball', t('chart.ballTypes.fly_ball')],
+            ['line_drive', t('chart.ballTypes.line_drive')], ['popup', t('chart.ballTypes.popup')]].map(([key, label]) => (
             <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
               <input type="checkbox" checked={showTypes[key]}
                 onChange={e => setShowTypes(s => ({ ...s, [key]: e.target.checked }))}
@@ -583,8 +589,8 @@ export default function IntegratedChart({ data }) {
         const nLd = of_balls.filter(b => b.bb_type === 'line_drive').length
         const hasType = nFly + nLd === of_balls.length
         const countLines = [
-          hasType ? `飛球 ${nFly}・平飛 ${nLd}` : `外野 ${of_balls.length} 球`,
-          `滾地 ${if_balls.length}` + (popup_balls.length > 0 ? `・高飛 ${popup_balls.length}` : ''),
+          hasType ? t('chart.countLine.flyLine', { fly: nFly, line: nLd }) : t('chart.countLine.ofTotal', { n: of_balls.length }),
+          t('chart.countLine.gb', { n: if_balls.length }) + (popup_balls.length > 0 ? t('chart.countLine.popup', { n: popup_balls.length }) : ''),
         ]
         const isProb = colorMode === 'prob'
         const W = 140
@@ -594,7 +600,7 @@ export default function IntegratedChart({ data }) {
         rows.push(
           <g key="star">
             <polygon points={starPts(13, y, 6)} fill="#7B2FBE" stroke="white" strokeWidth="1" />
-            <text x={23} y={y + 3} fontSize="8.5" fill="#555">最佳化站位</text>
+            <text x={23} y={y + 3} fontSize="8.5" fill="#555">{t('chart.legend.optimizedPositions')}</text>
           </g>)
         y += 11
         if (isProb) {
@@ -605,20 +611,20 @@ export default function IntegratedChart({ data }) {
                 fill={`url(#${gradId})`} stroke="#bbb" strokeWidth="0.5" />
               <text x={8} y={y + 17} fontSize="7.5" fill="#555">0%</text>
               <text x={88} y={y + 17} fontSize="7.5" fill="#555" textAnchor="end">100%</text>
-              <text x={92} y={y + 7.5} fontSize="7.5" fill="#555">接殺/出局</text>
+              <text x={92} y={y + 7.5} fontSize="7.5" fill="#555">{t('chart.legend.catchOut')}</text>
             </g>)
           y += 22
         } else {
           // Seven-fielder ownership color swatches (two columns)
           rows.push(
             <g key="own">
-              {[...OF_POSITIONS, ...IF_POSITIONS, '其他'].map((label, i) => (
+              {[...OF_POSITIONS, ...IF_POSITIONS, t('chart.legend.other')].map((label, i) => (
                 <g key={label} transform={`translate(${8 + (i % 2) * 66},${y + Math.floor(i / 2) * 14})`}>
                   <rect width={9} height={9} rx="2" fill={OWNER_COLORS[label] ?? OWNER_COLORS.null} />
                   <text x={12.5} y={7.5} fontSize="8" fill="#555">{label}</text>
                 </g>
               ))}
-              <text x={8} y={y + 4 * 14 + 7} fontSize="7.5" fill="#999">點星標高亮其責任球</text>
+              <text x={8} y={y + 4 * 14 + 7} fontSize="7.5" fill="#999">{t('chart.legend.clickHint')}</text>
             </g>)
           y += 4 * 14 + 13
         }
@@ -632,7 +638,7 @@ export default function IntegratedChart({ data }) {
           rows.push(
             <g key="wall">
               <polygon points={starPts(13, y + 2, 5.5)} fill="#FF6B00" stroke="black" strokeWidth="0.4" />
-              <text x={22} y={y + 5} fontSize="8" fill="#555">打牆球 ({nWall})</text>
+              <text x={22} y={y + 5} fontSize="8" fill="#555">{t('chart.legend.wallBalls', { n: nWall })}</text>
             </g>)
           y += 13
         }

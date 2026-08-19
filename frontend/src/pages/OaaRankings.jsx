@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { fetchFielders, fetchIfFielders } from '../api'
 import { TEAM_ABBR, TeamLogo, PlayerAvatar, displayName, oaaColor } from '../components/playerDisplay'
+import { useLanguage } from '../i18n/LanguageContext.jsx'
 
 // OAA defensive rankings: the three outfield positions and four infield positions in one shared table.
 // Outfield model = fly-ball catch difficulty, infield model = ground-ball out difficulty; OAA/100 is on a consistent scale so they can be sorted together in one table.
@@ -14,6 +15,7 @@ const ACTIVE_BG  = '#eff6ff'
 const ACTIVE_HDR = '#dbeafe'
 
 export default function OaaRankings() {
+  const { t } = useLanguage()
   const [pos, setPos]           = useState('ALL')
   const [minBalls, setMinBalls] = useState(100)
   const [ofFielders, setOfFielders] = useState({})
@@ -114,7 +116,7 @@ export default function OaaRankings() {
     <div style={s.page}>
       <div style={s.header}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <h1 style={{ ...s.title, flexShrink: 0 }}>OAA 守備排名</h1>
+          <h1 style={{ ...s.title, flexShrink: 0 }}>{t('rankings.title')}</h1>
           <div style={s.yearTabs}>
             {YEARS.map(y => (
               <button key={y} onClick={() => setYear(y)}
@@ -125,8 +127,7 @@ export default function OaaRankings() {
           </div>
         </div>
         <span style={s.subtitle}>
-          模型 OAA 以守備難度計算（外野=飛球接殺、內野=滾地出局，基於賽季平均站位，
-          非 Statcast 官方數值）；右側官方欄位為 Statcast OAA
+          {t('rankings.subtitle')}
         </span>
       </div>
 
@@ -140,11 +141,11 @@ export default function OaaRankings() {
           ))}
         </div>
         <div style={s.oppRow}>
-          <span style={s.oppLabel}>球隊篩選</span>
+          <span style={s.oppLabel}>{t('rankings.teamFilter')}</span>
           <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}
             style={{ fontSize: 13, padding: '3px 6px', borderRadius: 5,
                      border: '1px solid var(--gray-300)', color: 'var(--gray-700)' }}>
-            <option value="">全部球隊</option>
+            <option value="">{t('rankings.allTeams')}</option>
             {allTeams.map(tid => (
               <option key={tid} value={tid}>{TEAM_ABBR[tid] || tid}</option>
             ))}
@@ -158,7 +159,7 @@ export default function OaaRankings() {
           )}
         </div>
         <div style={s.oppRow}>
-          <span style={s.oppLabel}>最低守備機會（模型）</span>
+          <span style={s.oppLabel}>{t('rankings.minOppModel')}</span>
           <input type="range" min={0} max={400} step={25} value={minBalls}
             onChange={e => setMinBalls(Number(e.target.value))}
             style={{ width: 130, accentColor: 'var(--blue-600)' }} />
@@ -167,7 +168,7 @@ export default function OaaRankings() {
       </div>
 
       {loading ? (
-        <div style={s.loading}>載入中…</div>
+        <div style={s.loading}>{t('rankings.loading')}</div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={s.table}>
@@ -175,18 +176,18 @@ export default function OaaRankings() {
               <tr>
                 <th style={s.th}>#</th>
                 <th onClick={() => handleSort('name')}
-                  style={thStyle('name', { textAlign: 'left', minWidth: 180 })}>球員</th>
-                <th style={s.th}>球隊</th>
+                  style={thStyle('name', { textAlign: 'left', minWidth: 180 })}>{t('rankings.columns.player')}</th>
+                <th style={s.th}>{t('rankings.columns.team')}</th>
                 {pos === 'ALL' && (
-                  <th onClick={() => handleSort('position')} style={thStyle('position')}>守位</th>
+                  <th onClick={() => handleSort('position')} style={thStyle('position')}>{t('rankings.columns.position')}</th>
                 )}
-                <th onClick={() => handleSort('n_balls')} style={thStyle('n_balls')}>模型機會</th>
-                <th onClick={() => handleSort('oaa')}     style={thStyle('oaa')}>模型OAA</th>
-                <th onClick={() => handleSort('rate')}    style={thStyle('rate')}>OAA/100</th>
+                <th onClick={() => handleSort('n_balls')} style={thStyle('n_balls')}>{t('rankings.columns.modelOpp')}</th>
+                <th onClick={() => handleSort('oaa')}     style={thStyle('oaa')}>{t('rankings.columns.modelOaa')}</th>
+                <th onClick={() => handleSort('rate')}    style={thStyle('rate')}>{t('rankings.columns.oaaPer100')}</th>
                 <th onClick={() => handleSort('official_oaa')}
-                  style={thStyle('official_oaa', { borderLeft: '1px solid var(--slate-200)' })}>官方OAA</th>
-                <th onClick={() => handleSort('official_n_opp')} style={thStyle('official_n_opp')}>官方機會</th>
-                <th onClick={() => handleSort('official_rate')}  style={thStyle('official_rate')}>官方OAA/100</th>
+                  style={thStyle('official_oaa', { borderLeft: '1px solid var(--slate-200)' })}>{t('rankings.columns.officialOaa')}</th>
+                <th onClick={() => handleSort('official_n_opp')} style={thStyle('official_n_opp')}>{t('rankings.columns.officialOpp')}</th>
+                <th onClick={() => handleSort('official_rate')}  style={thStyle('official_rate')}>{t('rankings.columns.officialRate')}</th>
               </tr>
             </thead>
             <tbody>

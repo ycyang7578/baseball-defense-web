@@ -1,5 +1,9 @@
+import { useLanguage } from '../i18n/LanguageContext.jsx'
+
 export default function GameStateForm({ state, onChange }) {
   const { on1b, on2b, on3b, outs } = state
+  const { t } = useLanguage()
+  const outLabels = [t('gameState.out0'), t('gameState.out1'), t('gameState.out2')]
 
   function toggleBase(key) {
     onChange({ ...state, [key]: state[key] ? 0 : 1 })
@@ -8,7 +12,7 @@ export default function GameStateForm({ state, onChange }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div>
-        <label style={labelStyle}>壘上跑者</label>
+        <label style={labelStyle}>{t('gameState.runnersOnBase')}</label>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginTop: 4 }}>
           <div />
           <BaseBtn label="2B" active={on2b} onClick={() => toggleBase('on2b')} />
@@ -20,7 +24,7 @@ export default function GameStateForm({ state, onChange }) {
       </div>
 
       <div>
-        <label style={labelStyle}>出局數</label>
+        <label style={labelStyle}>{t('gameState.outs')}</label>
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
           {[0, 1, 2].map(n => (
             <button
@@ -35,7 +39,7 @@ export default function GameStateForm({ state, onChange }) {
                 border: outs === n ? '1px solid var(--amber-500)' : '1px solid var(--gray-300)',
               }}
             >
-              {n} out{n !== 1 ? 's' : ''}
+              {outLabels[n]}
             </button>
           ))}
         </div>
