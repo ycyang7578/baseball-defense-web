@@ -9,8 +9,8 @@ class OptimizeRequest(BaseModel):
     on_3b: int = Field(0, ge=0, le=1)
     outs:  int = Field(0, ge=0, le=2)
     home_team: str | None = None
-    # 指定外野手（player-level 能力）。key 為 "LF"/"CF"/"RF"，value 為球員名；
-    # 未指定的位置用聯盟平均（group mu）。任一位置有指定 → 圖只顯示這組站位。
+    # Specified outfielders (player-level ability). Key is "LF"/"CF"/"RF", value is the player name;
+    # unspecified positions use the league average (group mu). If any position is specified → the chart only shows this position set.
     fielders: dict[str, str] | None = None
 
 
@@ -20,7 +20,7 @@ class FielderInfo(BaseModel):
     n_opp:     int   | None = None
     player_id: int   | None = None
     team_id:   int   | None = None
-    official_oaa:   int | None = None   # Statcast 官方 OAA（統一排名頁對照用）
+    official_oaa:   int | None = None   # Official Statcast OAA (for cross-referencing on the unified rankings page)
     official_n_opp: int | None = None
 
 
@@ -34,7 +34,7 @@ class PositionSet(BaseModel):
     CF: PositionXY
     RF: PositionXY
     objective: float
-    catch_pct: float     # 平均接殺率 mean(p̂_j)
+    catch_pct: float     # average catch probability, mean(p̂_j)
 
 
 class BallPoint(BaseModel):
@@ -42,8 +42,8 @@ class BallPoint(BaseModel):
     y:            float
     catch_prob:   float
     is_wall_ball: bool
-    responsible:  str | None = None   # 'LF'/'CF'/'RF'，None = 接殺機率不足 5%
-    bb_type:      str | None = None   # 'fly_ball'/'line_drive'（整合頁球種篩選用）
+    responsible:  str | None = None   # 'LF'/'CF'/'RF', None = catch probability below 5%
+    bb_type:      str | None = None   # 'fly_ball'/'line_drive' (for batted-ball-type filtering on the integrated page)
 
 
 class ParkCoord(BaseModel):
@@ -74,7 +74,7 @@ class BatterInfo(BaseModel):
     n_balls:   int
 
 
-# ── 內野（結果全部離線預算，見 scripts/precompute_if_optimize.py）─────
+# ── Infield (results are all precomputed offline, see scripts/precompute_if_optimize.py) ─────
 
 class IFBatterInfo(BaseModel):
     batter_id: int
@@ -84,20 +84,20 @@ class IFBatterInfo(BaseModel):
 
 
 class IFPosition(BaseModel):
-    x:     float   # 呎，本壘原點，+x 朝一壘側
+    x:     float   # feet, home plate as origin, +x toward the 1B side
     y:     float
-    angle: float   # 度，0=正對中外野，+朝一壘側
-    depth: float   # 呎
+    angle: float   # degrees, 0=facing straight to center field, + toward the 1B side
+    depth: float   # feet
 
 
 class IFPositionSet(BaseModel):
     positions: dict[str, IFPosition]   # keys: "1B"/"2B"/"3B"/"SS"
-    exp_outs:  float                   # 期望出局率（打者歷史滾地球平均 P(out)）
+    exp_outs:  float                   # expected out rate (average P(out) over the batter's historical ground balls)
 
 
 class IFBallPoint(BaseModel):
     spray_deg:    float
-    x:            float   # 呎，Statcast 記錄的處理/撿球位置（展示用，非落點）
+    x:            float   # feet, the fielding/pickup location recorded by Statcast (for display, not the landing spot)
     y:            float
     launch_speed: float
     is_out:       bool
@@ -108,7 +108,7 @@ class IFBallPoint(BaseModel):
 class IFStats(BaseModel):
     n_gb:         int
     gain:         float   # exp_outs_opt − exp_outs_league
-    outs_per_450: float   # gain × 450（一季規模的滾地球數）
+    outs_per_450: float   # gain × 450 (a season-scale ground ball count)
     hp_to_1b:     float
 
 
@@ -127,16 +127,17 @@ class IFFielderInfo(BaseModel):
     name:           str
     player_id:      int
     team_id:        int | None = None
-    oaa:            float          # model OAA（分位置中心化）
+    oaa:            float          # model OAA (centered by position)
     n_balls:        int
     official_oaa:   int | None = None
     official_n_opp: int | None = None
 
 
 class IFFielderOption(BaseModel):
-    """野手選單項（個人化站位用）。has_effects=False 表示無球員層估計，
-    選了等同聯盟平均。oaa/n_balls 來自 if_model_oaa（該年該位置的評價），
-    無紀錄則為 None（前端標籤與最低守備次數滑桿用）。"""
+    """A fielder menu entry (for personalized positioning). has_effects=False means there's
+    no player-level estimate, so selecting them is equivalent to the league average. oaa/n_balls
+    come from if_model_oaa (that year's/position's rating); no record means None
+    (used for the frontend label and the minimum-opportunities slider)."""
     player_id:   int
     name:        str
     has_effects: bool
@@ -144,7 +145,7 @@ class IFFielderOption(BaseModel):
     n_balls:     int   | None = None
 
 
-# ── 內野線上優化（外野 /api/optimize 的內野鏡像：壘況+野手，run-value 計價）──
+# ── Infield live optimization (infield mirror of outfield /api/optimize: base state + fielders, run-value pricing) ──
 
 class IFOptimizeRequest(BaseModel):
     batter_id: int
@@ -153,25 +154,25 @@ class IFOptimizeRequest(BaseModel):
     on_2b: int = Field(0, ge=0, le=1)
     on_3b: int = Field(0, ge=0, le=1)
     outs:  int = Field(0, ge=0, le=2)
-    # 指定內野手（球員層效應）。key 為 "1B"/"2B"/"3B"/"SS"，value 為 player_id；
-    # 未指定的位置視為聯盟平均野手（效應 0）。
+    # Specified infielders (player-level effects). Key is "1B"/"2B"/"3B"/"SS", value is player_id;
+    # unspecified positions are treated as a league-average fielder (effect 0).
     fielders: dict[str, int] | None = None
 
 
 class IFOptimizeSet(BaseModel):
     positions: dict[str, IFPosition]   # keys: "1B"/"2B"/"3B"/"SS"
-    exp_outs:  float                   # 期望出局率（打者滾地球平均 P(out)）
-    runs:      float                   # 期望失分 E[ΔRE]×n_gb（該壘況，越低越好）
+    exp_outs:  float                   # expected out rate (average P(out) over the batter's ground balls)
+    runs:      float                   # expected runs, E[ΔRE]×n_gb (for this base state, lower is better)
 
 
 class IFOptimizeStats(BaseModel):
     n_gb:          int
     re_state:      float
     hp_to_1b:      float
-    gain_outs:     float   # 出局率增益（最佳化 − 聯盟平均）
+    gain_outs:     float   # out-rate gain (optimized − league average)
     outs_per_450:  float
-    runs_saved:    float   # 省分（聯盟平均 runs − 最佳化 runs，正=較省）
-    runs_per_450:  float   # 每 450 顆滾地球的省分
+    runs_saved:    float   # runs saved (league-average runs − optimized runs, positive = better)
+    runs_per_450:  float   # runs saved per 450 ground balls
 
 
 class IFOptimizeResponse(BaseModel):
@@ -180,14 +181,14 @@ class IFOptimizeResponse(BaseModel):
     year:      int
     stand:     str
     situation: str
-    fielders:  dict[str, str | None]   # pos → 野手名（None=聯盟平均）
+    fielders:  dict[str, str | None]   # pos → fielder name (None = league average)
     league:    IFOptimizeSet
     optimized: IFOptimizeSet
     balls:     list[IFBallPoint]
     stats:     IFOptimizeStats
 
 
-# ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──
+# ── Infield/outfield integration (unified pricing = expected runs, see ARCHITECTURE.md "Infield/outfield integration route") ──
 
 class IntegratedRequest(BaseModel):
     batter_id: int
@@ -196,33 +197,34 @@ class IntegratedRequest(BaseModel):
     on_2b: int = Field(0, ge=0, le=1)
     on_3b: int = Field(0, ge=0, le=1)
     outs:  int = Field(0, ge=0, le=2)
-    # 球場（外野牆因素，同 /api/optimize：打牆球接殺機率強制 0＋第二次
-    # warm start 優化）。None = 通用球場。內野無牆不受影響。
+    # Park (outfield wall factor, same as /api/optimize: wall-ball catch probability forced to 0 +
+    # a second warm-start optimization pass). None = generic park. Infield has no wall, so it's unaffected.
     home_team: str | None = None
-    # 指定野手（未指定的位置＝聯盟平均）。外野用球員名（同 /api/optimize，
-    # load_player_params 的鍵）；內野用 player_id（同 /api/if_optimize 的
-    # 貝葉斯球員層效應）。
-    of_fielders: dict[str, str] | None = None   # "LF"/"CF"/"RF" → 球員名
+    # Specified fielders (unspecified positions = league average). Outfield uses player names (same as
+    # /api/optimize, the key used by load_player_params); infield uses player_id (same as the Bayesian
+    # player-level effects used by /api/if_optimize).
+    of_fielders: dict[str, str] | None = None   # "LF"/"CF"/"RF" → player name
     if_fielders: dict[str, int] | None = None   # "1B"/"2B"/"3B"/"SS" → player_id
 
 
 class IntegratedSet(BaseModel):
-    """一組七人站位與其期望失分（打者該季擊球加總，越低越好）。
+    """A seven-fielder position set and its expected runs (summed over the batter's batted balls that season, lower is better).
 
-    完整 ΔRE 口徑（內外野同尺度）：runs_of = Σ[(1−p̂)×w_j＋p̂×ΔRE(out)]、
-    runs_if = E[ΔRE]×n_gb。出局的 ΔRE 為負，所以內野側常為負（守方賺）。
-    優化可分離（滾地歸內野/飛球歸外野），runs_total = 兩側相加即聯合口徑。
-    league 組＝平均站位＋平均參數；optimized 組掛指定野手參數。"""
+    Full ΔRE accounting (same scale for infield and outfield): runs_of = Σ[(1−p̂)×w_j＋p̂×ΔRE(out)],
+    runs_if = E[ΔRE]×n_gb. An out drives ΔRE negative, so the infield side is usually negative
+    (a gain for the defense). The optimization is separable (ground balls go to the infield, fly balls
+    to the outfield), so runs_total = summing both sides gives the joint accounting.
+    The league set = average positions + average parameters; the optimized set carries the specified fielders' parameters."""
     positions:  dict[str, PositionXY]   # keys: LF/CF/RF/1B/2B/3B/SS
-    catch_pct:  float = 0.0             # 外野平均接殺機率 %（含打牆球=0）
-    exp_outs_if: float = 0.0            # 內野滾地平均 P(out)
+    catch_pct:  float = 0.0             # outfield average catch probability % (wall balls counted as 0)
+    exp_outs_if: float = 0.0            # infield ground-ball average P(out)
     runs_of:    float
     runs_if:    float
     runs_total: float
 
 
 class PopupBall(BaseModel):
-    """展示用內野高飛（不參與優化——站位無槓桿，出局率 98.6%）。"""
+    """Infield popup for display only (not part of the optimization — positioning has no leverage, out rate is 98.6%)."""
     x:      float
     y:      float
     is_out: bool
@@ -231,11 +233,11 @@ class PopupBall(BaseModel):
 class IntegratedStats(BaseModel):
     n_of_balls:       int
     n_gb:             int
-    n_popups:         int = 0  # 展示用，不在任何 runs 計算內
-    n_wall_balls:     int = 0  # 指定球場時的打牆球數（接殺機率強制 0）
+    n_popups:         int = 0  # for display only, not included in any runs calculation
+    n_wall_balls:     int = 0  # wall-ball count when a park is specified (catch probability forced to 0)
     home_team:        str | None = None
     re_state:         float
-    runs_saved_of:    float   # league − optimized（正=最佳化較省分）
+    runs_saved_of:    float   # league − optimized (positive = optimized saves more runs)
     runs_saved_if:    float
     runs_saved_total: float
 
@@ -248,16 +250,16 @@ class IntegratedResponse(BaseModel):
     situation: str
     league:    IntegratedSet
     optimized: IntegratedSet
-    of_balls:  list[BallPoint]     # catch_prob 為最佳化站位下的接殺機率
+    of_balls:  list[BallPoint]     # catch_prob is the catch probability under the optimized positioning
     if_balls:  list[IFBallPoint]
-    popup_balls: list[PopupBall] = []  # 展示用（雲端表未 sync 時為空）
-    park_boundary: list[ParkCoord] | None = None  # 指定球場時的牆線
-    fielders:  dict[str, str | None] = {}  # 七位置 → 野手名（None=聯盟平均）
+    popup_balls: list[PopupBall] = []  # for display only (empty if the cloud table isn't synced)
+    park_boundary: list[ParkCoord] | None = None  # wall outline when a park is specified
+    fielders:  dict[str, str | None] = {}  # seven positions → fielder name (None = league average)
     stats:     IntegratedStats
 
 
 class IntegratedBatterInfo(BaseModel):
-    """整合頁打者選單項。n_total = 滾地＋外野飛球/平飛＋popup（圖上會出現的球）。"""
+    """A batter menu entry for the integrated page. n_total = ground balls + outfield fly balls/line drives + popups (all balls that appear in the chart)."""
     batter_id: int
     name:      str
     n_total:   int
@@ -265,16 +267,16 @@ class IntegratedBatterInfo(BaseModel):
 
 
 class IFCustomResultResponse(BaseModel):
-    """指定野手陣容的個人化結果。optimized 為錨定式解（從零效應最佳解
-    warm start）。比較基準＝平均站位＋平均參數：p_out_league / league 在
-    效應 0 下評估，p_out_opt / optimized 才掛陣容效應。"""
+    """Personalized result for a specified fielder lineup. optimized is the anchored solution (warm-started
+    from the zero-effect optimum). Comparison baseline = average positions + average parameters: p_out_league / league
+    is evaluated under zero effect, while p_out_opt / optimized carries the lineup's effects."""
     batter_id:         int
     name:              str
     year:              int
     stand:             str
-    fielders:          dict[str, str | None]   # pos → 野手名（None=聯盟平均）
-    league:            IFPositionSet           # 聯盟平均站位（陣容效應下評估）
-    optimized:         IFPositionSet           # 錨定式個人化最佳解
-    baseline_exp_outs: float                   # 零效應最佳站位在陣容效應下的期望出局率
+    fielders:          dict[str, str | None]   # pos → fielder name (None = league average)
+    league:            IFPositionSet           # league-average positions (evaluated under the lineup's effects)
+    optimized:         IFPositionSet           # anchored personalized optimum
+    baseline_exp_outs: float                   # expected out rate of the zero-effect optimal positioning, evaluated under the lineup's effects
     balls:             list[IFBallPoint]
     stats:             IFStats

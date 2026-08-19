@@ -1,9 +1,10 @@
 """
 Baseball Defense Optimizer — FastAPI backend
 
-完整端點清單見 ARCHITECTURE.md「API（FastAPI）」章節。
-POST /api/optimize 系列耗時受 n_restarts/併發影響，實測數字見 ARCHITECTURE.md「已知效能限制」章節，
-不在這裡重複維護避免兩處數字不同步。
+See the ARCHITECTURE.md "API (FastAPI)" section for the full endpoint list.
+The POST /api/optimize family's latency depends on n_restarts/concurrency; see the
+ARCHITECTURE.md "Known performance limits" section for measured numbers — not duplicated
+here to avoid the two places drifting out of sync.
 """
 import json
 import logging
@@ -74,8 +75,8 @@ class IFBatterEntry(TypedDict):
 
 
 class FielderCacheEntry(TypedDict):
-    """_load_fielders() 的精簡快取形狀（僅供啟動時存在性檢查/計數，
-    完整欄位見 get_fielders() 端點自己查的 FielderEntry）。"""
+    """The lightweight cache shape returned by _load_fielders() (only used for the startup
+    existence check/count; see FielderEntry, which get_fielders() queries directly, for the full field set)."""
     name: str
     oaa: float
     n_opp: int
@@ -100,19 +101,20 @@ class IFFielderOptionEntry(TypedDict):
     n_balls: int | None
 
 
-# Render 免費方案只有 0.1 CPU：多個 optimize_positions 同時跑會互搶 CPU、
-# 讓每一個都變慢（實測：單獨跑 50s，兩個同時跑各要 70~80s）。用 semaphore
-# 把 CPU 密集的優化計算序列化，避免併發請求（如比較模式 A/B 同時送出）互相拖慢。
+# Render's free tier only has 0.1 CPU: multiple optimize_positions runs at the same time
+# fight over CPU and slow each other down (measured: 50s running alone, ~70-80s each when
+# two run concurrently). Use a semaphore to serialize the CPU-intensive optimization
+# calls, so concurrent requests (e.g. compare mode A/B sent together) don't drag each other down.
 _optimize_semaphore = threading.Semaphore(1)
 
-# 掃描哪些年份有模型 summary
+# Scan which years have a model summary
 _AVAILABLE_YEARS: list[int] = sorted(
     y for y in range(2020, 2030)
     if (BASE / "models" / str(y) / "OF" / "OF_summary_players.csv").exists()
 )
 _DEFAULT_YEAR: int = _AVAILABLE_YEARS[-1] if _AVAILABLE_YEARS else 2025
 
-# ── 啟動快取 ──────────────────────────────────────────────────────
+# ── Startup caches ──────────────────────────────────────────────────────
 _name_map:    dict[int, str]  = {}
 _re24_table: dict[BaseOutState, float] | None = None
 _delta_re:   dict[HitDeltaKey, float] | None = None
@@ -123,39 +125,39 @@ _scalers:       dict[int, dict[str, StandardScaler]] = {}   # year → pos → s
 _mus:           dict[int, dict[str, GroupMu]] = {}           # year → pos → mus
 _batters_cache: dict[int, list[BatterEntry]] = {}             # year → list[{batter_id, name, n_balls}]
 
-# ── 打者資料快取（同打者換壘況時跳過 DB 查詢與 KDE）───────────────
+# ── Batter data cache (skip the DB query and KDE when the same batter switches base states) ───────────────
 _batter_balls_cache:    dict[int, dict[int, pd.DataFrame]] = {}  # year → batter_id → DataFrame
 _batter_hitprobs_cache: dict[int, dict[int, np.ndarray]] = {}    # year → batter_id → ndarray
 
-# ── Rankings 多年份快取（year → ...）────────────────────────────
+# ── Rankings multi-year cache (year → ...) ────────────────────────────
 _fielders_cache: dict[int, dict[str, list[FielderCacheEntry]]] = {}  # year → pos → list
 _model_names:    dict[int, dict[str, set[str]]]           = {}  # year → pos → name set
 _team_map:       dict[int, dict[int, int]]                = {}  # year → player_id → team_id
 
-# ── 內野快取（結果全部離線預算，見 scripts/precompute_if_optimize.py）──
+# ── Infield caches (results are all precomputed offline, see scripts/precompute_if_optimize.py) ──
 IF_POSITIONS: tuple[str, ...] = ("1B", "2B", "3B", "SS")
-_if_years:          list[int] = []                       # precomputed_if_positions 有的年份
-_if_ranking_years:  list[int] = []                       # if_model_oaa 有的年份
+_if_years:          list[int] = []                       # years present in precomputed_if_positions
+_if_ranking_years:  list[int] = []                       # years present in if_model_oaa
 _if_batters_cache:  dict[int, list[IFBatterEntry]] = {}      # year → [{batter_id, name, n_gb, stand}]
 _if_league:         dict[int, dict[str, list[float]]] = {}  # year → pos → [angle, depth]
 _if_team_map:       dict[int, dict[int, int]] = {}       # year → player_id → team_id
-# 個人化站位（貝葉斯球員層，見 scripts/train_if_bayes.py / export_if_bayes.py）
-_if_bayes_model: Pipeline | None = None                   # 群體層 pipeline（joblib）
+# Personalized positioning (Bayesian player-level layer, see scripts/train_if_bayes.py / export_if_bayes.py)
+_if_bayes_model: Pipeline | None = None                   # group-level pipeline (joblib)
 _if_effects:        dict[int, tuple[float, float]] = {}  # player_id → (alpha, g)
 _if_ad_norm:        tuple[float, float] | None = None    # (ad_mean, ad_std)
 _if_fielder_opts:   dict[int, dict[str, list[IFFielderOptionEntry]]] = {}  # year → pos → options
-# 安打類型模型（run-value 計價，內外野整合頁用，見 src/if_runvalue.py）
+# Batted-ball-type model (run-value pricing, used by the infield/outfield integration page, see src/if_runvalue.py)
 _if_xb_model: Pipeline | None = None
-# 階段B：一壘有人 DP 優化資產（models/if_gb/on1b/，見 src/if_dp_optimize.py）
-_if_dp_out_model: Pipeline | None = None                  # 兩段 GLM：P(≥1 出局)
-_if_dp_model: Pipeline | None = None                      # 兩段 GLM：P(DP|≥1 出局)
+# Phase B: runner-on-1B DP optimization assets (models/if_gb/on1b/, see src/if_dp_optimize.py)
+_if_dp_out_model: Pipeline | None = None                  # two-stage GLM: P(≥1 out)
+_if_dp_model: Pipeline | None = None                      # two-stage GLM: P(DP|≥1 out)
 _if_on1b_league: dict[str, tuple[float, float]] = {}      # pos → (angle, depth)
-_if_on1b_runner_hp: float | None = None                   # 聯盟跑者 hp_to_1b 中位數
+_if_on1b_runner_hp: float | None = None                   # league median runner hp_to_1b
 
 
 def _load_infield_caches() -> None:
-    """內野快取。資料表可能還沒建立/還沒 sync 到這顆 DB，缺了不中斷啟動，
-    內野端點會回空清單/404。"""
+    """Infield caches. The tables may not exist yet / may not have synced to this DB;
+    a missing table doesn't stop startup, and the infield endpoints will return empty lists/404."""
     league_json = PRE_DIR / "if_league_positions.json"
     if league_json.exists():
         raw = json.loads(league_json.read_text(encoding="utf-8"))
@@ -200,7 +202,7 @@ def _load_infield_caches() -> None:
 
 
 def _load_if_xb() -> None:
-    """安打類型模型（P(長打|滾地安打)）。缺了不中斷啟動，整合端點回 503。"""
+    """Batted-ball-type model (P(extra-base hit | ground ball)). Missing doesn't stop startup; the integration endpoint returns 503."""
     global _if_xb_model
     import joblib
     try:
@@ -211,9 +213,10 @@ def _load_if_xb() -> None:
 
 
 def _load_if_dp() -> None:
-    """階段B（一壘有人 DP 優化）資產：兩段 GLM＋離線常數（聯盟一壘有人站位、
-    跑者中位速度，scripts/precompute_if_on1b_constants.py 產）。缺了不中斷啟動，
-    /api/if_optimize 在該壘況退回現行無壘況 run-value 精修。"""
+    """Phase B (runner-on-1B DP optimization) assets: two-stage GLMs + offline constants
+    (league runner-on-1B positioning, runner median speed, produced by
+    scripts/precompute_if_on1b_constants.py). Missing doesn't stop startup;
+    /api/if_optimize falls back to the current no-runner-state run-value refinement for that base state."""
     global _if_dp_out_model, _if_dp_model, _if_on1b_runner_hp
     import joblib
     try:
@@ -232,8 +235,8 @@ def _load_if_dp() -> None:
 
 
 def _load_if_bayes() -> None:
-    """個人化站位資產：貝葉斯群體層 pipeline＋球員效應＋野手選單。缺了不中斷
-    啟動，/api/if_fielder_options 與 /api/if_result_custom 回 404/503。"""
+    """Personalized positioning assets: Bayesian group-level pipeline + player effects + fielder menu.
+    Missing doesn't stop startup; /api/if_fielder_options and /api/if_result_custom return 404/503."""
     global _if_bayes_model, _if_ad_norm
     import joblib
 
@@ -253,8 +256,9 @@ def _load_if_bayes() -> None:
 
 
 def _load_if_fielder_menu() -> None:
-    """野手選單快取。獨立成函式：啟動時對 DB 的暫時性失敗不該讓功能死到重啟
-    （2026-07-13 線上實例即因此選單 404），if_fielder_options 會惰性重試。"""
+    """Fielder menu cache. Split out into its own function: a transient DB failure at startup
+    shouldn't kill the feature until the next restart (this is exactly what caused the menu
+    to 404 on the live instance on 2026-07-13) — if_fielder_options retries lazily."""
     try:
         opts: dict[int, dict[str, list[IFFielderOptionEntry]]] = {}
         with psycopg2.connect(DSN) as conn:
@@ -263,7 +267,7 @@ def _load_if_fielder_menu() -> None:
                 if cur.fetchone()[0] is None:
                     logger.warning("fielder_positioning 不存在，野手選單停用")
                     return
-                # 該年該位置的模型評價（標籤 OAA/100 與最低守備次數滑桿用）
+                # This year/position's model rating (used for the OAA/100 label and the minimum-opportunities slider)
                 oaa_map: dict[tuple[int, str, int], tuple[float, int]] = {}
                 cur.execute("SELECT to_regclass('if_model_oaa')")
                 if cur.fetchone()[0] is not None:
@@ -294,9 +298,10 @@ def _load_if_fielder_menu() -> None:
             rate = _oaa_rate(option)
             return (-rate if rate is not None else float("inf"), option["name"])
 
-        # 純 OAA/100 降序（同外野選單）；無評價的墊底按名字。
-        # 不拿 has_effects 當排序鍵——它會把「有標籤但無效應」的人踢到底部，
-        # 看起來像降序被打斷（2026-07-14 使用者回報）
+        # Pure descending OAA/100 (same as the outfield menu); those without a rating sort to the
+        # bottom by name. Don't use has_effects as a sort key — it would kick "has a label but no
+        # effect" players to the bottom, which looks like the descending order got broken
+        # (reported by the user on 2026-07-14)
         for year_options in opts.values():
             for position_options in year_options.values():
                 position_options.sort(key=_sort_key)
@@ -308,7 +313,7 @@ def _load_if_fielder_menu() -> None:
 
 
 def _load_fielders(year: int) -> dict[str, list[FielderCacheEntry]]:
-    """指定年度每位置外野手清單（需要該年 models/{year}/OF/OF_summary_players.csv）。"""
+    """Per-position outfielder list for a given year (requires that year's models/{year}/OF/OF_summary_players.csv)."""
     import re
 
     models_dir  = BASE / "models" / str(year) / "OF"
@@ -357,8 +362,9 @@ _MLB_TEAM_IDS = {
 }
 
 def _load_team_info(player_ids: list[int], season: int) -> dict[int, int]:
-    """MLB Stats API 批次查指定賽季守備 splits 取 MLB 球隊（player_id → team_id）。
-    traded players 取出賽數最多的 MLB 球隊。失敗不中斷啟動。"""
+    """Batch-query the MLB Stats API for a season's fielding splits to get the MLB team
+    (player_id → team_id). For traded players, takes the MLB team with the most games played.
+    Failure doesn't stop startup."""
     import requests
     result: dict[int, int] = {}
     for i in range(0, len(player_ids), 500):
@@ -398,19 +404,19 @@ def _load_batters(year: int) -> list[QualifyingBatter]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _re24_table, _delta_re, _hit_bundle
 
-    # 名稱快取
+    # Name cache
     name_path = BASE / "data" / "reference" / "batter_names.json"
     if name_path.exists():
         raw = json.loads(name_path.read_text(encoding="utf-8"))
         _name_map.update({int(k): v for k, v in raw.items()})
     logger.info(f"Loaded {len(_name_map)} batter names")
 
-    # 預計算資料（RE24 / hit prob KDE — 年份無關）
+    # Precomputed data (RE24 / hit prob KDE — year-independent)
     _re24_table, _delta_re = load_re24(PRE_DIR)
     _hit_bundle  = load_hit_prob(PRE_DIR)
     logger.info("Preloaded RE24, KDE")
 
-    # 各年度：打者清單 + 模型參數
+    # Per year: batter list + model parameters
     for yr in _AVAILABLE_YEARS:
         rows = _load_batters(yr)
         _batters_cache[yr] = [
@@ -427,12 +433,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning(f"Could not load model params for {yr}: {e}")
 
-    # 各年度外野手清單（同時建立 _model_names 供動態查詢用）
+    # Per-year outfielder list (also builds _model_names for dynamic lookups)
     logger.info(f"Available ranking years: {_AVAILABLE_YEARS}")
     for yr in _AVAILABLE_YEARS:
         _fielders_cache[yr] = _load_fielders(yr)
         logger.info(f"  {yr}: " + ", ".join(f"{p}={len(_fielders_cache[yr][p])}" for p in POSITIONS))
-        # 查全部球員的 player_id（不限 n_opp），確保低機會球員也有球隊資訊
+        # Look up player_id for all players (not limited by n_opp), so low-opportunity players still have team info
         with psycopg2.connect(DSN) as conn:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -473,9 +479,9 @@ def get_years() -> list[int]:
 
 
 def _compute_avg_oaa_per_ball(rows: list[tuple], yr_model_names: dict[str, set[str]]) -> float:
-    """跨 LF+CF+RF 統一中心化用的聯盟平均：只用有模型參數的球員計算。
+    """League average used for unified centering across LF+CF+RF: computed only from players who have model parameters.
 
-    rows: (name, position, model_oaa, n_opp, ...) 的可迭代物件，只用前四欄。
+    rows: an iterable of (name, position, model_oaa, n_opp, ...); only the first four columns are used.
     """
     visible = [(float(oaa), int(n))
                for name, pos, oaa, n, *_ in rows
@@ -574,7 +580,7 @@ class StarStatsEntry(TypedDict):
 
 @app.get("/api/star_stats")
 def get_star_stats(year: int = _DEFAULT_YEAR) -> dict[str, StarStatsEntry]:
-    # 讀我方模型算出的星級分布（model_star_stats），跨位置已合併
+    # Read the star-rating distribution computed by our model (model_star_stats), already merged across positions
     _SQL = """
         SELECT name_fielder,
                n_opp_0stars, n_fieldout_0stars,
@@ -609,7 +615,7 @@ def get_star_stats(year: int = _DEFAULT_YEAR) -> dict[str, StarStatsEntry]:
     return result
 
 
-# ── 內野端點（結果全部離線預算，查表即回，無運算）───────────────────
+# ── Infield endpoints (results are all precomputed offline, just a table lookup, no computation) ───────────────────
 
 @app.get("/api/if_years")
 def if_years() -> list[int]:
@@ -632,14 +638,16 @@ class IntegratedBatterEntry(TypedDict):
     n_total: int
 
 
-_integrated_batters_cache: dict[int, list[IntegratedBatterEntry]] = {}   # year → 選單（含全部球數）
+_integrated_batters_cache: dict[int, list[IntegratedBatterEntry]] = {}   # year → menu (includes total ball counts)
 
 
 @app.get("/api/integrated_batters", response_model=list[IntegratedBatterInfo])
 def integrated_batters(year: int | None = None) -> list[IntegratedBatterEntry]:
-    """整合頁打者選單：內野合格打者（滾地 ≥ 50 的離線預算名單；曾納入
-    OF-only 打者後又移除——樣本不足的退化體驗不佳，2026-07-14 使用者定案）。
-    括號顯示的是圖上會出現的全部球數（滾地＋外野飛球/平飛＋popup）。"""
+    """Batter menu for the integrated page: qualifying infield batters (the offline precomputed
+    list of ground balls ≥ 50; OF-only batters were briefly included then removed — the degraded
+    experience from insufficient samples wasn't good, decided by the user on 2026-07-14).
+    The number shown in parentheses is the total ball count that appears in the chart
+    (ground balls + outfield fly balls/line drives + popups)."""
     if year is None and _if_years:
         year = _if_years[-1]
     if year not in _if_batters_cache:
@@ -676,10 +684,10 @@ IfBatterData = tuple[str, int, float, np.ndarray, np.ndarray, list[tuple], pd.Da
 
 
 def _load_if_batter(batter_id: int, year: int) -> IfBatterData:
-    """precomputed 出局率最佳解＋打者滾地球（內野線上端點共用）。
+    """The precomputed out-rate optimum + the batter's ground balls (shared across the infield live endpoints).
 
-    回傳 (stand, n_gb, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_df)；
-    balls_df 已補 launch_angle 缺值、附 hp_to_1b / stand_R 特徵欄。"""
+    Returns (stand, n_gb, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_df);
+    balls_df already has launch_angle nulls filled in and carries the hp_to_1b / stand_R feature columns."""
     with psycopg2.connect(DSN) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -713,7 +721,7 @@ def _load_if_batter(batter_id: int, year: int) -> IfBatterData:
 
 
 def _if_player_effects(fids: dict[str, int | None]) -> PlayerEffects:
-    """指定野手 → 球員層效應（未指定=聯盟平均，效應 0）。"""
+    """Specified fielders → player-level effects (unspecified = league average, effect 0)."""
     assert _if_ad_norm is not None
 
     def _effect(player_id: int | None, component: int) -> float:
@@ -728,7 +736,7 @@ def _if_player_effects(fids: dict[str, int | None]) -> PlayerEffects:
 
 
 def _fielder_display_name(fids: dict[str, int | None], pos: str) -> str | None:
-    """指定野手的顯示名稱；未指定（None）時回傳 None（前端顯示為聯盟平均）。"""
+    """Display name of the specified fielder; returns None when unspecified (the frontend shows this as league average)."""
     player_id = fids.get(pos)
     if player_id is None:
         return None
@@ -736,7 +744,7 @@ def _fielder_display_name(fids: dict[str, int | None], pos: str) -> str | None:
 
 
 def _outfield_xy(result: OptimizeResult) -> OutfieldXY:
-    """optimize_positions() 回傳的 OptimizeResult 只取 LF/CF/RF 站位座標。"""
+    """Extract only the LF/CF/RF position coordinates from the OptimizeResult returned by optimize_positions()."""
     return {"LF": result["LF"], "CF": result["CF"], "RF": result["RF"]}
 
 
@@ -798,11 +806,11 @@ def if_result(batter_id: int, year: int) -> IFResultResponse:
 
 @app.get("/api/if_fielder_options", response_model=dict[str, list[IFFielderOption]])
 def if_fielder_options(year: int = 2025) -> dict[str, list[IFFielderOptionEntry]]:
-    """個人化站位的野手選單（該年有站位資料的野手，依位置分組）。"""
+    """Fielder menu for personalized positioning (fielders with positioning data for that year, grouped by position)."""
     if _if_bayes_model is None:
         raise HTTPException(503, "個人化模型未載入")
     if year not in _if_fielder_opts:
-        _load_if_fielder_menu()  # 啟動時可能因暫時性 DB 失敗而空，惰性重建
+        _load_if_fielder_menu()  # may be empty at startup due to a transient DB failure — lazily rebuild
     if year not in _if_fielder_opts:
         raise HTTPException(404, f"No fielder options for year {year}")
     return _if_fielder_opts[year]
@@ -812,9 +820,10 @@ def if_fielder_options(year: int = 2025) -> dict[str, list[IFFielderOptionEntry]
 def if_result_custom(batter_id: int, year: int,
                      fielder_1b: int | None = None, fielder_2b: int | None = None,
                      fielder_3b: int | None = None, fielder_ss: int | None = None) -> IFCustomResultResponse:
-    """指定野手陣容的個人化站位（錨定式：從零效應最佳解 warm start 局部優化，
-    位移只反映球員效應的拉力，不是平坦地形的等值漂移——見 ARCHITECTURE.md
-    「內野貝葉斯球員層」）。未指定的位置視為聯盟平均野手（效應 0）。"""
+    """Personalized positioning for a specified fielder lineup (anchored: local optimization
+    warm-started from the zero-effect optimum, so the displacement reflects only the pull of
+    player effects, not equivalent drift over flat terrain — see ARCHITECTURE.md
+    "Infield Bayesian player layer"). Unspecified positions are treated as a league-average fielder (effect 0)."""
     if _if_bayes_model is None:
         raise HTTPException(503, "個人化模型未載入")
     if year not in _if_years:
@@ -835,7 +844,7 @@ def if_result_custom(batter_id: int, year: int,
     }
     lg_angles = np.array([league_pairs[p][0] for p in IF_POSITIONS])
     lg_depths = np.array([league_pairs[p][1] for p in IF_POSITIONS])
-    # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
+    # Baseline = average positions + average parameters (effect 0); only the optimized set carries the specified fielders' effects
     exp_league = if_expected_outs(_if_bayes_model, balls, lg_angles, lg_depths)
     baseline = if_expected_outs(_if_bayes_model, balls, opt_angles, opt_depths, pe)
     p_league = predict_p_out(_if_bayes_model, balls, lg_angles, lg_depths)
@@ -904,7 +913,7 @@ def if_fielders(year: int = 2025, min_balls: int = 100) -> dict[str, list[IFFiel
     return result
 
 
-# ── 內野線上優化（外野 /api/optimize 的內野鏡像）──────────────────
+# ── Infield live optimization (infield mirror of outfield /api/optimize) ──────────────────
 
 class IfDpSolution(TypedDict):
     angles3: np.ndarray
@@ -918,12 +927,13 @@ class IfDpSolution(TypedDict):
 
 def _solve_if_dp(balls: pd.DataFrame, state: BaseOutState, warm_angles: np.ndarray,
                  warm_depths: np.ndarray, pe: PlayerEffects | None) -> IfDpSolution:
-    """階段B DP 解（僅一壘有人、<2 出局）：/api/if_optimize 與整合端點共用。
+    """Phase B DP solution (runner on 1B only, <2 outs): shared by /api/if_optimize and the integration endpoint.
 
-    balls 就地補 runner_hp_to_1b 常數欄；warm_angles/depths＝precomputed
-    出局率最佳解（含 1B，取 2B/3B/SS 當起點）。起點配置同跨年驗證
-    （LHS 8＋無壘況解＋聯盟站位），指定野手時錨定式精修（anchored_starts
-    避 kink）。scorer 掛 pe 評最佳化組、scorer_base 效應 0 評聯盟基準。
+    balls gets the runner_hp_to_1b constant column added in place; warm_angles/depths = the precomputed
+    out-rate optimum (includes 1B, uses 2B/3B/SS as the starting point). The starting-point setup matches
+    the cross-year validation (LHS 8 + no-runner-state solution + league positions); when fielders are
+    specified, refine with the anchored approach (anchored_starts avoids kinks). scorer carries pe to
+    evaluate the optimized set, scorer_base has effect 0 to evaluate the league baseline.
     """
     assert _re24_table is not None and _delta_re is not None
     balls["runner_hp_to_1b"] = _if_on1b_runner_hp
@@ -941,7 +951,7 @@ def _solve_if_dp(balls: pd.DataFrame, state: BaseOutState, warm_angles: np.ndarr
                                   double_play_delta_re, n_restarts=8, seed=42,
                                   extra_starts=starts)
         if pe is not None:
-            # 錨點常卡在 kink 上（見 anchored_starts docstring），加小抖動起點
+            # The anchor point often gets stuck on a kink (see the anchored_starts docstring), so add slightly jittered starting points
             anchor = positions_to_params_dp(res["angles"], res["depths"])
             res = optimize_infield_dp(balls, _if_dp_out_model, _if_dp_model,
                                       pinned_1b, miss_cost, single_out_delta_re,
@@ -960,18 +970,21 @@ def _solve_if_dp(balls: pd.DataFrame, state: BaseOutState, warm_angles: np.ndarr
 
 
 def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
-    """僅一壘有人（<2 出局）：階段B DP 優化（src/if_dp_optimize.py）。
+    """Runner on 1B only (<2 outs): Phase B DP optimization (src/if_dp_optimize.py).
 
-    1B 釘死在聯盟 hold-runner 位置、只優化 2B/3B/SS；對照基準＝聯盟一壘有人
-    平均站位（fielder_positioning_on1b 切分的離線常數）。UI 決策（2026-07-13）：
-    只顯示站位——exp_outs / p_out_* / gain_outs 一律是 P(≥1 出局)（口徑同
-    「出局率」），不回傳雙殺機率；runs 仍是雙殺感知的 E[ΔRE]×n_gb。
-    指定野手時掛球員層效應（無人在壘貝葉斯層移植到階段1，見 DPScorer
-    docstring），錨定式：從零效應 DP 最佳解 warm start 精修，同
-    /api/if_result_custom 模式。1B 效應仍參與逐球評估（他附近的球還是他處理），
-    但站位釘死不隨效應動。
-    零效應解的起點配置同跨年驗證（scripts/validate_if_dp.py）：LHS 8＋
-    無壘況最佳解＋聯盟站位，勿在未重做收斂測試前調低。
+    1B is pinned at the league hold-runner position; only 2B/3B/SS are optimized. The comparison
+    baseline = the league's runner-on-1B average positioning (an offline constant split out by
+    fielder_positioning_on1b). UI decision (2026-07-13): only display positioning — exp_outs /
+    p_out_* / gain_outs are always P(≥1 out) (same convention as "out rate"); double-play
+    probability is not returned; runs is still the double-play-aware E[ΔRE]×n_gb.
+    When fielders are specified, player-level effects are carried (the no-runner-on-base Bayesian
+    layer is ported over to Phase 1, see the DPScorer docstring); anchored: refine via warm start
+    from the zero-effect DP optimum, the same pattern as /api/if_result_custom. 1B's effect still
+    participates in the per-ball evaluation (the balls near him are still his to field), but his
+    pinned position doesn't move with the effect.
+    The starting-point setup for the zero-effect solution matches the cross-year validation
+    (scripts/validate_if_dp.py): LHS 8 + no-runner-state optimum + league positions — don't reduce
+    this without redoing the convergence test.
     """
     assert _re24_table is not None
     t_start = time.perf_counter()
@@ -989,7 +1002,7 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
 
     def eval_set(angles3: np.ndarray, depths3: np.ndarray,
                 scorer: DPScorer) -> tuple[np.ndarray, float, float]:
-        """(逐球 p1, 平均 p1, E[ΔRE]×n_gb)。"""
+        """(per-ball p1, average p1, E[ΔRE]×n_gb)."""
         p1 = scorer.per_ball_p1(angles3, depths3)
         runs = scorer.expected_re(angles3, depths3) * len(balls)
         return p1, float(p1.mean()), runs
@@ -1044,14 +1057,16 @@ def _if_optimize_dp(req: IFOptimizeRequest) -> IFOptimizeResponse:
 
 @app.post("/api/if_optimize", response_model=IFOptimizeResponse)
 def if_optimize(req: IFOptimizeRequest) -> IFOptimizeResponse:
-    """打者＋壘況（＋指定野手）→ 內野四人站位與省分。
+    """Batter + base state (+ specified fielders) → infield four-fielder positioning and runs saved.
 
-    站位從離線出局率最佳解 warm start、以該壘況的 run-value 權重精修
-    （兩目標 2025 樣本外實測幾乎同解，見 models/if_gb/runvalue_objective_rows.csv），
-    指定野手時同時掛球員層效應（錨定式，同 /api/if_result_custom）。
-    計價同整合端點：runs = E[ΔRE]×n_gb，省分 = 聯盟平均 − 最佳化。
-    出局機率模型的主範圍是無人在壘，壘況只影響計價權重；例外＝僅一壘有人
-    （<2 出局）切換到階段B DP 優化（_if_optimize_dp）。
+    Positioning is warm-started from the offline out-rate optimum and refined with run-value
+    weights for that base state (the two objectives yield almost the same solution in 2025
+    out-of-sample tests, see models/if_gb/runvalue_objective_rows.csv); when fielders are
+    specified, player-level effects are also carried (anchored, same as /api/if_result_custom).
+    Pricing matches the integration endpoint: runs = E[ΔRE]×n_gb, runs saved = league average − optimized.
+    The out-probability model's primary scope is no runners on base; the base state only affects
+    the pricing weights — the exception is runner on 1B only (<2 outs), which switches to Phase B
+    DP optimization (_if_optimize_dp).
     """
     if _if_bayes_model is None or _if_xb_model is None:
         raise HTTPException(503, "內野模型未載入")
@@ -1085,8 +1100,8 @@ def if_optimize(req: IFOptimizeRequest) -> IFOptimizeResponse:
 
     def eval_set(angles: np.ndarray, depths: np.ndarray,
                 pe_use: PlayerEffects | None) -> tuple[float, float]:
-        """(期望出局率, 期望失分×n_gb)。基準組傳 pe_use=None（平均站位＋
-        平均參數），最佳化組才掛指定野手效應。"""
+        """(expected out rate, expected runs×n_gb). The baseline set passes pe_use=None
+        (average positions + average parameters); only the optimized set carries the specified fielders' effects."""
         eo = if_expected_outs(_if_bayes_model, balls, angles, depths, pe_use)
         runs = (mean_miss_cost - if_expected_outs(_if_bayes_model, balls, angles, depths,
                                                    pe_use, ball_weights=ball_weights)) * len(balls)
@@ -1138,11 +1153,12 @@ def if_optimize(req: IFOptimizeRequest) -> IFOptimizeResponse:
     )
 
 
-# ── 內外野整合（統一計價=期望失分，見 ARCHITECTURE.md「內外野整合路線」）──
+# ── Infield/outfield integration (unified pricing = expected runs, see ARCHITECTURE.md "Infield/outfield integration route") ──
 
 def _load_batter_popups(batter_id: int, year: int) -> list[PopupBall]:
-    """整合頁展示用內野高飛（scripts/precompute_batter_popups.py 產的表）。
-    popup 不參與優化；表還沒建立/沒 sync 到這顆 DB 時回空清單，不擋主流程。"""
+    """Infield popups for display on the integrated page (from the table produced by
+    scripts/precompute_batter_popups.py). Popups are not part of the optimization; returns an
+    empty list without blocking the main flow if the table doesn't exist yet / hasn't synced to this DB."""
     try:
         with psycopg2.connect(DSN) as conn:
             with conn.cursor() as cur:
@@ -1157,23 +1173,28 @@ def _load_batter_popups(batter_id: int, year: int) -> list[PopupBall]:
 
 @app.post("/api/optimize_integrated", response_model=IntegratedResponse)
 def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
-    """打者＋壘況 → 七人站位與總省分。
+    """Batter + base state → seven-fielder positioning and total runs saved.
 
-    計價統一為完整 ΔRE 期望失分（內外野同尺度）：外野 = Σ[(1−p̂)×w_j ＋
-    p̂×ΔRE(out)]、內野 = E[ΔRE]×n_gb（run-value 權重，src/if_runvalue.py）。
-    出局讓 ΔRE 下降，所以滾地球為主的內野側常為負（守方賺）。優化可分離
-    （滾地歸內野、飛球歸外野），兩側各自 vs 同壘況的聯盟平均站位。
-    僅一壘有人（<2 出局）時內野側切換階段B DP 優化（釘 1B＋雙殺感知，
-    _solve_if_dp，同 /api/if_optimize 的切換），聯盟基準改用一壘有人切分
-    的聯盟站位、內野出局率＝P(≥1 出局)。滾地球樣本不足（無 precomputed
-    內野資料）的打者退化成只排外野三人：positions 只有 LF/CF/RF、
-    n_gb=0、runs_if=0。
-    內野從離線出局率最佳解 warm start 精修——兩目標 2025 樣本外實測幾乎同解
-    （models/if_gb/runvalue_objective_rows.csv），錨定式與個人化端點同模式。
-    指定 home_team 時外野同 /api/optimize 一般模式：打牆球接殺機率強制 0
-    計入 RE24，且多跑一次 warm start 的 with_park 優化；內野無牆不受影響。
-    指定野手時：外野掛球員層 mu（of_fielders，球員名）、內野掛貝葉斯效應
-    （if_fielders，player_id），未指定的位置＝聯盟平均。
+    Pricing is unified as full ΔRE expected runs (same scale across infield and outfield):
+    outfield = Σ[(1−p̂)×w_j ＋ p̂×ΔRE(out)], infield = E[ΔRE]×n_gb (run-value weights,
+    src/if_runvalue.py). An out drives ΔRE down, so the ground-ball-dominated infield side is
+    usually negative (a gain for the defense). The optimization is separable (ground balls go
+    to the infield, fly balls to the outfield), and each side is compared against its own
+    league-average positioning for the same base state.
+    When runner on 1B only (<2 outs), the infield side switches to Phase B DP optimization
+    (pin 1B + double-play awareness, _solve_if_dp, the same switch as /api/if_optimize); the
+    league baseline switches to the runner-on-1B split league positioning, and the infield out
+    rate becomes P(≥1 out). Batters with insufficient ground-ball samples (no precomputed
+    infield data) degrade to positioning only the outfield trio: positions only has LF/CF/RF,
+    n_gb=0, runs_if=0.
+    The infield is refined via warm start from the offline out-rate optimum — the two objectives
+    yield almost the same solution in 2025 out-of-sample tests (models/if_gb/runvalue_objective_rows.csv),
+    the same anchored pattern as the personalization endpoint.
+    When home_team is specified, the outfield follows the same general mode as /api/optimize:
+    wall-ball catch probability forced to 0 and counted into RE24, plus a second warm-start
+    with_park optimization pass; the infield has no wall so it's unaffected.
+    When fielders are specified: the outfield carries player-level mu (of_fielders, player names),
+    the infield carries Bayesian effects (if_fielders, player_id); unspecified positions = league average.
     """
     if _if_bayes_model is None or _if_xb_model is None:
         raise HTTPException(503, "整合模型未載入")
@@ -1192,7 +1213,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
     home_team = req.home_team.upper() if req.home_team else None
     state: BaseOutState = (req.on_1b, req.on_2b, req.on_3b, req.outs)
 
-    # ── 外野側（同 /api/optimize 一般模式；共用打者球快取）──────────
+    # ── Outfield side (same general mode as /api/optimize; shares the batter-balls cache) ──────────
     yr_balls_cache = _batter_balls_cache.setdefault(year, {})
     yr_hprob_cache = _batter_hitprobs_cache.setdefault(year, {})
     if req.batter_id not in yr_balls_cache:
@@ -1213,14 +1234,14 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
     if not of_mask.any():
         raise HTTPException(422, "No balls with positive w_j for this game state")
 
-    # 打牆球（指定球場時）：接殺機率強制 0、計入 RE24（同 _run_optimize 口徑）
+    # Wall balls (when a park is specified): catch probability forced to 0, counted into RE24 (same convention as _run_optimize)
     wall_flags = (np.array(is_wall_ball(balls_of["ball_x"].values,
                                         balls_of["ball_y"].values, home_team), dtype=bool)
                   if home_team else np.zeros(len(balls_of), dtype=bool))
 
     models_dir = BASE / "models" / str(year)
 
-    # 指定外野手（球員層 mu，同 _run_optimize）；未指定的位置用群體 mu
+    # Specified outfielders (player-level mu, same as _run_optimize); unspecified positions use the group mu
     fielder_mus: dict[str, GroupMu] | None = None
     if req.of_fielders:
         fielder_mu_overrides: dict[str, GroupMu] = {}
@@ -1247,7 +1268,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
         )
         pos_of_opt = _outfield_xy(opt_of)
         if home_team:
-            # 同 _run_optimize：no_park 解 warm start 的 with_park 精修
+            # Same as _run_optimize: with_park refinement warm-started from the no_park solution
             opt_of_park = optimize_positions(
                 batter_id=req.batter_id,
                 on_1b=req.on_1b, on_2b=req.on_2b, on_3b=req.on_3b, outs=req.outs,
@@ -1262,28 +1283,31 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
     except Exception:
         pos_of_league = {"LF": (-130.0, 250.0), "CF": (0.0, 310.0), "RF": (130.0, 250.0)}
 
-    # 外野失分＝完整 ΔRE 口徑（與內野同尺度，2026-07-14 使用者要求）：
-    # 漏接計 w_j、接殺計出局的 ΔRE（跑者不推進、出局+1 近似，同滾地球出局
-    # 的計價；犧牲飛球推進忽略）。只改顯示計價，優化目標不動——run-value
-    # vs 出局率兩目標幾乎同解已驗證（runvalue_objective_rows.csv）
+    # Outfield runs = full ΔRE accounting (same scale as infield, per the user's request on
+    # 2026-07-14): a miss is charged w_j, a catch is charged the out's ΔRE (runners don't
+    # advance, approximated as out+1, the same pricing as a ground-ball out; sac-fly runner
+    # advancement is ignored). Only the displayed pricing changes — the optimization target is
+    # unchanged, since the run-value vs. out-rate objectives have already been verified to give
+    # almost the same solution (runvalue_objective_rows.csv)
     dre_out_of = delta_re_out(_re24_table, state)
 
     def of_runs(pos_dict: OutfieldXY, mus_use: dict[str, GroupMu]) -> tuple[np.ndarray, float]:
         probs = np.asarray(compute_ball_catch_probs(
             pos_dict, balls_of, _scalers.get(year, {}), mus_use),
             dtype=float).copy()
-        probs[wall_flags] = 0.0                      # 打牆球無論站哪都接不到
+        probs[wall_flags] = 0.0                      # a wall ball can't be caught no matter where the fielder stands
         runs = float(np.sum((1.0 - probs[of_mask]) * w_j[of_mask])
                      + dre_out_of * probs.sum())
         return probs, runs
 
-    # 基準＝平均站位＋平均參數（群體 mu）；最佳化組才掛指定野手的球員 mu
+    # Baseline = average positions + average parameters (group mu); only the optimized set carries the specified fielders' player mu
     probs_of_opt, runs_of_opt = of_runs(pos_of_opt, mus_eff)
     probs_of_league, runs_of_league = of_runs(pos_of_league, _mus.get(year, {}))
 
-    # ── 內野側（precomputed 出局率最佳解 warm start＋run-value 權重精修；
-    #    僅一壘有人 <2 出局切換階段B DP 優化，同 /api/if_optimize）。
-    #    滾地球樣本不足的打者沒有 precomputed 資料：退化成只排外野三人 ──
+    # ── Infield side (warm-started from the precomputed out-rate optimum + refined with
+    #    run-value weights; runner on 1B only <2 outs switches to Phase B DP optimization,
+    #    same as /api/if_optimize). Batters with insufficient ground-ball samples have no
+    #    precomputed data: degrade to positioning only the outfield trio ──
     try:
         stand, _, hp_to_1b, warm_angles, warm_depths, ball_rows, balls_if = \
             _load_if_batter(req.batter_id, year)
@@ -1293,7 +1317,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
         stand = str(balls_of["stand"].mode().iloc[0]) if len(balls_of) else "R"
         ball_rows, balls_if = [], pd.DataFrame()
 
-    # 指定內野手（貝葉斯球員層效應，同 /api/if_optimize）
+    # Specified infielders (Bayesian player-level effects, same as /api/if_optimize)
     if_fids: dict[str, int | None] = {p: (req.if_fielders or {}).get(p) for p in IF_POSITIONS}
     pe = _if_player_effects(if_fids) if any(if_fids.values()) else None
 
@@ -1309,8 +1333,8 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
         p_if_league = np.array([])
         p_if_opt = np.array([])
     elif dp_state:
-        # 階段B：釘 1B hold-runner＋雙殺感知計價（E[ΔRE] 本身即完整口徑）；
-        # 顯示的內野出局率＝P(≥1 出局)，聯盟基準＝一壘有人切分的聯盟站位
+        # Phase B: pin 1B hold-runner + double-play-aware pricing (E[ΔRE] itself is already the full accounting);
+        # the displayed infield out rate = P(≥1 out), league baseline = the runner-on-1B split league positioning
         sol = _solve_if_dp(balls_if, state, warm_angles, warm_depths, pe)
         if_opt_angles = np.concatenate([[sol["pinned_1b"][0]], sol["angles3"]])
         if_opt_depths = np.concatenate([[sol["pinned_1b"][1]], sol["depths3"]])
@@ -1334,8 +1358,8 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
 
         lg_angles = np.array([_if_league[year][p][0] for p in IF_POSITIONS])
         lg_depths = np.array([_if_league[year][p][1] for p in IF_POSITIONS])
-        # E[ΔRE]（每滾地球）＝ mean(miss_cost) − mean(p×ball_weights)。
-        # 基準＝平均站位＋平均參數（效應 0）；最佳化組才掛指定野手效應
+        # E[ΔRE] (per ground ball) = mean(miss_cost) − mean(p×ball_weights).
+        # Baseline = average positions + average parameters (effect 0); only the optimized set carries the specified fielders' effects
         e_if_opt = mean_miss_cost - res["exp_outs"]
         e_if_league = mean_miss_cost - if_expected_outs(
             _if_bayes_model, balls_if, lg_angles, lg_depths, ball_weights=ball_weights)
@@ -1346,7 +1370,7 @@ def optimize_integrated(req: IntegratedRequest) -> IntegratedResponse:
         p_if_opt = predict_p_out(_if_bayes_model, balls_if,
                                  res["angles"], res["depths"], pe)
 
-    # ── 組裝（七人站位共用 PositionXY；內野 angle/depth → x/y）──────
+    # ── Assembly (seven-fielder positions share PositionXY; infield angle/depth → x/y) ──────
     def if_xy(angle: float, depth: float) -> PositionXY:
         rad = math.radians(angle)
         return PositionXY(x=round(depth * math.sin(rad), 1),
@@ -1467,7 +1491,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     models_dir = BASE / "models" / str(year)
     home_team = req.home_team.upper() if req.home_team else None
 
-    # ── 準備球資料（快取：同打者同年份跳過 DB 查詢與 KDE）──────────
+    # ── Prepare ball data (cached: skip the DB query and KDE for the same batter/year) ──────────
     yr_balls_cache  = _batter_balls_cache.setdefault(year, {})
     yr_hprob_cache  = _batter_hitprobs_cache.setdefault(year, {})
 
@@ -1487,8 +1511,9 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
 
     hit_probs_all = yr_hprob_cache[req.batter_id]
 
-    # 打牆球旗標（以目標球場）。打牆球保留在資料中，評估時強制接殺機率 0、
-    # 計入 RE24（對齊論文口徑），不再從資料中排除。
+    # Wall-ball flag (for the target park). Wall balls are kept in the data; during evaluation
+    # the catch probability is forced to 0 and counted into RE24 (matching the thesis convention),
+    # so they're no longer excluded from the data.
     wall_flags = (
         np.array(
             is_wall_ball(balls_all["ball_x"].values, balls_all["ball_y"].values, home_team),
@@ -1498,7 +1523,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     )
     n_wall_balls = int(wall_flags.sum())
 
-    # ── w_j（全部球，含打牆球）──────────────────────────────────
+    # ── w_j (all balls, including wall balls) ──────────────────────────────────
     w_j = compute_w_j(
         balls_all, _hit_bundle, _delta_re,
         req.on_1b, req.on_2b, req.on_3b, req.outs,
@@ -1508,10 +1533,10 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     if not mask.any():
         raise HTTPException(422, "No balls with positive w_j for this game state")
 
-    # ── RE24 狀態期望值（用啟動時已載入的快取，不重新讀檔）─────────
+    # ── RE24 state expectation (uses the cache loaded at startup, no re-reading the file) ─────────
     re_state = float(_re24_table.get((req.on_1b, req.on_2b, req.on_3b, req.outs), 0.0))
 
-    # ── 指定外野手（player-level 能力）；未指定的位置用聯盟平均 group mu ──
+    # ── Specified outfielders (player-level ability); unspecified positions use the league-average group mu ──
     fielder_mus: dict[str, GroupMu] | None = None
     if req.fielders:
         fielder_mu_overrides: dict[str, GroupMu] = {}
@@ -1527,17 +1552,17 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     if fielder_mus:
         mus_eff.update(fielder_mus)
 
-    # ── 站位評估：打牆球強制接殺機率 0、計入 RE24（統一口徑）──────
+    # ── Positioning evaluation: wall-ball catch probability forced to 0, counted into RE24 (unified convention) ──────
     def eval_positions(pos_dict: OutfieldXY) -> tuple[np.ndarray, float, float]:
         probs = np.asarray(
             compute_ball_catch_probs(pos_dict, balls_all, _scalers.get(year, {}), mus_eff), dtype=float
         ).copy()
-        probs[wall_flags] = 0.0                       # 打牆球無論站哪都接不到
+        probs[wall_flags] = 0.0                       # a wall ball can't be caught no matter where the fielder stands
         re24 = float(np.sum((1.0 - probs[mask]) * w_j[mask]))
-        catch_pct = float(probs.mean() * 100)         # 全部球（含打牆球）平均
+        catch_pct = float(probs.mean() * 100)         # average over all balls (including wall balls)
         return probs, re24, catch_pct
 
-    # ── 聯盟平均站位 ─────────────────────────────────────────────
+    # ── League average positioning ─────────────────────────────────────────────
     try:
         league_avg_pos = get_league_avg_positions(year, DSN)
     except Exception:
@@ -1553,7 +1578,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         )
 
     if fielder_mus:
-        # ── 指定外野手：只算一組 custom 站位（用選定球員能力）──────
+        # ── Specified outfielders: compute only one custom position set (using the selected players' abilities) ──────
         t_opt = time.perf_counter()
         with _optimize_semaphore:
             opt_custom = optimize_positions(
@@ -1570,7 +1595,7 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         positions_out: dict[str, PositionSet] = {"custom": make_pos_set(pos_custom, re_custom, catch_custom)}
         scatter_probs = probs_custom
     else:
-        # ── 一般模式：league_avg + no_park (+ with_park) ─────────
+        # ── General mode: league_avg + no_park (+ with_park) ─────────
         t_opt = time.perf_counter()
         with _optimize_semaphore:
             opt_no_park = optimize_positions(
@@ -1609,15 +1634,16 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
             positions_out["with_park"] = make_pos_set(pos_with_park, re_with_park, catch_with_park)
             scatter_probs = probs_with_park
 
-    # ── 球散點（全部球；打牆球 catch_prob=0、前端以橘星標示）─────
-    # responsible_fielder：對這顆球接殺機率最高的守備員（模型以距離決定）
-    # catch_prob < 5% → 不歸任何人管
+    # ── Ball scatter points (all balls; wall balls have catch_prob=0, marked with an orange star on the frontend) ─────
+    # responsible_fielder: the fielder with the highest catch probability for this ball (the model decides by distance)
+    # catch_prob < 5% → not assigned to anyone
     primary_pos = (
         pos_custom if fielder_mus
         else (pos_with_park if home_team else pos_no_park)
     )
-    # 責任分配：最近守備員（_catch_prob_single_fielder 含方向角特徵，
-    # 跨位置比較時角度項可能讓較遠守備員機率反而更高，不適合用來切割責任範圍）
+    # Responsibility assignment: nearest fielder (_catch_prob_single_fielder includes a directional-
+    # angle feature; when comparing across positions, the angle term can make a farther fielder's
+    # probability come out higher, so it's not suitable for dividing responsibility ranges)
     bx_arr = balls_all["ball_x"].values
     by_arr = balls_all["ball_y"].values
     dists = {
@@ -1641,13 +1667,13 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
         for i in range(len(balls_all))
     ]
 
-    # ── 球場邊界 ─────────────────────────────────────────────────
+    # ── Park boundary ─────────────────────────────────────────────────
     park_boundary = None
     if home_team:
         coords = get_park_boundary_coords(home_team)
         park_boundary = [ParkCoord(x=c["x"], y=c["y"]) for c in coords] if coords else None
 
-    # ── 標題 ────────────────────────────────────────────────────
+    # ── Title ────────────────────────────────────────────────────
     raw_name = _name_map.get(req.batter_id, f"#{req.batter_id}")
     display_name = raw_name.replace(", ", " ") if ", " in raw_name else raw_name
     stand = get_batter_stand(req.batter_id, year, DSN)
@@ -1683,9 +1709,9 @@ def _run_optimize(req: OptimizeRequest) -> OptimizeResponse:
     )
 
 
-# ── 前端靜態檔案（放最後，所有 /api/* 路由都已註冊完畢，不會衝突）─────────
-# 部署時單一服務同時提供 API 與前端建置產物（frontend/dist），兩者同源，
-# 前端 frontend/src/api.js 的相對路徑 '/api' 不用額外設定 base URL 或 CORS。
+# ── Frontend static files (placed last so all /api/* routes are already registered and won't conflict) ─────────
+# At deployment, a single service serves both the API and the frontend build output (frontend/dist);
+# since they're same-origin, the frontend's frontend/src/api.js relative path '/api' needs no extra base URL or CORS setup.
 _FRONTEND_DIST: Path = BASE / "frontend" / "dist"
 if _FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")

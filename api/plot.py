@@ -1,7 +1,7 @@
 """
-Server-side matplotlib renderer — 重現 Model_3 的 park_single v2 圖。
-輸入為 OptimizeResponse（已含球散點、三組站位、park boundary、stats），
-輸出 PNG bytes，外觀與論文圖一致。
+Server-side matplotlib renderer — reproduces Model_3's park_single v2 chart.
+Input is an OptimizeResponse (already containing ball scatter points, three position sets,
+park boundary, stats); output is PNG bytes, with an appearance matching the thesis figures.
 """
 import io
 from typing import TypedDict
@@ -25,7 +25,7 @@ class MarkerStyle(TypedDict):
     offset: int
 
 
-# ── 顏色與樣式（對齊 Model_3）────────────────────────────────────
+# ── Colors and styles (aligned with Model_3) ────────────────────────────────────
 _STYLES: dict[str, MarkerStyle] = {
     "league_avg": dict(color="#1565C0", marker="D", size=170, label="League Avg",       offset=-17),
     "no_park":    dict(color="#C0392B", marker="o", size=200, label="RE24 Opt (no park)", offset=-34),
@@ -64,7 +64,7 @@ def _add_markers(ax: Axes, pts: dict[str, dict[str, float]],
 
 
 def render_plot(resp: OptimizeResponse) -> bytes:
-    """resp: OptimizeResponse pydantic 物件 → PNG bytes"""
+    """resp: OptimizeResponse pydantic object → PNG bytes"""
     positions = resp.positions
     stats = resp.stats
     park  = stats.home_team or ""
@@ -78,7 +78,7 @@ def render_plot(resp: OptimizeResponse) -> bytes:
     fig, ax = plt.subplots(figsize=(10, 9))
     _draw_field(ax)
 
-    # ── 藍色 KDE 密度背景 ──────────────────────────────────────
+    # ── Blue KDE density background ──────────────────────────────────────
     if len(ball_x) > 5:
         try:
             sns.kdeplot(x=ball_x, y=ball_y, fill=True, cmap="Blues", ax=ax,
@@ -95,7 +95,7 @@ def render_plot(resp: OptimizeResponse) -> bytes:
         park_y = [c.y for c in resp.park_boundary]
         ax.plot(park_x, park_y, color="#00CC55", lw=2.2, alpha=0.9, zorder=3, label="Park Boundary")
 
-    # ── 球散點 ────────────────────────────────────────────────
+    # ── Ball scatter points ────────────────────────────────────────────────
     scatter_plot = ax.scatter(ball_x[~is_wall_ball], ball_y[~is_wall_ball], c=catch_prob[~is_wall_ball],
                               cmap="RdYlGn", vmin=0, vmax=1,
                               s=30, alpha=0.85, edgecolors="gray", linewidths=0.3, zorder=4)
@@ -108,7 +108,7 @@ def render_plot(resp: OptimizeResponse) -> bytes:
                    edgecolors="black", linewidths=0.4, zorder=5,
                    label=f"Wall Ball ({int(is_wall_ball.sum())})")
 
-    # ── 站位標記（custom > with_park > no_park；聯盟平均只留數字比較，圖上不畫）──
+    # ── Position markers (custom > with_park > no_park; league average is kept only for numeric comparison, not drawn) ──
     if "custom" in positions:
         draw_keys = ["custom"]
     elif "with_park" in positions:
@@ -121,7 +121,7 @@ def render_plot(resp: OptimizeResponse) -> bytes:
             _add_markers(ax, {"LF": position_set.LF.model_dump(), "CF": position_set.CF.model_dump(),
                               "RF": position_set.RF.model_dump()}, _STYLES[key], park)
 
-    # ── 座標軸 ────────────────────────────────────────────────
+    # ── Axes ────────────────────────────────────────────────
     ax.set_xlim(-280, 280)
     ax.set_ylim(-10, 450)
     ax.set_aspect("equal")
@@ -129,16 +129,16 @@ def render_plot(resp: OptimizeResponse) -> bytes:
     ax.set_ylabel("y coordinate (ft)", fontsize=11)
     ax.tick_params(labelsize=9)
 
-    # ── 標題 ──────────────────────────────────────────────────
+    # ── Title ──────────────────────────────────────────────────
     fig.suptitle(
         f"{resp.title}\n"
         f"Situation: {resp.situation}   |   n = {stats.n_balls}   |   n_wall = {stats.n_wall_balls}",
         fontsize=14, fontweight="bold", y=0.98,
     )
 
-    # ── 圖例（左下）────────────────────────────────────────────
+    # ── Legend (bottom left) ────────────────────────────────────────────
     handles, labels = ax.get_legend_handles_labels()
-    # 依需求排序：Park Boundary, Wall Ball, League Avg, no_park, with_park
+    # Sort per requirements: Park Boundary, Wall Ball, League Avg, no_park, with_park
     order_key = ["Park Boundary", "Wall Ball", "League Avg", "RE24 Opt (no park)", "RE24 Opt (park"]
     def _rank(label: str) -> int:
         for i, k in enumerate(order_key):
