@@ -41,7 +41,7 @@ const s = {
   links: {
     display: 'flex',
     gap: 4,
-    overflowX: 'auto',       // 連結變多後窄螢幕改為橫向捲動，不壓縮成直排文字
+    overflowX: 'auto',       // scroll horizontally on narrow screens once there are more links, instead of squeezing into a vertical stack
     scrollbarWidth: 'none',
   },
   link: {

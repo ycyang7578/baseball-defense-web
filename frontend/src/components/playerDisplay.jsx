@@ -1,4 +1,4 @@
-// Rankings（外野）與 InfieldRankings（內野）共用的球員顯示元件與常數
+// Player display components and constants shared by Rankings (outfield) and InfieldRankings (infield)
 
 export const HEADSHOT_URL = (id) =>
   `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_60,q_auto:best/v1/people/${id}/headshot/67/current`

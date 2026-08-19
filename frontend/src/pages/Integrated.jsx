@@ -12,7 +12,7 @@ const ALL_POSITIONS = [...OF_POSITIONS, ...IF_POSITIONS]
 const EMPTY_OF = { LF: '', CF: '', RF: '' }
 const EMPTY_IF = { '1B': '', '2B': '', '3B': '', SS: '' }
 
-// 外野選單（/api/fielders）：oaa/n_opp；內野選單（/api/if_fielder_options）：oaa/n_balls
+// Outfield dropdown (/api/fielders): oaa/n_opp; infield dropdown (/api/if_fielder_options): oaa/n_balls
 const fielderLabel = (f, nKey) => {
   const name = displayName(f.name)
   const n = f[nKey]
@@ -21,7 +21,7 @@ const fielderLabel = (f, nKey) => {
   return `${name}  (${rate >= 0 ? '+' : ''}${rate}/100)`
 }
 
-// 外野後端吃球員名（load_player_params 的鍵）、內野吃 player_id
+// Outfield backend takes a player name (the load_player_params key); infield takes player_id
 const buildOf = (sel) => {
   const f = {}
   for (const p of OF_POSITIONS) if (sel[p]) f[p] = sel[p]
@@ -42,7 +42,7 @@ export default function Integrated() {
   const [gameState, setGameState]   = useState({ on1b: 0, on2b: 0, on3b: 0, outs: 0 })
   const [ofOpts, setOfOpts]         = useState(null)   // pos → options
   const [ifOpts, setIfOpts]         = useState(null)
-  const [minOpp, setMinOpp]         = useState(100)    // 最低守備次數（內外野共用）
+  const [minOpp, setMinOpp]         = useState(100)    // minimum number of fielding opportunities (shared by infield/outfield)
 
   const [homeTeam, setHomeTeam]     = useState('')
   const [selOf, setSelOf]           = useState(EMPTY_OF)
@@ -77,7 +77,7 @@ export default function Integrated() {
     fetchFielders(minOpp, year).then(setOfOpts).catch(() => setOfOpts(null))
   }, [year, minOpp])
 
-  // 換年份時清掉野手選擇：先前選的球員在新年份可能沒有模型參數
+  // Clear fielder selections when the year changes: a previously selected player may not have model parameters for the new year
   useEffect(() => {
     setSelOf(EMPTY_OF); setSelIf(EMPTY_IF)
     setSelOfB(EMPTY_OF); setSelIfB(EMPTY_IF)
@@ -120,7 +120,7 @@ export default function Integrated() {
     }
   }
 
-  // 七人野手選單（外野在上、內野在下）
+  // Seven-fielder dropdown menus (outfield on top, infield below)
   const fielderSection = (of, setOf, ifSel, setIf, label) => (
     <div>
       {label && (
@@ -173,7 +173,7 @@ export default function Integrated() {
     <div style={s.root}>
       <div className="app-body" style={s.body}>
 
-        {/* ── 左側控制面板 ── */}
+        {/* ── Left-side control panel ── */}
         <div className="app-panel" style={s.panel}>
           <div style={s.panelHeader}>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -280,7 +280,7 @@ export default function Integrated() {
           </div>
         </div>
 
-        {/* ── 右側結果區 ── */}
+        {/* ── Right-side results area ── */}
         <div className="app-chart-area" style={s.chartArea}>
           {compareMode && (data || dataB) ? (
             <div style={{ width: '100%', maxWidth: 1500 }}>
@@ -337,7 +337,7 @@ function TitleBar({ data, park }) {
   const nLd = data.of_balls.filter(b => b.bb_type === 'line_drive').length
   const counts = (nFly + nLd === data.stats.n_of_balls)
     ? `飛球 ${nFly} 球＋平飛 ${nLd} 球`
-    : `外野 ${data.stats.n_of_balls} 球`   // 舊資料無 bb_type 時退回合計
+    : `外野 ${data.stats.n_of_balls} 球`   // fall back to the total when older data has no bb_type
   return (
     <div style={{ background: 'white', padding: '12px 18px 0' }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--slate-800)' }}>

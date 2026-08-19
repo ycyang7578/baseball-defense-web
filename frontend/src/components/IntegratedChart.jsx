@@ -1,21 +1,22 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
-// ── Layout（1 SVG unit ≈ 1 ft，本壘原點，+x 朝一壘側）────────────
-// 視野涵蓋全場：內野土到外野深處（同 InfieldChart 的座標慣例，範圍放大）。
-// 邊界縮到最小讓球場本身佔滿版面（圖例/色階條疊在圖內右下角）
+// ── Layout (1 SVG unit ≈ 1 ft, home plate is the origin, +x toward first base) ────────────
+// Viewport covers the whole field: infield dirt to deep outfield (same coordinate convention
+// as InfieldChart, just a larger range).
+// Margins are kept minimal so the field itself fills the layout (legend/colorbar overlay the bottom-right corner of the chart)
 const PL = 10, PT = 12, PW = 560, PR = 12, PB = 10
-// Y0=-60：本壘後方界外 popup 99% 落在 -49 內（precomputed_batter_popups 實測），
-// 再深的夾回下緣；Y1=425 給 400 呎弧與最深牆線（~420）留邊
+// Y0=-60: 99% of foul popups behind home plate land within -49 (measured from precomputed_batter_popups),
+// deeper ones get clamped to the bottom edge; Y1=425 leaves margin beyond the 400ft arc and the deepest wall (~420)
 const X0 = -262, X1 = 262, Y0 = -60, Y1 = 425
-const PH = PW * (Y1 - Y0) / (X1 - X0)          // 等比例，不變形
+const PH = PW * (Y1 - Y0) / (X1 - X0)          // keep aspect ratio, no distortion
 const SVG_W = PL + PW + PR
 const SVG_H = PT + PH + PB
-const MAX_R = 412   // 超出視野的深球夾回邊緣（沿同方向）
+const MAX_R = 412   // deep balls beyond the viewport get clamped to the edge (along the same direction)
 
 const tx = x => PL + (x - X0) / (X1 - X0) * PW
 const ty = y => PT + (Y1 - y) / (Y1 - Y0) * PH
 
-// ── RdYlGn colormap（同 SprayChart / InfieldChart）─────────
+// ── RdYlGn colormap (same as SprayChart / InfieldChart) ─────────
 const RDYLGN = [
   [0.00, [165,   0,  38]],
   [0.10, [215,  48,  39]],
@@ -40,7 +41,7 @@ function rdylgn(p) {
   return 'rgb(0,104,55)'
 }
 
-// ── Marker shapes（同站慣例：最佳化=紫星；聯盟平均不畫，只留數字比較）──
+// ── Marker shapes (same convention as the site: optimized = purple star; league average isn't drawn, only kept for numeric comparison) ──
 function starPts(cx, cy, r) {
   return Array.from({ length: 10 }, (_, i) => {
     const a = (Math.PI * i) / 5 - Math.PI / 2
@@ -50,7 +51,7 @@ function starPts(cx, cy, r) {
 }
 
 const OPT_STYLE = { color: '#7B2FBE', r: 10, dy: +20 }
-// 責任歸屬色：外野同外野主頁；內野另配四色（避開星標紫與場地綠）
+// Ownership colors: outfield matches the outfield main page; infield uses four separate colors (avoiding the star marker's purple and the field's green)
 const OWNER_COLORS = {
   LF: '#4472C4', CF: '#27AE60', RF: '#E67E22',
   '1B': '#D81B60', '2B': '#00ACC1', '3B': '#6D4C41', SS: '#F9A825',
@@ -74,7 +75,7 @@ function PosMarker({ cx, cy, code, isActive, onClick }) {
   )
 }
 
-// ── 內野土外緣：投手板 (0, 60.5) 圓心、半徑 95 呎的弧（同 src/if_optimize.py）──
+// ── Infield dirt outer edge: arc centered at the pitcher's mound (0, 60.5) with a 95ft radius (same as src/if_optimize.py) ──
 const MOUND_Y = 60.5, DIRT_R = 95
 function dirtArcPath() {
   const pts = []
@@ -95,8 +96,8 @@ const B1 = [90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 const B2 = [0, 90 * Math.SQRT2]
 const B3 = [-90 * Math.SQRT1_2, 90 * Math.SQRT1_2]
 
-// 球點畫在 Statcast 記錄座標；太深的球沿同方向夾回視野邊緣，
-// 界外過深/過寬的球夾回視野內
+// Ball markers are plotted at Statcast-recorded coordinates; balls too deep get clamped to the
+// viewport edge along the same direction. Foul balls that are too deep/wide are clamped back into the viewport.
 function clampXY(x, y) {
   const r = Math.hypot(x, y)
   const k = r > MAX_R ? MAX_R / r : 1
@@ -107,7 +108,7 @@ function clampXY(x, y) {
 const OF_POSITIONS = ['LF', 'CF', 'RF']
 const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 
-// ── 密度色圖：matplotlib "Blues"（同外野頁 seaborn kdeplot 的 cmap）──
+// ── Density colormap: matplotlib "Blues" (same cmap as the outfield page's seaborn kdeplot) ──
 const BLUES = [
   [0.000, [247, 251, 255]], [0.125, [222, 235, 247]], [0.250, [198, 219, 239]],
   [0.375, [158, 202, 225]], [0.500, [107, 174, 214]], [0.625, [66, 146, 198]],
@@ -128,13 +129,13 @@ function bluesColor(t) {
   return BLUES[BLUES.length - 1][1]
 }
 
-// 同外野頁 seaborn 風格：thresh=0.05（最低 5% 不填色）；10 層、清淡填色
+// Same style as the outfield page's seaborn: thresh=0.05 (bottom 5% left unfilled); 10 levels, light fill
 const DENS_THRESH = 0.05
 const DENS_LEVELS = 10
 const DENS_EDGES = Array.from({ length: DENS_LEVELS },
   (_, i) => DENS_THRESH + i * (1 - DENS_THRESH) / (DENS_LEVELS - 1))
 
-// ── Marching squares：從網格 KDE 取一條等值線的線段集（SVG path 字串）──
+// ── Marching squares: extracts one contour's line segments from the grid KDE (as an SVG path string) ──
 function marchingSquares(grid, gw, gh, level, cell) {
   const parts = []
   const val = (ix, iy) => grid[iy * gw + ix]
@@ -169,28 +170,30 @@ function marchingSquares(grid, gw, gh, level, cell) {
   return parts.join('')
 }
 
-// popup 接殺機率＝聯盟實證常數（2025 例行賽 98.5% 出局；站哪都接得到，
-// 所以不參與優化）。外野模型算 popup 是 OOD、校準比常數差，勿改回模型算。
+// Popup catch probability = an empirical league constant (98.5% outs in the 2025 regular season;
+// catchable from anywhere, so it doesn't factor into optimization). The outfield model treats popups
+// as OOD and is less well-calibrated than the constant — don't switch it back to model-computed values.
 const POPUP_CATCH = 0.985
 
 export default function IntegratedChart({ data }) {
   const svgRef = useRef(null)
-  // SVG defs 的 id 必須每個 instance 唯一：比較模式同頁兩張圖時，
-  // 固定 id 會讓 B 圖引用到 A 圖的 clipPath/漸層（2026-07-14 使用者回報：
-  // B 圖草地邊界跟著 A 圖的球場）
-  const uid = useId().replace(/:/g, '')   // 冒號在 url(#...) 引用有相容性風險
+  // SVG defs ids must be unique per instance: with two charts on the same page in comparison mode,
+  // a fixed id would make chart B reference chart A's clipPath/gradient (2026-07-14 user report:
+  // chart B's grass boundary was following chart A's ballpark)
+  const uid = useId().replace(/:/g, '')   // colons are a compatibility risk in url(#...) references
   const gradId = `ic-grad-h-${uid}`
   const clipId = `ic-field-clip-${uid}`
   const [hovered, setHovered] = useState(null)   // { kind: 'of'|'if'|'popup', ball }
-  const [activePos, setActivePos] = useState(null)   // 七位置之一或 null
+  const [activePos, setActivePos] = useState(null)   // one of the seven positions, or null
   const [colorMode, setColorMode] = useState('prob') // 'prob' | 'owner'
   const [probMin, setProbMin] = useState(0)          // 0–100 integer
   const [probMax, setProbMax] = useState(100)
-  // 球種篩選（複選）：滾地→內野球、飛球/平飛→外野球（真實 bb_type 標籤）、高飛→popup
+  // Batted-ball-type filter (multi-select): ground ball → infield ball, fly ball/line drive → outfield ball (actual bb_type label), popup → popup
   const [showTypes, setShowTypes] = useState(
     { ground_ball: true, fly_ball: true, line_drive: true, popup: true })
-  // 落點密度底層（預設開）：目前可見的球（球種勾選＋機率範圍過濾後）算成
-  // 網格 KDE，藍色填色＋等高線墊在球點下面（同外野頁 matplotlib KDE 的呈現）
+  // Landing-spot density layer (on by default): the currently visible balls (after batted-ball-type
+  // and probability-range filtering) are computed into a grid KDE, rendered as blue fill + contour
+  // lines underneath the ball markers (same presentation as the outfield page's matplotlib KDE)
   const [showDensity, setShowDensity] = useState(true)
   const [densitySrc, setDensitySrc] = useState(null)
   const [contours, setContours] = useState(null)
@@ -198,8 +201,9 @@ export default function IntegratedChart({ data }) {
   useEffect(() => {
     if (!showDensity || !data) { setDensitySrc(null); setContours(null); return }
     const within = (p) => p * 100 >= probMin && p * 100 <= probMax
-    // 內外野分開收集、各自歸一化——滾地球的密度峰值遠高於外野，
-    // 共用一個歸一化會把外野的結構全壓進最低色帶（2026-07-14 使用者回報）
+    // Infield and outfield are collected separately and normalized independently — ground ball density
+    // peaks are far higher than outfield, so a shared normalization would squash all outfield structure
+    // into the lowest color band (2026-07-14 user report)
     const ptsIF = []
     const ptsOF = []
     if (showTypes.ground_ball)
@@ -212,15 +216,15 @@ export default function IntegratedChart({ data }) {
     }
     if (ptsIF.length + ptsOF.length === 0) { setDensitySrc(null); setContours(null); return }
 
-    // 網格 KDE（高斯核）。頻寬用 Scott 法則按資料自適應（同 seaborn 預設）——
-    // 固定窄頻寬會讓等高線長成不規則的變形蟲（2026-07-14 使用者回報）
+    // Grid KDE (Gaussian kernel). Bandwidth adapts to the data via Scott's rule (same as seaborn's default) —
+    // a fixed narrow bandwidth makes the contours grow into irregular amoeba shapes (2026-07-14 user report)
     const CELL = 4
     const GW = Math.ceil(PW / CELL) + 1
     const GH = Math.ceil(PH / CELL) + 1
     const kde = (pts) => {
       const g = new Float32Array(GW * GH)
       if (pts.length === 0) return [g, 0]
-      // Scott：sigma = 平均(std_x, std_y) × n^(-1/6)，換算成格
+      // Scott's rule: sigma = mean(std_x, std_y) × n^(-1/6), converted to grid cells
       const px = pts.map(([x]) => (x - X0) / (X1 - X0) * PW)
       const py = pts.map(([, y]) => (Y1 - y) / (Y1 - Y0) * PH)
       const std = (a) => {
@@ -247,14 +251,14 @@ export default function IntegratedChart({ data }) {
     }
     const [gIF, mIF] = kde(ptsIF)
     const [gOF, mOF] = kde(ptsOF)
-    // 疊合：每格取「各自歸一化後」的較大值 → 值域 [0,1]
+    // Merge: each cell takes the larger of the two independently-normalized values → range [0,1]
     const grid = new Float32Array(GW * GH)
     for (let i = 0; i < grid.length; i++)
       grid[i] = Math.max(mIF > 0 ? gIF[i] / mIF : 0, mOF > 0 ? gOF[i] / mOF : 0)
     const maxV = 1
 
-    // 填色層：分段填色（同 seaborn fill=True 的離散色帶）。逐像素對網格
-    // 雙線性取樣→量化到色帶，帶邊界才會像 matplotlib 一樣俐落
+    // Fill layer: banded fill (same as seaborn's fill=True discrete color bands). Per pixel, the grid
+    // is bilinearly sampled then quantized into a color band, so the band edges look as crisp as matplotlib's
     const big = document.createElement('canvas')
     big.width = PW
     big.height = PH
@@ -273,7 +277,7 @@ export default function IntegratedChart({ data }) {
                    + (grid[(iy + 1) * GW + ix] * (1 - fx) + grid[(iy + 1) * GW + ix + 1] * fx) * fy) / maxV
         if (v < DENS_THRESH) continue
         const band = Math.min(DENS_LEVELS - 2, Math.floor((v - DENS_THRESH) / bandW))
-        // 色圖上限收在 0.85、透明度整體壓低——最深層不要黑藍壓過球點
+        // Colormap capped at 0.85, opacity kept low overall — don't let the darkest band's deep blue overpower the ball markers
         const [r, g, b] = bluesColor(0.85 * (band + 1) / (DENS_LEVELS - 1))
         const o = (py * PW + px) * 4
         img.data[o] = r
@@ -285,12 +289,12 @@ export default function IntegratedChart({ data }) {
     bctx.putImageData(img, 0, 0)
     setDensitySrc(big.toDataURL('image/png'))
 
-    // 等高線：同 seaborn levels=10 的等值線
+    // Contours: same as seaborn's levels=10 contour lines
     setContours(DENS_EDGES.map(t => marchingSquares(grid, GW, GH, t * maxV, CELL)))
   }, [showDensity, data, showTypes, probMin, probMax])
 
-  // 責任歸屬：距最佳化站位最近者（同外野主頁的前端 fallback 演算法）。
-  // 外野球在 LF/CF/RF 之間分、滾地球在 1B/2B/3B/SS 之間分（球種已定守備側）
+  // Ownership: whichever optimized position is nearest (same frontend fallback algorithm as the outfield main page).
+  // Outfield balls are assigned among LF/CF/RF, ground balls among 1B/2B/3B/SS (batted-ball type already determines the fielding side)
   const optPositions = data?.optimized?.positions
   const of_balls_all = data?.of_balls
   const if_balls_all = data?.if_balls
@@ -340,11 +344,12 @@ export default function IntegratedChart({ data }) {
     return { x: tx(bx), y: ty(by), lines }
   })() : null
 
-  // 高飛不參與優化、不屬於任何野手：責任歸屬模式或點選野手高亮時一律淡出，
-  // 否則會看起來像被歸進選中野手的責任球
+  // Popups don't participate in optimization and don't belong to any fielder: they're always dimmed
+  // in ownership mode or when a fielder is highlighted by click, otherwise they'd look like they were
+  // assigned to the selected fielder's responsibility
   const dimPopup = (colorMode === 'owner' || activePos) ? 0.15 : null
 
-  // 下載 PNG：序列化 SVG（密度層是 data URI 一併帶走）→ canvas 2x → 下載
+  // Download PNG: serialize the SVG (the density layer is a data URI, so it's carried along) → canvas 2x → download
   const downloadPng = () => {
     const svg = svgRef.current
     if (!svg) return
@@ -374,7 +379,7 @@ export default function IntegratedChart({ data }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'white' }}>
-      {/* ── Controls（同外野主頁：歸屬色切換＋機率範圍）── */}
+      {/* ── Controls (same as outfield main page: ownership color toggle + probability range) ── */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: '16px',
         padding: '6px 12px', borderBottom: '1px solid var(--slate-200)', flexWrap: 'wrap',
@@ -435,7 +440,7 @@ export default function IntegratedChart({ data }) {
             <stop key={t} offset={`${t * 100}%`} stopColor={`rgb(${r},${g},${b})`} />
           ))}
         </linearGradient>
-        {/* 場地填色的裁切範圍：有球場＝實際牆線多邊形；通用＝400 呎弧扇形 */}
+        {/* Clip region for the field fill: with a specific ballpark, the actual wall polygon; generic, a 400ft arc wedge */}
         <clipPath id={clipId}>
           {park_boundary ? (
             <polygon points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
@@ -449,28 +454,28 @@ export default function IntegratedChart({ data }) {
           })()}
         </clipPath>
       </defs>
-      {/* 草地扇形＋延伸邊線（裁到球場邊界內，超出牆外不填色） */}
+      {/* Grass wedge + extended foul lines (clipped to the ballpark boundary; nothing filled beyond the wall) */}
       <g clipPath={`url(#${clipId})`}>
         <path d={`M ${tx(0)} ${ty(0)} L ${tx(Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} L ${tx(0)} ${ty(Y1 * 1.4)} L ${tx(-Y1 * Math.SQRT1_2 * 1.5)} ${ty(Y1 * 1.05)} Z`}
           fill="#e8f2e4" />
         <line x1={tx(0)} y1={ty(0)} x2={tx(Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
         <line x1={tx(0)} y1={ty(0)} x2={tx(-Y1 * Math.SQRT1_2 * 1.45)} y2={ty(Y1 * 1.02)} stroke="#fff" strokeWidth="2.5" />
       </g>
-      {/* 內野土（本壘到土外緣弧） */}
+      {/* Infield dirt (home plate to the dirt's outer-edge arc) */}
       <path d={`M ${tx(0)} ${ty(0)} L ${arcPts[0]} L ${arcPts.join(' L ')} Z`} fill="#e7d6bd" />
-      {/* 內野草皮方塊 */}
+      {/* Infield grass square */}
       <polygon points={`${tx(0)},${ty(12)} ${tx(B1[0] - 8.5)},${ty(B1[1] + 3.5)} ${tx(0)},${ty(B2[1] - 5)} ${tx(B3[0] + 8.5)},${ty(B3[1] + 3.5)}`}
         fill="#d9ead3" />
       <line x1={tx(B1[0])} y1={ty(B1[1])} x2={tx(B2[0])} y2={ty(B2[1])} stroke="#fff" strokeWidth="2" />
       <line x1={tx(B3[0])} y1={ty(B3[1])} x2={tx(B2[0])} y2={ty(B2[1])} stroke="#fff" strokeWidth="2" />
-      {/* 投手丘與壘包 */}
+      {/* Pitcher's mound and bases */}
       <circle cx={tx(0)} cy={ty(MOUND_Y)} r={(tx(9) - tx(0))} fill="#dbc7a9" />
       <polygon points={basePts(...B1)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(...B2)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(...B3)} fill="white" stroke="#bbb" strokeWidth="0.8" />
       <polygon points={basePts(0, 0)} fill="white" stroke="#bbb" strokeWidth="0.8" />
 
-      {/* 落點密度層＋等高線（取代球點；輸入吃球種勾選＋機率範圍過濾） */}
+      {/* Landing-spot density layer + contours (rendered beneath the ball markers; input respects batted-ball-type and probability-range filters) */}
       {showDensity && densitySrc && (
         <image x={PL} y={PT} width={PW} height={PH} href={densitySrc} />
       )}
@@ -482,7 +487,7 @@ export default function IntegratedChart({ data }) {
           ))}
         </g>
       )}
-      {/* 內野高飛（展示用，不參與優化——顏色＝實證常數接殺機率，畫在最底層） */}
+      {/* Infield popups (display only, not part of optimization — color = empirical constant catch probability, drawn at the bottom layer) */}
       {popup_balls.filter(() => showTypes.popup && inRange(POPUP_CATCH)).map((b, i) => {
         const [bx, by] = clampXY(b.x, b.y)
         const isHov = hovered && hovered.kind === 'popup' && hovered.ball === b
@@ -498,7 +503,7 @@ export default function IntegratedChart({ data }) {
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 滾地球（顏色 = P(out) 或責任歸屬） */}
+      {/* Ground balls (color = P(out) or ownership) */}
       {if_balls.map((b, i) => {
         if (!showTypes.ground_ball || !inRange(b.p_out_opt)) return null
         const [bx, by] = clampXY(b.x, b.y)
@@ -521,7 +526,7 @@ export default function IntegratedChart({ data }) {
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 外野球（顏色 = 接殺機率或責任歸屬；打牆球另畫橘星） */}
+      {/* Outfield balls (color = catch probability or ownership; wall balls are drawn separately as orange stars) */}
       {of_balls.map((b, i) => {
         if (b.is_wall_ball || !inRange(b.catch_prob)) return null
         if (b.bb_type && !showTypes[b.bb_type]) return null
@@ -544,14 +549,14 @@ export default function IntegratedChart({ data }) {
             style={{ cursor: 'pointer' }} />
         )
       })}
-      {/* 球場牆線與打牆球（同外野主頁慣例：綠線＋橘星）；
-          通用球場改畫 400 呎虛線弧當距離參考（同外野主頁） */}
+      {/* Ballpark wall line and wall balls (same convention as the outfield main page: green line + orange star);
+          for a generic ballpark, a 400ft dashed arc is drawn instead as a distance reference (same as the outfield main page) */}
       {park_boundary ? (
         <polyline fill="none" stroke="#00CC55" strokeWidth="2.2" opacity="0.9"
           points={park_boundary.map(p => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(' ')} />
       ) : (() => {
-        const arcY = Math.sqrt(400 ** 2 - X1 ** 2)          // 弧與視野左右緣的交點
-        const rPx = 400 * PW / (X1 - X0)                    // 400 呎換算像素半徑
+        const arcY = Math.sqrt(400 ** 2 - X1 ** 2)          // intersection of the arc with the viewport's left/right edges
+        const rPx = 400 * PW / (X1 - X0)                    // 400ft converted to a pixel radius
         return (
           <path d={`M ${tx(X1).toFixed(1)},${ty(arcY).toFixed(1)} A ${rPx.toFixed(1)} ${rPx.toFixed(1)} 0 0 0 ${tx(X0).toFixed(1)},${ty(arcY).toFixed(1)}`}
             fill="none" stroke="#999" strokeWidth="2" strokeDasharray="8 5" opacity="0.8" />
@@ -565,14 +570,14 @@ export default function IntegratedChart({ data }) {
         )
       })}
 
-      {/* 站位（最佳化紫星；點任一人高亮其責任球）。滾地不足的打者只有外野三人 */}
+      {/* Positions (optimized = purple star; clicking a fielder highlights their responsibility balls). Batters with too few ground balls only get the three outfield positions */}
       {[...OF_POSITIONS, ...IF_POSITIONS].filter(p => optimized.positions[p]).map(p => (
         <PosMarker key={`o-${p}`} cx={tx(optimized.positions[p].x)} cy={ty(optimized.positions[p].y)}
           code={p} isActive={activePos === p}
           onClick={() => setActivePos(a => a === p ? null : p)} />
       ))}
 
-      {/* Legend（疊在圖內右下角的半透明卡片） */}
+      {/* Legend (semi-transparent card overlaid in the chart's bottom-right corner) */}
       {(() => {
         const nFly = of_balls.filter(b => b.bb_type === 'fly_ball').length
         const nLd = of_balls.filter(b => b.bb_type === 'line_drive').length
@@ -585,7 +590,7 @@ export default function IntegratedChart({ data }) {
         const W = 140
         let y = 11
         const rows = []
-        // 最佳化站位
+        // Optimized position
         rows.push(
           <g key="star">
             <polygon points={starPts(13, y, 6)} fill="#7B2FBE" stroke="white" strokeWidth="1" />
@@ -593,7 +598,7 @@ export default function IntegratedChart({ data }) {
           </g>)
         y += 11
         if (isProb) {
-          // 水平色階條
+          // Horizontal colorbar
           rows.push(
             <g key="cb">
               <rect x={8} y={y} width={80} height={8}
@@ -604,7 +609,7 @@ export default function IntegratedChart({ data }) {
             </g>)
           y += 22
         } else {
-          // 七人歸屬色塊（兩欄）
+          // Seven-fielder ownership color swatches (two columns)
           rows.push(
             <g key="own">
               {[...OF_POSITIONS, ...IF_POSITIONS, '其他'].map((label, i) => (

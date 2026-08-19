@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # pytest.ini 預設 -m "not integration"，跳過需要本機 PostgreSQL/
-      # PyMC 採樣的測試（見 tests/test_api_main.py 等），只跑純單元測試。
+      # pytest.ini defaults to -m "not integration", skipping tests that need a local PostgreSQL/
+      # PyMC sampling setup (see tests/test_api_main.py etc.) and running pure unit tests only.
       - name: Run test suite
         run: python -m pytest -v

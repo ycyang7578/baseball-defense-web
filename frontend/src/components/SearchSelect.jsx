@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 
-// 可打字搜尋的下拉。options: [{ value, label }]
+// Typeahead-searchable dropdown. options: [{ value, label }]
 export default function SearchSelect({ options, value, onChange, placeholder }) {
   const [query, setQuery] = useState('')
   const [open, setOpen]   = useState(false)

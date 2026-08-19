@@ -2,12 +2,12 @@ import { useState, useEffect, useMemo } from 'react'
 import { fetchFielders, fetchIfFielders } from '../api'
 import { TEAM_ABBR, TeamLogo, PlayerAvatar, displayName, oaaColor } from '../components/playerDisplay'
 
-// OAA 守備排名：外野三位置＋內野四位置合在同一張表。
-// 外野模型=飛球接殺難度、內野模型=滾地球出局難度，OAA/100 口徑一致可同表排序。
+// OAA defensive rankings: the three outfield positions and four infield positions in one shared table.
+// Outfield model = fly-ball catch difficulty, infield model = ground-ball out difficulty; OAA/100 is on a consistent scale so they can be sorted together in one table.
 const OF_POSITIONS = ['LF', 'CF', 'RF']
 const IF_POSITIONS = ['1B', '2B', '3B', 'SS']
 const TABS = ['ALL', ...OF_POSITIONS, ...IF_POSITIONS]
-// 2025=內野樣本外評分年；內野 2023/2024 落在訓練年內屬 in-sample（展示用）
+// 2025 = the infield out-of-sample evaluation year; infield 2023/2024 fall within the training years and are in-sample (for display purposes)
 const YEARS = [2023, 2024, 2025]
 
 const ACTIVE_BG  = '#eff6ff'
@@ -43,7 +43,7 @@ export default function OaaRankings() {
     else { setSortKey(key); setSortDir('desc') }
   }
 
-  // 兩邊欄位歸一：n = 外野 n_opp / 內野 n_balls
+  // Normalize field names across both sides: n = outfield n_opp / infield n_balls
   const normalized = useMemo(() => {
     const out = {}
     for (const p of OF_POSITIONS)
@@ -190,9 +190,9 @@ export default function OaaRankings() {
               </tr>
             </thead>
             <tbody>
-              {/* key 用 player_id：同名同守位的不同球員存在（如 2025 兩位 Max
-                  Muncy 都守 3B），name+position 會撞 key → 重新排序時出現
-                  ghost 重複列（2026-07-14 使用者回報） */}
+              {/* Key uses player_id: different players sharing the same name and position exist
+                  (e.g. two players named Max Muncy both played 3B in 2025), so name+position would
+                  collide as a key → re-sorting produces ghost duplicate rows (2026-07-14 user report) */}
               {rows.map((r, i) => (
                 <tr key={`${r.position}-${r.player_id ?? `${r.name}-${i}`}`} style={s.tr}>
                   <td style={{ ...s.td, color: 'var(--gray-400)', fontSize: 11 }}>{r.rank}</td>

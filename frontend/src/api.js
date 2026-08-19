@@ -12,7 +12,7 @@ export async function fetchFielders(minOpp = 100, year = 2025) {
   return res.json()
 }
 
-// ── 內野（排名／選單）──────────────────────────────────
+// ── Infield (rankings / dropdown options) ──────────────────────────────────
 
 export async function fetchIfYears() {
   const res = await fetch(`${BASE}/if_years`)
@@ -32,7 +32,7 @@ export async function fetchIfFielderOptions(year) {
   return res.json()
 }
 
-// ── 內外野整合（外野線上優化＋內野錨定式精修，計算需時間）─────────
+// ── Integrated infield + outfield (outfield online optimization + infield anchor-based refinement, computation takes time) ─────────
 
 export async function fetchIntegratedBatters(year) {
   const res = await fetch(`${BASE}/integrated_batters?year=${year}`)
